@@ -1,5 +1,11 @@
 # Sayaka AntiCheat — 轻量级服务端反作弊插件
 
+[![Release](https://img.shields.io/github/v/release/haitang000/sayaka-anticheat?include_prereleases&label=release)](https://github.com/haitang000/sayaka-anticheat/releases)
+[![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://adoptium.net/)
+[![Paper API](https://img.shields.io/badge/Paper%2FPurpur-1.20%2B-blue)](https://papermc.io/)
+[![Issues](https://img.shields.io/github/issues/haitang000/sayaka-anticheat)](https://github.com/haitang000/sayaka-anticheat/issues)
+[![Last commit](https://img.shields.io/github/last-commit/haitang000/sayaka-anticheat)](https://github.com/haitang000/sayaka-anticheat/commits/main)
+
 适用于 **Paper / Purpur 1.20+**（`api-version: 1.20`，可在 1.21.x 上运行）的 PVP / 生存服反作弊插件。
 纯服务端事件判定，不信任客户端数据，无任何外部依赖。
 
