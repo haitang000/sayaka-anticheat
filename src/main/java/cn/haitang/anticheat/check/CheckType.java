@@ -12,6 +12,7 @@ public enum CheckType {
     FAST_LADDER("FastLadder", "攀爬速度异常", "fast-ladder"),
     STEP("Step", "异常跨越方块", "step"),
     ROTATION("Rotation", "非法视角", "rotation"),
+    BAD_PACKETS("BadPackets", "非法数据包", "bad-packets"),
     REACH("Reach", "攻击距离超限", "reach"),
     HITBOX("Hitbox", "攻击射线异常", "hitbox"),
     KILL_AURA("KillAura", "攻击视角异常", "kill-aura"),

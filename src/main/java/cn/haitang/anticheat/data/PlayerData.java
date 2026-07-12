@@ -8,7 +8,9 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Queue;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * 单个在线玩家的全部运行时状态：各检测的 VL、缓冲值、移动轨迹、宽限时间戳等。
@@ -91,6 +93,9 @@ public class PlayerData {
 
     // ---- 移动包采样（Timer） ----
     private final Deque<Long> moveTimes = new ArrayDeque<>();
+
+    /** flying 包到达时间（毫秒）。Netty 线程写入、主线程 drain，其余字段均只在主线程访问 */
+    private final Queue<Long> packetArrivals = new ConcurrentLinkedQueue<>();
 
     // ---- 挖掘状态 ----
     private String digKey;
@@ -352,6 +357,7 @@ public class PlayerData {
     public Deque<Long> getPlaceTimes() { return placeTimes; }
     public Deque<Long> getTowerTimes() { return towerTimes; }
     public Deque<Long> getMoveTimes() { return moveTimes; }
+    public Queue<Long> getPacketArrivals() { return packetArrivals; }
     public Deque<Long> getContainerActionTimes() { return containerActionTimes; }
 
     // ---- 物品使用 ----

@@ -20,6 +20,7 @@ import cn.haitang.anticheat.check.movement.RotationCheck;
 import cn.haitang.anticheat.check.movement.SpeedCheck;
 import cn.haitang.anticheat.check.movement.StepCheck;
 import cn.haitang.anticheat.check.movement.TimerCheck;
+import cn.haitang.anticheat.check.packet.BadPacketsCheck;
 import cn.haitang.anticheat.check.player.AutoTotemCheck;
 import cn.haitang.anticheat.check.player.ChestStealerCheck;
 import cn.haitang.anticheat.check.player.FastBowCheck;
@@ -33,10 +34,13 @@ import cn.haitang.anticheat.concurrent.ParallelAnalysisExecutor;
 import cn.haitang.anticheat.data.PersistentStore;
 import cn.haitang.anticheat.data.PlayerDataManager;
 import cn.haitang.anticheat.listener.ConnectionListener;
+import cn.haitang.anticheat.packet.PacketBridge;
 import cn.haitang.anticheat.util.BedrockSupport;
 import cn.haitang.anticheat.util.Messages;
 import cn.haitang.anticheat.violation.PunishmentExecutor;
 import cn.haitang.anticheat.violation.ViolationManager;
+import com.github.retrooper.packetevents.PacketEvents;
+import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -67,7 +71,26 @@ public final class AntiCheatPlugin extends JavaPlugin {
     private final List<Check> checks = new ArrayList<>();
     private FlightCheck flightCheck;
     private AimCheck aimCheck;
+    private TimerCheck timerCheck;
+    private PacketBridge packetBridge;
+    private boolean packetEngineLoaded;
     private BukkitTask saveTask;
+
+    @Override
+    public void onLoad() {
+        // 数据包引擎（PacketEvents，已 shade + relocate）。任何失败都降级为纯事件级检测
+        try {
+            PacketEvents.setAPI(SpigotPacketEventsBuilder.build(this));
+            PacketEvents.getAPI().getSettings()
+                    .reEncodeByDefault(false)
+                    .checkForUpdates(false)
+                    .bStats(false);
+            PacketEvents.getAPI().load();
+            packetEngineLoaded = true;
+        } catch (Throwable t) {
+            getLogger().warning("数据包引擎初始化失败，Timer/Rotation 回退到事件级检测: " + t);
+        }
+    }
 
     @Override
     public void onEnable() {
@@ -84,14 +107,18 @@ public final class AntiCheatPlugin extends JavaPlugin {
 
         // 检测项注册（enabled 开关在事件内部实时判断，reload 即生效）
         flightCheck = new FlightCheck(this);
+        timerCheck = new TimerCheck(this);
+        RotationCheck rotationCheck = new RotationCheck(this);
+        BadPacketsCheck badPacketsCheck = new BadPacketsCheck(this);
         checks.add(new SpeedCheck(this));
         checks.add(flightCheck);
         checks.add(new GlideCheck(this));
         checks.add(new GroundSpoofCheck(this));
-        checks.add(new TimerCheck(this));
+        checks.add(timerCheck);
         checks.add(new FastLadderCheck(this));
         checks.add(new StepCheck(this));
-        checks.add(new RotationCheck(this));
+        checks.add(rotationCheck);
+        checks.add(badPacketsCheck);
         checks.add(new ReachCheck(this));
         checks.add(new HitboxCheck(this));
         aimCheck = new AimCheck(this);
@@ -111,6 +138,19 @@ public final class AntiCheatPlugin extends JavaPlugin {
         checks.add(new AntiSpamCheck(this));
         checks.add(new AntiAdsCheck(this));
 
+        // 数据包引擎：Netty 线程只记录/拦截，判定与上报统一回主线程
+        packetBridge = new PacketBridge(this, rotationCheck, badPacketsCheck);
+        if (packetEngineLoaded) {
+            try {
+                PacketEvents.getAPI().getEventManager().registerListener(packetBridge);
+                PacketEvents.getAPI().init();
+                packetBridge.setEngineRunning(true);
+                getLogger().info("数据包引擎已启用：包级 Timer/Rotation + BadPackets 崩服包拦截");
+            } catch (Throwable t) {
+                getLogger().warning("数据包引擎启动失败，Timer/Rotation 回退到事件级检测: " + t);
+            }
+        }
+
         PluginManager pm = getServer().getPluginManager();
         pm.registerEvents(new ConnectionListener(this), this);
         pm.registerEvents(new MovementTracker(this), this);
@@ -127,6 +167,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
 
         violationManager.startDecayTask();
         aimCheck.start();
+        timerCheck.start();
         saveTask = getServer().getScheduler().runTaskTimer(this, store::saveAsync, 1200L, 1200L);
 
         // /reload 或热插拔时，为已在线玩家补上基岩身份标记
@@ -138,10 +179,18 @@ public final class AntiCheatPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (packetEngineLoaded) {
+            try {
+                PacketEvents.getAPI().terminate();
+            } catch (Throwable t) {
+                getLogger().warning("数据包引擎关闭异常: " + t);
+            }
+        }
         if (saveTask != null) saveTask.cancel();
         if (violationManager != null) violationManager.shutdown();
         if (flightCheck != null) flightCheck.shutdown();
         if (aimCheck != null) aimCheck.shutdown();
+        if (timerCheck != null) timerCheck.shutdown();
         if (store != null) store.saveNow();
         if (analysisExecutor != null) analysisExecutor.shutdown();
     }
@@ -154,5 +203,6 @@ public final class AntiCheatPlugin extends JavaPlugin {
     public PunishmentExecutor getPunishmentExecutor() { return punishmentExecutor; }
     public ViolationManager getViolationManager() { return violationManager; }
     public ParallelAnalysisExecutor getAnalysisExecutor() { return analysisExecutor; }
+    public PacketBridge getPacketBridge() { return packetBridge; }
     public List<Check> getChecks() { return checks; }
 }

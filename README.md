@@ -6,7 +6,7 @@
 [![Issues](https://img.shields.io/github/issues/haitang000/sayaka-anticheat)](https://github.com/haitang000/sayaka-anticheat/issues)
 [![Last commit](https://img.shields.io/github/last-commit/haitang000/sayaka-anticheat)](https://github.com/haitang000/sayaka-anticheat/commits/main)
 
-适用于 **Paper / Purpur 1.20+** 的 PVP / 生存服反作弊插件。纯服务端事件判定，不信任客户端数据，无外部依赖。
+适用于 **Paper / Purpur 1.20+** 的 PVP / 生存服反作弊插件。服务端事件 + 数据包双层判定，不信任客户端数据；数据包引擎（PacketEvents）已内置进插件，无需安装任何前置。
 
 ## 设计理念
 
@@ -32,11 +32,14 @@
 
 | 类别 | 检测项 |
 |---|---|
-| 移动 | Speed、Flight、Glide、GroundSpoof、Timer、FastLadder、Step、Rotation |
-| 战斗 | Reach、Hitbox、KillAura、AutoClicker、NoSwing、Criticals、Velocity |
+| 移动 | Speed、Flight、GroundSpoof、Timer、FastLadder、Step、Rotation |
+| 协议层 | BadPackets（崩服包拦截）＋ Timer/Rotation 的包级数据源 |
+| 战斗 | Reach、KillAura、AutoClicker、NoSwing、Criticals、Velocity |
 | 玩家行为 | AutoTotem、InventoryMove、NoSlow、FastUse、FastBow、ChestStealer |
 | 世界交互 | FastBreak、Scaffold |
 | 聊天 | AntiSpam、AntiAds |
+
+数据包引擎（`packet-engine.enabled`）工作时，Timer 以包的真实到达时间测速——不受服务端卡顿影响、可覆盖任意倍速与静止 Timer；Rotation 与 BadPackets 在非法数据进入服务端之前直接丢弃。引擎关闭或初始化失败时自动回退到事件级检测。
 
 内置误判防护覆盖鞘翅/攀爬/液体/床弹跳/载具/击退/传送/进服宽限等常见合法场景，并兼容技能插件位移、MMO 移速属性、区域保护击退削弱、建筑法杖批量放置等第三方插件行为。
 
@@ -65,13 +68,14 @@
 ## 调参建议
 
 - 上线初期开 `settings.debug: true` 观察警报 `detail`，再收紧阈值；误判多优先调大 `buffer-to-flag`。
+- 数据包引擎默认开启；若与其他协议层插件（ViaVersion/Geyser 之外的注入类插件）疑似冲突，可临时 `packet-engine.enabled: false` 回退到事件级对比排查。
 - 纯计算检测使用独立线程池（`settings.parallel-analysis` 可调），队列满时丢弃分析以保 TPS，不阻塞主线程。
 - TPS 低于 18 时 Timer 检测自动暂停；`fast-break.nuker-detect` 与连锁挖掘类插件冲突需关闭。
 - 想更严：调低 `punishment.kick-vl` 或 `strikes.to-tempban`；想只警告不处罚：把 `kick-vl` 调到 9999。
 
 ## 能力边界
 
-工作在 Bukkit 事件层，覆盖常见作弊已足够且几乎不误伤正常玩家，但看不到原始数据包，对精调"合法范围内"作弊和数据包级伪装（blink、AntiKB 变种等）有天然上限。高对抗场景建议叠加数据包级方案（如 GrimAC），可与本插件共存。
+事件层检测覆盖常见作弊，内置数据包引擎补上协议层视野：包级测速（Timer）、非法包前置拦截（Rotation/BadPackets）。尚未做完整的移动物理回放模拟，对精调"合法范围内"作弊和更深的包级伪装（blink、AntiKB 变种等）仍有上限。极高对抗场景可叠加全模拟方案（如 GrimAC），与本插件共存。
 
 ## 扩展新检测
 
