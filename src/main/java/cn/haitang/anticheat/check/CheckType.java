@@ -6,6 +6,7 @@ package cn.haitang.anticheat.check;
 public enum CheckType {
     SPEED("Speed", "移动速度异常", "speed"),
     FLIGHT("Flight", "非法飞行/悬浮", "flight"),
+    GLIDE("Glide", "异常缓降", "glide"),
     GROUND_SPOOF("GroundSpoof", "落地欺骗", "ground-spoof"),
     TIMER("Timer", "移动包速率异常", "timer"),
     FAST_LADDER("FastLadder", "攀爬速度异常", "fast-ladder"),
@@ -13,6 +14,7 @@ public enum CheckType {
     ROTATION("Rotation", "非法视角", "rotation"),
     BAD_PACKETS("BadPackets", "非法数据包", "bad-packets"),
     REACH("Reach", "攻击距离超限", "reach"),
+    HITBOX("Hitbox", "攻击射线异常", "hitbox"),
     KILL_AURA("KillAura", "攻击视角异常", "kill-aura"),
     AUTO_CLICKER("AutoClicker", "点击频率异常", "auto-clicker"),
     NO_SWING("NoSwing", "无挥臂攻击", "no-swing"),

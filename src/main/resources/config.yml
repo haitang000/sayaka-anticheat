@@ -114,6 +114,22 @@ checks:
     buffer-to-flag: 2.0
     setback: true
 
+  # 异常缓降（Glide：未使用鞘翅/缓降效果时持续以过慢速度下落）
+  glide:
+    enabled: true
+    # 至少滞空多少个移动包后才检查，避开跳跃顶点的正常低速阶段
+    min-air-ticks: 10
+    # 每包下降量处于该区间时视为可疑；原版无效果自由落体会很快超过 0.18
+    min-descent-per-move: 0.02
+    max-descent-per-move: 0.18
+    # 距离下方碰撞体小于该值时不检查，避开落地与复杂方块碰撞
+    ground-clearance: 2.5
+    # 需要约 6 个连续可疑移动样本才上报
+    buffer-to-flag: 6.0
+    setback: true
+    # Geyser 转换后的基岩版垂直物理可能不同，默认不参与此项检测
+    exclude-bedrock: true
+
   # 落地欺骗（NoFall：客户端谎报"在地面"）
   ground-spoof:
     enabled: true
@@ -166,23 +182,50 @@ checks:
   reach:
     enabled: true
     # 基准攻击距离（到受害者碰撞箱表面），原版上限 3.0
-    base-reach: 3.1
+    base-reach: 3.05
     # 延迟补偿：每 1000ms 延迟增加的容差（按比例折算）
-    ping-compensation: 4.0
+    ping-compensation: 2.0
     # 参与补偿计算的延迟上限 ms（防止刷高延迟绕过）
-    max-ping-ms: 200
+    max-ping-ms: 180
     # 双方移动带来的表观距离补偿倍率；最终补偿会被 max-movement-compensation 限制
-    movement-compensation-multiplier: 0.6
+    movement-compensation-multiplier: 0.45
     # 冲刺状态额外容差
-    sprint-compensation: 0.08
+    sprint-compensation: 0.05
     # 移动补偿上限，避免高速/异常移动扩大超距窗口
-    max-movement-compensation: 0.25
+    max-movement-compensation: 0.18
     # 超出 (动态阈值 + cancel-margin) 的命中直接取消
-    cancel-margin: 0.3
+    cancel-margin: 0.2
     cancel-hits: true
-    buffer-to-flag: 3.0
+    buffer-to-flag: 2.5
 
-  # 杀戮光环（KillAura：视角外攻击 / 快速多目标 / 隐身假人探针）
+  # 攻击射线（Hitbox：准星未穿过目标碰撞箱 / 隔墙攻击）
+  hitbox:
+    enabled: true
+    # 极近身时碰撞箱与视角变化很剧烈，不参与射线判定
+    min-distance: 0.8
+    max-ray-distance: 6.0
+    ray-distance-margin: 1.0
+    # 基础碰撞箱扩张，以及网络和双方移动产生的额外容差
+    horizontal-tolerance: 0.12
+    vertical-tolerance: 0.12
+    ping-tolerance-per-ms: 0.00045
+    max-ping-ms: 180
+    movement-tolerance-multiplier: 0.35
+    max-movement-tolerance: 0.10
+    max-horizontal-tolerance: 0.30
+    teleport-grace-ms: 750
+    # 连续脱靶才上报；方块阻挡是更强证据，每次累积更快且立即取消命中
+    miss-buffer-increment: 1.0
+    blocked-buffer-increment: 2.0
+    buffer-decay: 0.5
+    buffer-to-flag: 2.5
+    block-margin: 0.05
+    cancel-missed-hits: true
+    cancel-blocked-hits: true
+    # Geyser 可能改写交互射线，默认只严格验证 Java 版玩家
+    exclude-bedrock: true
+
+  # 杀戮光环（KillAura：视角外攻击 / 多目标 / 吸附回正 / 容器攻击 / 攻击突发 / 假人探针）
   kill-aura:
     enabled: true
     # 攻击方向与目标方向的最大夹角（度）
@@ -199,6 +242,55 @@ checks:
     multi-hits-to-flag: 3
     cancel-hits: true
     buffer-to-flag: 2.5
+    snapback:
+      # 检测攻击前快速吸附目标、攻击后短时间精确返回原视角的自动回正轨迹
+      enabled: true
+      exclude-bedrock: true
+      min-distance: 1.5
+      max-target-angle: 8.0
+      acquisition-window-ticks: 3
+      return-window-ticks: 3
+      min-snap-angle: 25.0
+      max-return-angle: 4.0
+      min-return-ratio: 0.70
+      buffer-increment: 1.0
+      buffer-decay: 0.35
+      # 连续出现 3 次完整吸附回正轨迹才上报，普通偶发甩枪不会直接违规
+      buffer-to-flag: 3.0
+      flag-weight: 2.0
+    inventory:
+      # 原版客户端打开服务端容器界面后无法继续攻击世界实体
+      enabled: true
+      exclude-bedrock: true
+      grace-ms: 250
+      buffer-increment: 1.0
+      buffer-decay: 0.5
+      buffer-to-flag: 2.0
+      flag-weight: 2.5
+      cancel-hits: true
+    burst:
+      # 网络边界可能把两次正常点击并入同一 tick；第 3 次起才视为攻击包突发
+      enabled: true
+      exclude-bedrock: true
+      max-attacks-per-tick: 2
+      flag-weight: 2.5
+      cancel-excess-hits: true
+    tracking:
+      # 仅分析玩家目标相对方位持续变化时的命中，静止刷怪和原地目标不会进入样本
+      enabled: true
+      exclude-bedrock: true
+      min-distance: 1.6
+      min-target-angle-change: 0.6
+      window-ms: 5000
+      sample-size: 8
+      # 需要两个独立的 8 次命中窗口都呈现近乎零误差、零抖动才上报
+      max-mean-error: 0.8
+      max-stddev: 0.22
+      max-range: 0.75
+      buffer-increment: 1.0
+      buffer-decay: 1.0
+      buffer-to-flag: 2.0
+      flag-weight: 2.0
     probe:
       # 玩家产生真实近战攻击后，在侧后方短时生成仅该玩家可接收的隐身假人
       enabled: true
@@ -261,8 +353,11 @@ checks:
     enabled: true
     # 下发的击退速度低于该值不测量（视为插件已削弱击退）
     min-kb-velocity: 0.25
-    # 受击 4 刻后的最小位移（米），正常吃击退至少 0.3 左右
-    min-displacement: 0.05
+    # 水平击退过小时方向容易受普通移动干扰，不参与测量
+    min-horizontal-kb: 0.12
+    # 受击 4 刻后，沿服务端下发击退方向至少应响应的绝对位移与速度比例
+    min-horizontal-displacement: 0.06
+    min-response-ratio: 0.18
     buffer-to-flag: 3.0
 
   # 自动图腾（AutoTotem：图腾破碎后瞬间补装）
@@ -411,18 +506,18 @@ messages:
 
   # —— 给违规玩家的警告 ——
   warn-1-title: "&e⚠ 行为异常警告"
-  warn-1-subtitle: "&7系统检测到 &f%check%"
+  warn-1-subtitle: "&7系统检测到异常行为"
   warn-1-chat:
     - "&8&m                                        "
-    - "&e⚠ &f检测到你的行为异常：&e%check%"
+    - "&e⚠ &f检测到你的行为异常"
     - "&7若你未使用任何作弊手段，请忽略本提示；"
     - "&7继续触发将受到 &c踢出 / 封禁 &7处理。"
     - "&8&m                                        "
   warn-2-title: "&c⚠ 最后警告"
-  warn-2-subtitle: "&f%check% &7持续触发"
+  warn-2-subtitle: "&7异常行为持续触发"
   warn-2-chat:
     - "&8&m                                        "
-    - "&c⚠ 最后警告：&f%check% &c仍在持续触发！"
+    - "&c⚠ 最后警告：异常行为仍在持续触发！"
     - "&7再犯将被 &c立即踢出&7，多次踢出将 &4临时封禁&7。"
     - "&8&m                                        "
 

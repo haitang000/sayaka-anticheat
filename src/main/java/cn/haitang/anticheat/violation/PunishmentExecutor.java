@@ -19,6 +19,8 @@ import java.util.Map;
  */
 public class PunishmentExecutor {
 
+    public static final String BAN_SOURCE = "Sayaka AntiCheat";
+
     private static final SimpleDateFormat TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm");
 
     private final AntiCheatPlugin plugin;
@@ -94,15 +96,14 @@ public class PunishmentExecutor {
         runHookCommands("punishment.commands.on-tempban", player.getName(), type, hours);
 
         String screen = plugin.getMessages().get("ban-screen", ph);
-        String reason = org.bukkit.ChatColor.stripColor(
-                String.format("反作弊：%s 多次违规，封禁 %d 小时", type.display(), hours));
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (plugin.getStore().isWhitelisted(player.getUniqueId())) {
                 plugin.getDataManager().get(player).setPunishing(false);
                 return;
             }
             if (!player.isOnline()) return;
-            player.ban(reason, expiry, "Sayaka AntiCheat", false);
+            // Persist the rendered screen so reconnects can show the exact same message.
+            player.ban(screen, expiry, BAN_SOURCE, false);
             player.kickPlayer(screen);
         });
         plugin.getLogger().info(String.format("已临时封禁 %s：%s，%d 小时（第 %d 次）",

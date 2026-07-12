@@ -13,6 +13,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerVelocityEvent;
+import org.bukkit.util.Vector;
 
 import java.util.UUID;
 
@@ -24,7 +25,7 @@ import java.util.UUID;
  * 2. 同刻的 PlayerVelocityEvent 真正下发击退速度时才武装测量——
  *    决斗/区域保护类插件取消或削弱击退（竞技场无击退等）不会走到这一步，
  *    从根上杜绝"插件吞了击退却怪玩家不动"的误判。
- * 武装后第 4 刻测量位移；期间若又出现任何新的赋速事件（技能位移、
+ * 武装后第 4 刻测量沿击退向量方向的位移；期间若又出现任何新的赋速事件（技能位移、
  * 二段击退修改插件）说明物理已不可预测，测量作废。
  * 贴墙、液体、攀爬、蛛网、格挡、载具、无敌帧连击等场景全部跳过，
  * 只对"开阔地吃到足量击退却纹丝不动"的典型 AntiKB 累积违规。
@@ -69,18 +70,26 @@ public class VelocityCheck extends Check {
         if (pending == 0) return;
         data.setKbPendingAt(0);
         if (System.currentTimeMillis() - pending > PENDING_VALID_MS) return;
+        Vector velocity = event.getVelocity();
         // 插件把击退改小（老版本战斗手感、无击退竞技场等）也不测
-        if (event.getVelocity().length() < cfgD("min-kb-velocity", 0.25)) return;
+        if (velocity.length() < cfgD("min-kb-velocity", 0.25)) return;
+        double horizontalVelocity = Math.hypot(velocity.getX(), velocity.getZ());
+        if (horizontalVelocity < cfgD("min-horizontal-kb", 0.12)) return;
+        double velocityX = velocity.getX();
+        double velocityZ = velocity.getZ();
 
         Location before = victim.getLocation().clone();
         // ConnectionListener 已先记录本次赋速；测量时若时间戳变化说明又有新赋速
         long velocityStamp = data.getLastVelocityAt();
         UUID id = victim.getUniqueId();
         plugin.getServer().getScheduler().runTaskLater(plugin,
-                () -> measure(id, before, velocityStamp), MEASURE_DELAY_TICKS);
+                () -> measure(id, before, velocityStamp,
+                        velocityX, velocityZ, horizontalVelocity),
+                MEASURE_DELAY_TICKS);
     }
 
-    private void measure(UUID id, Location before, long velocityStamp) {
+    private void measure(UUID id, Location before, long velocityStamp,
+                         double velocityX, double velocityZ, double horizontalVelocity) {
         Player victim = plugin.getServer().getPlayer(id);
         if (victim == null || !victim.isOnline() || victim.isDead()) return;
         PlayerData data = data(victim);
@@ -93,13 +102,24 @@ public class VelocityCheck extends Check {
                 || MoveUtil.isInWeb(victim)) return;
         if (nearWall(now) || nearWall(before)) return;
 
-        double moved = now.distance(before);
-        if (moved < cfgD("min-displacement", 0.05)) {
-            double buffered = data.buffer(type(), 1.0);
+        double deltaX = now.getX() - before.getX();
+        double deltaZ = now.getZ() - before.getZ();
+        double horizontalMoved = Math.hypot(deltaX, deltaZ);
+        double projection = CombatGeometry.horizontalProjection(
+                deltaX, deltaZ, velocityX, velocityZ);
+        double minimumProjection = Math.max(1.0E-6, Math.max(
+                cfgD("min-horizontal-displacement", cfgD("min-displacement", 0.06)),
+                horizontalVelocity * cfgD("min-response-ratio", 0.18)));
+
+        if (Double.isNaN(projection)) return;
+        if (projection < minimumProjection) {
+            double deficitRatio = (minimumProjection - projection) / minimumProjection;
+            double buffered = data.buffer(type(), 1.0 + Math.min(1.0, deficitRatio));
             if (buffered >= cfgD("buffer-to-flag", 3.0)) {
                 data.resetBuffer(type());
-                flag(victim, 2.0, String.format("受击 %d 刻仅位移 %.3f 格",
-                        MEASURE_DELAY_TICKS, moved));
+                flag(victim, 2.0, String.format(
+                        "受击 %d 刻沿击退方向仅位移 %.3f/%.3f 格 (总水平 %.3f)",
+                        MEASURE_DELAY_TICKS, projection, minimumProjection, horizontalMoved));
             }
         } else {
             data.buffer(type(), -1.0);

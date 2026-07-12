@@ -62,10 +62,10 @@ public class ViolationManager {
             plugin.getPunishmentExecutor().kickOrBan(player, type, totalVl);
         } else if (totalVl >= warn2Vl && data.getPunishmentWarnStage() < 2) {
             data.setPunishmentWarnStage(2);
-            plugin.getAlertManager().warnPlayer(player, type, 2);
+            plugin.getAlertManager().warnPlayer(player, 2);
         } else if (totalVl >= warn1Vl && data.getPunishmentWarnStage() < 1) {
             data.setPunishmentWarnStage(1);
-            plugin.getAlertManager().warnPlayer(player, type, 1);
+            plugin.getAlertManager().warnPlayer(player, 1);
         }
     }
 

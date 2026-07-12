@@ -2,6 +2,11 @@ package cn.haitang.anticheat.listener;
 
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.data.PlayerData;
+import cn.haitang.anticheat.violation.PunishmentExecutor;
+import io.papermc.paper.ban.BanListType;
+import org.bukkit.BanEntry;
+import org.bukkit.Bukkit;
+import org.bukkit.ban.ProfileBanList;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -10,6 +15,7 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerLoginEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
@@ -26,6 +32,20 @@ public class ConnectionListener implements Listener {
 
     public ConnectionListener(AntiCheatPlugin plugin) {
         this.plugin = plugin;
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLogin(PlayerLoginEvent event) {
+        if (event.getResult() != PlayerLoginEvent.Result.KICK_BANNED) return;
+
+        ProfileBanList banList = Bukkit.getBanList(BanListType.PROFILE);
+        BanEntry<?> banEntry = banList.getBanEntry(event.getPlayer().getPlayerProfile());
+        if (banEntry == null || !PunishmentExecutor.BAN_SOURCE.equals(banEntry.getSource())) return;
+
+        String screen = banEntry.getReason();
+        if (screen != null && !screen.isBlank()) {
+            event.setKickMessage(screen);
+        }
     }
 
     @EventHandler
