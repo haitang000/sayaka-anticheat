@@ -1,0 +1,35 @@
+name: SayakaAntiCheat
+prefix: Sayaka AntiCheat
+version: '1.1.0'
+main: cn.haitang.anticheat.AntiCheatPlugin
+api-version: '1.20'
+author: haitang
+description: 轻量级服务端反作弊：行为检测 + 递进式警告与惩罚
+
+commands:
+  sac:
+    description: 反作弊管理命令
+    usage: /sac help
+
+permissions:
+  anticheat.admin:
+    description: 使用全部管理命令（reload/reset/status/history）
+    default: op
+  anticheat.alerts:
+    description: 接收实时违规警报，可用 /sac alerts 开关
+    default: op
+  anticheat.bypass:
+    description: 绕过所有检测（谨慎授予）
+    default: false
+  anticheat.whitelist:
+    description: 管理反作弊白名单
+    default: op
+  anticheat.unban:
+    description: 解除玩家封禁并管理处罚档位
+    default: op
+  anticheat.antispam.bypass:
+    description: 单独绕过聊天刷屏检测
+    default: false
+  anticheat.antiads.bypass:
+    description: 单独绕过聊天广告检测
+    default: false

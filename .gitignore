@@ -1,0 +1,17 @@
+target/
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+dependency-reduced-pom.xml
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+
+# Local runtime/test artifacts
+*.class
