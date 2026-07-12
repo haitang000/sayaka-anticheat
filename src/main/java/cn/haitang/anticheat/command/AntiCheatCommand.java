@@ -87,6 +87,9 @@ public class AntiCheatCommand implements TabExecutor {
         for (Check check : plugin.getChecks()) {
             check.reloadConfiguration();
         }
+        if (plugin.getPacketBridge() != null) {
+            plugin.getPacketBridge().reload();
+        }
         sender.sendMessage(plugin.getMessages().prefixed("reloaded", null));
     }
 

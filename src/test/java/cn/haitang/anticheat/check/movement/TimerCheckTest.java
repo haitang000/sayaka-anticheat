@@ -49,6 +49,17 @@ class TimerCheckTest {
     }
 
     @Test
+    void packetPathCountsBurstArrivalsWithoutDeduplication() {
+        Deque<Long> times = new ArrayDeque<>();
+
+        // 包级路径 minGap=0：网络突发簇内的包到达时间几乎相同，
+        // 但都是客户端真实发出的包，必须全部计入，否则高倍速 Timer 会被去重掩盖
+        assertEquals(1, TimerCheck.recordMove(times, 1_000, 0));
+        assertEquals(2, TimerCheck.recordMove(times, 1_000, 0));
+        assertEquals(3, TimerCheck.recordMove(times, 1_005, 0));
+    }
+
+    @Test
     void timerSpeedShowsUpAsInflatedWindowCount() {
         Deque<Long> times = new ArrayDeque<>();
         // 2 倍速 Timer：3 秒窗口内以 25ms 间隔发出 40/秒 的移动包
