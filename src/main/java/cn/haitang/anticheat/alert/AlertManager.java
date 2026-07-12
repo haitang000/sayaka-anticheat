@@ -67,14 +67,15 @@ public class AlertManager {
 
     // ---- 玩家警告（递进第 1、2 级） ----
 
-    public void warnPlayer(Player player, CheckType type, int stage) {
+    public void warnPlayer(Player player, int stage) {
         PlayerData data = plugin.getDataManager().get(player);
         long now = System.currentTimeMillis();
         if (now - data.getLastPlayerWarnAt() < WARN_THROTTLE_MS) return;
         data.setLastPlayerWarnAt(now);
 
         String keyBase = stage >= 2 ? "warn-2" : "warn-1";
-        Map<String, String> ph = Map.of("check", type.display());
+        // 兼容旧配置中的 %check%，但不向被检测玩家公开具体检测项。
+        Map<String, String> ph = Map.of("check", "异常行为");
         player.sendTitle(
                 plugin.getMessages().get(keyBase + "-title", ph),
                 plugin.getMessages().get(keyBase + "-subtitle", ph),

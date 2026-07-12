@@ -126,4 +126,19 @@ class BundledConfigTest {
                     "messages." + key + " 应为非空列表");
         }
     }
+
+    @Test
+    void playerWarningsDoNotRevealCheckType() {
+        for (String key : List.of(
+                "warn-1-title", "warn-1-subtitle", "warn-2-title", "warn-2-subtitle")) {
+            assertFalse(config.getString("messages." + key, "").contains("%check%"),
+                    "messages." + key + " 不应向玩家显示检测类型");
+        }
+        for (String key : List.of("warn-1-chat", "warn-2-chat")) {
+            for (String line : config.getStringList("messages." + key)) {
+                assertFalse(line.contains("%check%"),
+                        "messages." + key + " 不应向玩家显示检测类型");
+            }
+        }
+    }
 }

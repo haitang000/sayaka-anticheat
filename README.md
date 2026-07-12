@@ -32,8 +32,8 @@
 
 | 类别 | 检测项 |
 |---|---|
-| 移动 | Speed、Flight、GroundSpoof、Timer、FastLadder、Step、Rotation |
-| 战斗 | Reach、KillAura、AutoClicker、NoSwing、Criticals、Velocity |
+| 移动 | Speed、Flight、Glide、GroundSpoof、Timer、FastLadder、Step、Rotation |
+| 战斗 | Reach、Hitbox、KillAura、AutoClicker、NoSwing、Criticals、Velocity |
 | 玩家行为 | AutoTotem、InventoryMove、NoSlow、FastUse、FastBow、ChestStealer |
 | 世界交互 | FastBreak、Scaffold |
 | 聊天 | AntiSpam、AntiAds |

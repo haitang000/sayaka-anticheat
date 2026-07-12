@@ -47,21 +47,21 @@ public class ReachCheck extends Check {
         }
         double distance = eyeToBoxDistance(attacker, victim);
 
-        int ping = Math.min(attacker.getPing(), cfgI("max-ping-ms", 200));
+        int ping = Math.max(0, Math.min(attacker.getPing(), cfgI("max-ping-ms", 180)));
         double movementCompensation = movementCompensation(attacker, data, victim, victimData);
-        double threshold = cfgD("base-reach", 3.1)
-                + ping / 1000.0 * cfgD("ping-compensation", 4.0)
+        double threshold = cfgD("base-reach", 3.05)
+                + ping / 1000.0 * cfgD("ping-compensation", 2.0)
                 + movementCompensation;
 
         if (distance > threshold) {
             // 明显超限的命中直接取消，让超距攻击完全无效
             if (cfgB("cancel-hits", true)
-                    && (distance > threshold + cfgD("cancel-margin", 0.3) || shouldMitigate(attacker))) {
+                    && (distance > threshold + cfgD("cancel-margin", 0.2) || shouldMitigate(attacker))) {
                 event.setCancelled(true);
             }
             double over = distance - threshold;
             double buffered = data.buffer(type(), 1.0 + Math.min(over * 2.0, 1.5));
-            if (buffered >= cfgD("buffer-to-flag", 3.0)) {
+            if (buffered >= cfgD("buffer-to-flag", 2.5)) {
                 data.resetBuffer(type());
                 flag(attacker, Math.min(2.5, 1.25 + over),
                         String.format("%.2f格 > %.2f格 (ping=%dms, move+%.2f)",
@@ -78,11 +78,11 @@ public class ReachCheck extends Check {
         if (victimData != null) {
             movement += victimData.getLastDeltaXZ();
         }
-        double allowance = movement * cfgD("movement-compensation-multiplier", 0.6);
+        double allowance = movement * cfgD("movement-compensation-multiplier", 0.45);
         if (attacker.isSprinting() || (victim instanceof Player victimPlayer && victimPlayer.isSprinting())) {
-            allowance += cfgD("sprint-compensation", 0.08);
+            allowance += cfgD("sprint-compensation", 0.05);
         }
-        return Math.min(allowance, cfgD("max-movement-compensation", 0.25));
+        return Math.min(allowance, cfgD("max-movement-compensation", 0.18));
     }
 
     /** 眼睛位置到目标碰撞箱表面最近点的距离 */
