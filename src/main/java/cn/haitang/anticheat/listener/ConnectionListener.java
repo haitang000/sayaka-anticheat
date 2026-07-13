@@ -55,8 +55,22 @@ public class ConnectionListener implements Listener {
         data.resetMovement(event.getPlayer().getLocation());
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onDamage(EntityDamageEvent event) {
+        if (event.getEntity() instanceof Player player) {
+            plugin.getDataManager().get(player).touchDamage();
+        }
+    }
+
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
+        plugin.getCombatAttackContext().remove(event.getPlayer().getUniqueId());
+        if (plugin.getPacketTimeline() != null) {
+            plugin.getPacketTimeline().remove(event.getPlayer().getUniqueId());
+        }
+        if (plugin.getEntityPositionHistory() != null) {
+            plugin.getEntityPositionHistory().remove(event.getPlayer().getUniqueId());
+        }
         plugin.getDataManager().remove(event.getPlayer().getUniqueId());
     }
 
@@ -87,18 +101,10 @@ public class ConnectionListener implements Listener {
         data.resetMovement(event.getPlayer().getLocation());
     }
 
-    /** 受击（含击退）宽限 */
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onDamage(EntityDamageEvent event) {
-        if (event.getEntity() instanceof Player player) {
-            plugin.getDataManager().get(player).touchDamage();
-        }
-    }
-
     /** 服务端主动赋予速度（击退、TNT、跳板/钩爪等插件位移技能）宽限，带强度 */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onVelocity(PlayerVelocityEvent event) {
         plugin.getDataManager().get(event.getPlayer())
-                .touchVelocity(event.getVelocity().length());
+                .startImpulse(event.getVelocity());
     }
 }

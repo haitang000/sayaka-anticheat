@@ -39,18 +39,23 @@ public class NoSwingCheck extends Check {
         if (!(event.getDamager() instanceof Player attacker)) return;
         if (isExempt(attacker)) return;
 
+        int attackTick = Bukkit.getCurrentTick();
+        CombatAttackContext.Attack attack = plugin.getCombatAttackContext().attack(event).orElse(null);
+        if (attack == null) return;
+
         if (cfgB("cancel-hits", true) && shouldMitigate(attacker)) {
             event.setCancelled(true);
         }
 
-        int attackTick = Bukkit.getCurrentTick();
         UUID id = attacker.getUniqueId();
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
             Player player = plugin.getServer().getPlayer(id);
             if (player == null || !player.isOnline()) return;
             PlayerData data = data(player);
-            // 挥臂包同刻或稍后到达都算合法（>= 覆盖两种到达顺序）
-            if (data.getLastSwingTick() >= attackTick) {
+            boolean packetSwing = attack.packetBacked() && plugin.getPacketTimeline()
+                    .hasSwingNear(id, attack.packetSequence(), attack.receivedNanos(),
+                            attack.precedingSwingSequence());
+            if (packetSwing || (!attack.packetBacked() && data.getLastSwingTick() >= attackTick)) {
                 data.buffer(type(), -0.75);
                 return;
             }
@@ -61,4 +66,5 @@ public class NoSwingCheck extends Check {
             }
         }, 2L);
     }
+
 }

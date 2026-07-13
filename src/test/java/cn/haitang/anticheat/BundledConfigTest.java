@@ -39,12 +39,16 @@ class BundledConfigTest {
 
     @Test
     void everyCheckTypeHasAConfigSectionWithEnabledSwitch() {
+        assertTrue(config.getInt("config-version") == 2);
         for (CheckType type : CheckType.values()) {
             String path = "checks." + type.configKey();
             assertTrue(config.isConfigurationSection(path),
                     type + " 缺少配置段 " + path);
             assertTrue(config.isBoolean(path + ".enabled"),
                     path + ".enabled 缺失或不是布尔值");
+            assertTrue(List.of("alert", "mitigate", "punish")
+                            .contains(config.getString(path + ".enforcement")),
+                    path + ".enforcement 无效");
         }
     }
 

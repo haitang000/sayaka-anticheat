@@ -32,12 +32,15 @@ public final class ParallelAnalysisExecutor {
     public ParallelAnalysisExecutor(JavaPlugin plugin) {
         this.plugin = plugin;
         int available = Runtime.getRuntime().availableProcessors();
-        int configured = plugin.getConfig().getInt("settings.parallel-analysis.threads", 0);
+        int configured = ((cn.haitang.anticheat.AntiCheatPlugin) plugin).config()
+                .getInt("settings.parallel-analysis.threads", 0);
         int threads = configured > 0 ? configured : Math.max(1, Math.min(8, available - 1));
         int queueCapacity = Math.max(64,
-                plugin.getConfig().getInt("settings.parallel-analysis.queue-capacity", 1024));
+                ((cn.haitang.anticheat.AntiCheatPlugin) plugin).config()
+                        .getInt("settings.parallel-analysis.queue-capacity", 1024));
         this.maxCompletionsPerTick = Math.max(16,
-                plugin.getConfig().getInt("settings.parallel-analysis.completions-per-tick", 256));
+                ((cn.haitang.anticheat.AntiCheatPlugin) plugin).config()
+                        .getInt("settings.parallel-analysis.completions-per-tick", 256));
         this.completions = new ArrayBlockingQueue<>(queueCapacity);
 
         this.workers = new ThreadPoolExecutor(

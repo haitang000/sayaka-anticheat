@@ -43,7 +43,7 @@ public class NoSlowCheck extends Check {
         if (player.isInsideVehicle() || player.isFlying() || player.getAllowFlight()) return;
         if (player.isGliding() || data.glidedWithin(3000)) return;
         if (player.isRiptiding() || data.riptideWithin(2000)) return;
-        if (data.teleportedWithin(2000) || data.damagedWithin(1500) || data.velocityWithin(2500)) return;
+        if (data.teleportedWithin(2000) || data.velocityWithin(2500)) return;
         if (data.liquidWithin(1500) || data.iceWithin(2500) || data.bouncedWithin(2500)) return;
         if (data.climbedWithin(1000) || data.isInWeb() || data.isNearHoney()) return;
 

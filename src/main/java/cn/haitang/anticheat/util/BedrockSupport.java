@@ -15,7 +15,7 @@ import java.util.logging.Logger;
  * 代理转发的移动包与 Java 端物理存在天然差异，会让部分检测频繁误报。
  * 本类用于把这类玩家识别出来，交由各检测放宽或豁免（见 config 的 settings.bedrock）。
  *
- * <p>为保持插件"无外部依赖"：
+ * <p>为避免把 Floodgate 设为硬依赖（PacketEvents 仍是必需前置）：
  * <ul>
  *   <li>优先反射调用 Floodgate API（存在才用，缺失不报错）；</li>
  *   <li>反射不可用时回退到 Floodgate 的 UUID 方案——基岩玩家 UUID 高 64 位恒为 0

@@ -21,7 +21,7 @@ import org.bukkit.potion.PotionEffectType;
 public class MovementTracker implements Listener {
 
     /** 判定"有支撑"时向下扫描的深度 */
-    private static final double GROUND_DEPTH = 0.45;
+    private static final double GROUND_DEPTH = 0.08;
 
     private final AntiCheatPlugin plugin;
 
@@ -55,21 +55,25 @@ public class MovementTracker implements Listener {
 
         data.setLastDeltaXZ(distXZ);
         data.setLastDeltaY(dy);
+        data.consumeImpulse(new org.bukkit.util.Vector(dx, dy, dz));
 
         // 仅转动视角不算位移：不刷新 lastMoveAt，否则悬浮者环顾四周即可绕过静止悬浮扫描
         boolean rotationOnly = distXZ < 1e-7 && Math.abs(dy) < 1e-7;
         if (rotationOnly) return;
+        data.setLastMovementDelta(new org.bukkit.util.Vector(dx, dy, dz));
 
         // ---- 滞空 / 悬浮计数 ----
         boolean collision = MoveUtil.hasCollisionBelow(to, GROUND_DEPTH);
         data.setCollisionBelow(collision);
         if (collision) {
+            data.setSupportedTicks(data.getSupportedTicks() + 1);
             data.setAirTicks(0);
             data.setHoverTicks(0);
             data.setAirStartY(to.getY());
         } else {
+            data.setSupportedTicks(0);
             data.setAirTicks(data.getAirTicks() + 1);
-            double hoverMaxDy = plugin.getConfig().getDouble("checks.flight.hover-max-dy", 0.06);
+            double hoverMaxDy = plugin.config().getDouble("checks.flight.hover-max-dy", 0.06);
             if (Math.abs(dy) <= hoverMaxDy) {
                 data.setHoverTicks(data.getHoverTicks() + 1);
             } else {
@@ -111,7 +115,7 @@ public class MovementTracker implements Listener {
         data.setLastLocation(to.clone());
 
         // 只有"实际站在支撑物上、且近 1 秒未被回弹"的位置才算合法回弹点
-        if (data.isCollisionBelow() && data.getAirTicks() == 0
+        if (data.isCollisionBelow() && data.getAirTicks() == 0 && data.getSupportedTicks() >= 2
                 && System.currentTimeMillis() - data.getLastSetbackAt() > 1000) {
             data.setLastValidLocation(to.clone());
         }

@@ -6,8 +6,14 @@ import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -33,24 +39,38 @@ public class PersistentStore {
         boolean submit(Runnable task);
     }
 
+    @FunctionalInterface
+    interface StoreWriter {
+        void write(File file, String content) throws IOException;
+    }
+
     private final File file;
     private final Logger logger;
     private final AsyncTaskSubmitter asyncSubmitter;
+    private final StoreWriter writer;
     private final Object lock = new Object();
     private final Object saveOrderLock = new Object();
     private final AtomicBoolean saveScheduled = new AtomicBoolean();
     private YamlConfiguration yaml;
-    private volatile boolean dirty;
+    private volatile long revision;
+    private volatile long savedRevision;
+    private volatile long nextRetryAt;
+    private int consecutiveFailures;
 
     public PersistentStore(AntiCheatPlugin plugin) {
         this(new File(plugin.getDataFolder(), "data.yml"), plugin.getLogger(),
-                task -> plugin.getAnalysisExecutor().execute(task));
+                task -> plugin.getAnalysisExecutor().execute(task), PersistentStore::writeAtomically);
     }
 
     PersistentStore(File file, Logger logger, AsyncTaskSubmitter asyncSubmitter) {
+        this(file, logger, asyncSubmitter, PersistentStore::writeAtomically);
+    }
+
+    PersistentStore(File file, Logger logger, AsyncTaskSubmitter asyncSubmitter, StoreWriter writer) {
         this.file = file;
         this.logger = logger;
         this.asyncSubmitter = asyncSubmitter;
+        this.writer = writer;
         load();
     }
 
@@ -70,7 +90,7 @@ public class PersistentStore {
             List<Long> strikes = yaml.getLongList(base(uuid) + ".strikes");
             strikes.add(System.currentTimeMillis());
             yaml.set(base(uuid) + ".strikes", strikes);
-            dirty = true;
+            markDirty();
         }
     }
 
@@ -85,7 +105,7 @@ public class PersistentStore {
             }
             if (valid.size() != strikes.size()) {
                 yaml.set(base(uuid) + ".strikes", valid);
-                dirty = true;
+            markDirty();
             }
             return valid.size();
         }
@@ -94,7 +114,7 @@ public class PersistentStore {
     public void clearStrikes(UUID uuid) {
         synchronized (lock) {
             yaml.set(base(uuid) + ".strikes", new ArrayList<Long>());
-            dirty = true;
+            markDirty();
         }
     }
 
@@ -109,21 +129,21 @@ public class PersistentStore {
     public void incrementBanCount(UUID uuid) {
         synchronized (lock) {
             yaml.set(base(uuid) + ".ban-count", getBanCount(uuid) + 1);
-            dirty = true;
+            markDirty();
         }
     }
 
     public void resetBanCount(UUID uuid) {
         synchronized (lock) {
             yaml.set(base(uuid) + ".ban-count", 0);
-            dirty = true;
+            markDirty();
         }
     }
 
     public void resetPlayer(UUID uuid) {
         synchronized (lock) {
             yaml.set(base(uuid), null);
-            dirty = true;
+            markDirty();
         }
     }
 
@@ -138,7 +158,7 @@ public class PersistentStore {
     public void addWhitelist(UUID uuid, String name) {
         synchronized (lock) {
             yaml.set("whitelist." + uuid, name);
-            dirty = true;
+            markDirty();
         }
     }
 
@@ -147,7 +167,7 @@ public class PersistentStore {
             String path = "whitelist." + uuid;
             if (!yaml.contains(path)) return false;
             yaml.set(path, null);
-            dirty = true;
+            markDirty();
             return true;
         }
     }
@@ -191,7 +211,7 @@ public class PersistentStore {
             history.add(TIME.format(new Date()) + " " + line);
             while (history.size() > 25) history.remove(0);
             yaml.set(base(uuid) + ".history", history);
-            dirty = true;
+            markDirty();
         }
     }
 
@@ -205,7 +225,7 @@ public class PersistentStore {
 
     /** Coalesces serialization and disk I/O onto the bounded analysis pool. */
     public void saveAsync() {
-        if (!dirty) return;
+        if (!isDirty() || System.currentTimeMillis() < nextRetryAt) return;
         if (!saveScheduled.compareAndSet(false, true)) return;
         boolean accepted = asyncSubmitter.submit(this::saveDirtyLoop);
         if (!accepted) {
@@ -214,14 +234,14 @@ public class PersistentStore {
     }
 
     /** 关服时同步保存 */
-    public void saveNow() {
+    public boolean saveNow() {
         synchronized (saveOrderLock) {
-            String content;
-            synchronized (lock) {
-                content = yaml.saveToString();
-                dirty = false;
+            while (true) {
+                Snapshot snapshot = snapshot();
+                if (snapshot == null) return true;
+                if (!write(snapshot)) return false;
+                if (!isDirty()) return true;
             }
-            write(content);
         }
     }
 
@@ -229,29 +249,73 @@ public class PersistentStore {
         try {
             while (true) {
                 synchronized (saveOrderLock) {
-                    String content;
-                    synchronized (lock) {
-                        if (!dirty) return;
-                        content = yaml.saveToString();
-                        dirty = false;
-                    }
-                    write(content);
+                    Snapshot snapshot = snapshot();
+                    if (snapshot == null) return;
+                    if (!write(snapshot)) return;
                 }
             }
         } finally {
             saveScheduled.set(false);
-            if (dirty) saveAsync();
         }
     }
 
-    private void write(String content) {
-        try {
-            if (!file.getParentFile().exists() && !file.getParentFile().mkdirs()) {
-                logger.warning("无法创建数据目录: " + file.getParent());
-            }
-            Files.writeString(file.toPath(), content, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            logger.warning("data.yml 保存失败: " + e.getMessage());
+    private Snapshot snapshot() {
+        synchronized (lock) {
+            if (revision == savedRevision) return null;
+            return new Snapshot(revision, yaml.saveToString());
         }
     }
+
+    private boolean write(Snapshot snapshot) {
+        try {
+            writer.write(file, snapshot.content());
+            synchronized (lock) {
+                savedRevision = Math.max(savedRevision, snapshot.revision());
+                consecutiveFailures = 0;
+                nextRetryAt = 0L;
+            }
+            return true;
+        } catch (IOException e) {
+            synchronized (lock) {
+                consecutiveFailures++;
+                long backoff = Math.min(60_000L,
+                        1_000L << Math.min(6, consecutiveFailures - 1));
+                nextRetryAt = System.currentTimeMillis() + backoff;
+            }
+            logger.warning("data.yml 保存失败，旧文件保持不变，将稍后重试: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private void markDirty() {
+        revision++;
+        nextRetryAt = 0L;
+    }
+
+    boolean isDirty() {
+        return revision != savedRevision;
+    }
+
+    private static void writeAtomically(File file, String content) throws IOException {
+        Path target = file.toPath();
+        Path parent = target.toAbsolutePath().getParent();
+        if (parent != null) Files.createDirectories(parent);
+        Path temporary = target.resolveSibling(target.getFileName() + ".tmp");
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        try (FileChannel channel = FileChannel.open(temporary,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE)) {
+            ByteBuffer buffer = ByteBuffer.wrap(bytes);
+            while (buffer.hasRemaining()) channel.write(buffer);
+            channel.force(true);
+        }
+        try {
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException unsupported) {
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private record Snapshot(long revision, String content) { }
 }

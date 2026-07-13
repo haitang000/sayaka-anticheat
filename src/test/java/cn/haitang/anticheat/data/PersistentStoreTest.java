@@ -7,6 +7,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -229,5 +231,37 @@ class PersistentStoreTest {
 
         assertEquals(2, attempts.get(), "被拒绝后应允许下一次重试而不是永久卡死");
         assertFalse(dataFile.exists());
+    }
+
+    @Test
+    void failedWriteKeepsDirtyStateAndPreservesThePreviousFile() throws Exception {
+        Files.writeString(dataFile.toPath(), "sentinel: intact\n", StandardCharsets.UTF_8);
+        PersistentStore store = new PersistentStore(dataFile, logger, task -> true,
+                (file, content) -> { throw new java.io.IOException("disk full"); });
+        store.addStrike(UUID.randomUUID(), "Cheater");
+
+        assertFalse(store.saveNow());
+        assertTrue(store.isDirty());
+        assertEquals("sentinel: intact\n",
+                Files.readString(dataFile.toPath(), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void failedAsyncWriteDoesNotSpinAndCanBeRetriedAfterAnotherMutation() {
+        AtomicInteger submissions = new AtomicInteger();
+        PersistentStore store = new PersistentStore(dataFile, logger, task -> {
+            submissions.incrementAndGet();
+            task.run();
+            return true;
+        }, (file, content) -> { throw new java.io.IOException("offline volume"); });
+        store.addStrike(UUID.randomUUID(), "Cheater");
+
+        store.saveAsync();
+        assertEquals(1, submissions.get());
+        assertTrue(store.isDirty());
+
+        store.addHistory(UUID.randomUUID(), "new evidence resets retry delay");
+        store.saveAsync();
+        assertEquals(2, submissions.get());
     }
 }

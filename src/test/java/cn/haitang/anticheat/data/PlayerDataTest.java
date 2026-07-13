@@ -5,8 +5,11 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 import java.util.UUID;
+import org.bukkit.util.Vector;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlayerDataTest {
 
@@ -23,19 +26,22 @@ class PlayerDataTest {
     }
 
     @Test
-    void decayOnlyResetsGlobalWarningAfterTotalFallsBelowRewarnLevel() {
+    void decayResetsWarningOnlyForTheCheckThatFellBelowTheThreshold() {
         PlayerData data = new PlayerData(UUID.randomUUID(), "player");
-        data.addVl(CheckType.SPEED, 2.0);
-        data.addVl(CheckType.REACH, 2.0);
-        data.setPunishmentWarnStage(2);
+        data.addVl(CheckType.SPEED, 3.0);
+        data.addVl(CheckType.REACH, 1.0);
+        data.setPunishmentWarnStage(CheckType.SPEED, 2);
+        data.setPunishmentWarnStage(CheckType.REACH, 2);
 
         data.decay(0.5, Map.of(), 0L, 2.5);
         assertEquals(3.0, data.getTotalVl(), 0.0001);
-        assertEquals(2, data.getPunishmentWarnStage());
+        assertEquals(2, data.getPunishmentWarnStage(CheckType.SPEED));
+        assertEquals(0, data.getPunishmentWarnStage(CheckType.REACH));
 
         data.decay(0.3, Map.of(), 0L, 2.5);
         assertEquals(2.4, data.getTotalVl(), 0.0001);
-        assertEquals(0, data.getPunishmentWarnStage());
+        assertEquals(0, data.getPunishmentWarnStage(CheckType.SPEED));
+        assertEquals(0, data.getPunishmentWarnStage(CheckType.REACH));
     }
 
     @Test
@@ -66,11 +72,23 @@ class PlayerDataTest {
     void resetAllVlAlsoResetsGlobalWarningStage() {
         PlayerData data = new PlayerData(UUID.randomUUID(), "player");
         data.addVl(CheckType.FLIGHT, 12.0);
-        data.setPunishmentWarnStage(2);
+        data.setPunishmentWarnStage(CheckType.FLIGHT, 2);
 
         data.resetAllVl();
 
         assertEquals(0.0, data.getTotalVl(), 0.0001);
-        assertEquals(0, data.getPunishmentWarnStage());
+        assertEquals(0, data.getPunishmentWarnStage(CheckType.FLIGHT));
+    }
+
+    @Test
+    void impulseAllowanceIsDirectionalAndConsumable() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+        data.startImpulse(new Vector(1.0, 0.0, 0.0), 1_000L);
+
+        data.consumeImpulse(new Vector(0.0, 0.0, 1.0), 1_300L);
+        assertTrue(data.hasActiveImpulse(1_300L), "orthogonal movement must not consume knockback");
+
+        data.consumeImpulse(new Vector(0.9, 0.0, 0.0), 1_300L);
+        assertFalse(data.hasActiveImpulse(1_300L), "response along the impulse should consume it");
     }
 }

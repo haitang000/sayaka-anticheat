@@ -49,11 +49,20 @@ public class InventoryMoveCheck extends Check {
         PlayerData data = data(player);
         if (!data.isContainerOpen()) return;
 
+        int graceMs = Math.max(0, cfgI("grace-ms", 500));
+        if (shouldSkipForPing(player.getPing(), cfgI("max-ping-ms", 200))) {
+            data.setInventoryMoveIgnoreBefore(System.currentTimeMillis() + graceMs);
+            data.buffer(type(), -1.0);
+            return;
+        }
+
         if (player.isInsideVehicle() || player.isGliding()) return;
-        if (data.velocityWithin(2000) || data.damagedWithin(1500) || data.teleportedWithin(1500)) return;
+        if (data.velocityWithin(2000) || data.teleportedWithin(1500)) return;
         if (data.liquidWithin(1200) || data.iceWithin(2500) || data.bouncedWithin(2000)) return;
 
-        long graceEnd = data.getContainerOpenAt() + cfgI("grace-ms", 500);
+        long graceEnd = Math.max(
+                data.getContainerOpenAt() + graceMs,
+                data.getInventoryMoveIgnoreBefore());
         long now = System.currentTimeMillis();
         if (now < graceEnd) return;
 
@@ -71,5 +80,9 @@ public class InventoryMoveCheck extends Check {
         } else {
             data.buffer(type(), -1.0);
         }
+    }
+
+    static boolean shouldSkipForPing(int ping, int maxPingMs) {
+        return maxPingMs > 0 && ping >= maxPingMs;
     }
 }

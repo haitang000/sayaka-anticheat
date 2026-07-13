@@ -1,5 +1,6 @@
 package cn.haitang.anticheat.util;
 
+import cn.haitang.anticheat.AntiCheatPlugin;
 import org.bukkit.ChatColor;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -15,10 +16,10 @@ import java.util.Map;
 /** 从 config.yml 的 messages 段读取文本，处理颜色代码与占位符。 */
 public class Messages {
 
-    private final JavaPlugin plugin;
+    private final AntiCheatPlugin plugin;
     private final YamlConfiguration bundledDefaults;
 
-    public Messages(JavaPlugin plugin) {
+    public Messages(AntiCheatPlugin plugin) {
         this.plugin = plugin;
         this.bundledDefaults = loadBundledDefaults(plugin);
     }
@@ -42,8 +43,8 @@ public class Messages {
     public List<String> getList(String key, Map<String, String> placeholders) {
         List<String> out = new ArrayList<>();
         String path = "messages." + key;
-        List<String> lines = plugin.getConfig().isList(path)
-                ? plugin.getConfig().getStringList(path)
+        List<String> lines = plugin.config().isList(path)
+                ? plugin.config().getStringList(path)
                 : bundledDefaults.getStringList(path);
         for (String line : lines) {
             out.add(color(apply(line, placeholders)));
@@ -52,7 +53,7 @@ public class Messages {
     }
 
     private String getString(String path, String fallback) {
-        String configured = plugin.getConfig().getString(path);
+        String configured = plugin.config().getString(path);
         if (configured != null) return configured;
         return bundledDefaults.getString(path, fallback);
     }

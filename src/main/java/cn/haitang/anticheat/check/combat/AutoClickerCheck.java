@@ -36,6 +36,7 @@ public class AutoClickerCheck extends Check {
     public void onAttack(EntityDamageByEntityEvent event) {
         if (event.getCause() != EntityDamageEvent.DamageCause.ENTITY_ATTACK) return;
         if (event.getDamager() instanceof Player attacker) {
+            if (plugin.getCombatAttackContext().attack(event).isEmpty()) return;
             registerClick(attacker);
         }
     }

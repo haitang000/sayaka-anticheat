@@ -12,14 +12,8 @@ abstract class ChatCheck extends Check {
     }
 
     protected boolean isChatExempt(Player player, String specificBypassPermission) {
-        if (!isEnabled() || !player.isOnline()) return true;
-        if (player.hasPermission(PERM_BYPASS)
-                || player.hasPermission(specificBypassPermission)) return true;
-        if (plugin.getConfig().getBoolean("settings.exempt-ops", false) && player.isOp()) return true;
-        if (player.hasMetadata("NPC")) return true;
-        String worldName = player.getWorld().getName();
-        return plugin.getConfig().getStringList("settings.disabled-worlds").stream()
-                .anyMatch(world -> world.equalsIgnoreCase(worldName));
+        return !isEnabled() || plugin.getChatExemptions()
+                .isExempt(player.getUniqueId(), specificBypassPermission);
     }
 
     protected void dispatchViolation(Player player, double weight, String detail,

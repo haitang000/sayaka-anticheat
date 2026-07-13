@@ -4,76 +4,38 @@ import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
 import cn.haitang.anticheat.data.PlayerData;
-import cn.haitang.anticheat.packet.PacketBridge;
+import cn.haitang.anticheat.packet.PacketTimeline;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.player.PlayerMoveEvent;
-import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.event.vehicle.VehicleEnterEvent;
+import org.bukkit.event.vehicle.VehicleExitEvent;
 
 import java.util.Deque;
-import java.util.Queue;
 
 /**
  * 移动包速率检测（Timer 加速器：客户端加快游戏时钟，所有包按倍速发出）。
  *
- * 正常客户端每秒发送 20 个移动包。统计 3 秒滚动窗口内的移动包数，
- * 持续超过上限即违规。
- *
- * 数据包引擎工作时以 Netty 线程记录的真实到达时间为准（每 tick 由主线程
- * 批量评估）：不受服务端 tick 合并影响，静止玩家的 idle 包同样可见，
- * 无需去重即可覆盖任意倍速。引擎不可用时回退到移动事件路径——事件在
- * 服务端卡顿恢复时会把积压的包集中触发，这批事件的时间几乎相同，
- * 用最小间隔去重把尖峰压平（宽松方向），代价是高倍速 Timer 也会被
- * 去重掩盖，只能兜底低倍速。
+ * PacketEvents 路径按客户端移动包的纳秒时钟维护余额，并在主线程结合 TPS、
+ * 传送和载具状态决定是否采信。下方 Bukkit 事件窗口仅保留为无数据包源时的
+ * 防御性回退，不参与 2.0 正常运行路径。
  */
 public class TimerCheck extends Check {
 
     /** 滚动窗口长度（毫秒） */
     private static final long WINDOW_MS = 3000;
 
-    private BukkitTask packetDrainTask;
-
     public TimerCheck(AntiCheatPlugin plugin) {
         super(plugin, CheckType.TIMER);
-    }
-
-    /** 启动包级采样任务：每 tick 把 Netty 线程记录的包到达时间喂入滚动窗口 */
-    public void start() {
-        packetDrainTask = plugin.getServer().getScheduler()
-                .runTaskTimer(plugin, this::drainPacketArrivals, 1L, 1L);
-    }
-
-    public void shutdown() {
-        if (packetDrainTask != null) packetDrainTask.cancel();
-    }
-
-    private void drainPacketArrivals() {
-        PacketBridge bridge = plugin.getPacketBridge();
-        if (bridge == null || !bridge.isActive()) return;
-        for (Player player : plugin.getServer().getOnlinePlayers()) {
-            PlayerData data = plugin.getDataManager().getIfPresent(player.getUniqueId());
-            if (data == null) continue;
-            Queue<Long> arrivals = data.getPacketArrivals();
-            if (arrivals.isEmpty()) continue;
-
-            // 载具内客户端发包节奏不同；豁免期间队列也必须清空，防止积压
-            boolean skip = isExempt(player) || player.isInsideVehicle()
-                    || data.teleportedWithin(1000) || isServerLagging(data);
-            Long arrival;
-            while ((arrival = arrivals.poll()) != null) {
-                // 包到达时间由 Netty 线程记录，真实反映客户端发包节奏，无需去重
-                if (!skip) evaluate(player, data, arrival, 0);
-            }
+        if (plugin.getPacketTimeline() != null) {
+            plugin.getPacketTimeline().setTimerConsumer(this::onPacketEvidence);
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
-        // 包引擎工作时由包级路径接管
-        PacketBridge bridge = plugin.getPacketBridge();
-        if (bridge != null && bridge.isActive()) return;
-
+        if (plugin.getPacketTimeline() != null) return;
         Player player = event.getPlayer();
         if (isExempt(player)) return;
         PlayerData data = data(player);
@@ -86,13 +48,9 @@ public class TimerCheck extends Check {
         if (data.teleportedWithin(1000)) return;
         if (isServerLagging(data)) return;
 
-        evaluate(player, data, System.currentTimeMillis(), cfgI("min-gap-ms", 25));
-    }
-
-    /** 两条路径共用的判定：记录一次移动包，窗口超标则累积缓冲并上报 */
-    private void evaluate(Player player, PlayerData data, long now, long minGapMs) {
+        long now = System.currentTimeMillis();
         var times = data.getMoveTimes();
-        int size = recordMove(times, now, minGapMs);
+        int size = recordMove(times, now, cfgI("min-gap-ms", 25));
         if (size < 0) return;
 
         int maxRate = cfgI("max-packets-per-second", 24);
@@ -109,11 +67,44 @@ public class TimerCheck extends Check {
         }
     }
 
+    private void onPacketEvidence(Player player, PacketTimeline.TimerEvidence evidence) {
+        PlayerData data = data(player);
+        if (isExempt(player) || player.isInsideVehicle() || data.teleportedWithin(1_000)) {
+            plugin.getPacketTimeline().resetTimer(player.getUniqueId());
+            return;
+        }
+        if (evidence.ratePerSecond() <= cfgD("max-packets-per-second", 24.0)) {
+            data.buffer(type(), -0.25);
+            plugin.getPacketTimeline().resetTimer(player.getUniqueId());
+            return;
+        }
+        double buffered = data.buffer(type(), 1.0);
+        if (buffered >= cfgD("buffer-to-flag", 2.0)) {
+            data.resetBuffer(type());
+            flag(player, 2.0, String.format(
+                    "数据包时钟 %.1f/秒，余额 %.0fms（%d 包）",
+                    evidence.ratePerSecond(), evidence.balanceMillis(), evidence.packets()));
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onVehicleEnter(VehicleEnterEvent event) {
+        if (event.getEntered() instanceof Player player) {
+            plugin.getPacketTimeline().resetTimer(player.getUniqueId());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onVehicleExit(VehicleExitEvent event) {
+        if (event.getExited() instanceof Player player) {
+            plugin.getPacketTimeline().resetTimer(player.getUniqueId());
+        }
+    }
+
     /**
      * 记录一次移动包并修剪滚动窗口，返回窗口内的包数。
      * 与上一包间隔不足 minGapMs 的视为服务端卡顿恢复时集中处理的积压包，
-     * 不计入窗口并返回 -1（宽松方向：真实 Timer 的包间隔均匀，不受去重影响）；
-     * minGapMs 为 0 时不去重（包级路径的到达时间真实，网络突发簇不改变窗口总量）。
+     * 不计入窗口并返回 -1（宽松方向：真实 Timer 的包间隔均匀，不受去重影响）。
      */
     static int recordMove(Deque<Long> times, long now, long minGapMs) {
         if (!times.isEmpty() && now - times.peekLast() < minGapMs) return -1;

@@ -48,18 +48,20 @@ class ViolationManagerTest {
         YamlConfiguration config = new YamlConfiguration();
         PlayerData data = new PlayerData(UUID.randomUUID(), "player");
         data.addVl(CheckType.SPEED, 2.0);
-        data.setPunishmentWarnStage(2);
+        data.setPunishmentWarnStage(CheckType.SPEED, 2);
 
         data.decay(0.0, Map.of(), 0L, 2.5);
-        assertEquals(0, data.getPunishmentWarnStage());
+        assertEquals(0, data.getPunishmentWarnStage(CheckType.SPEED));
         assertEquals(20.0,
-                ViolationManager.effectiveKickVl(config, data.getPunishmentWarnStage()), 0.0001);
+                ViolationManager.effectiveKickVl(config,
+                        data.getPunishmentWarnStage(CheckType.SPEED)), 0.0001);
 
-        data.setPunishmentWarnStage(2);
+        data.setPunishmentWarnStage(CheckType.SPEED, 2);
         data.resetAllVl();
-        assertEquals(0, data.getPunishmentWarnStage());
+        assertEquals(0, data.getPunishmentWarnStage(CheckType.SPEED));
         assertEquals(20.0,
-                ViolationManager.effectiveKickVl(config, data.getPunishmentWarnStage()), 0.0001);
+                ViolationManager.effectiveKickVl(config,
+                        data.getPunishmentWarnStage(CheckType.SPEED)), 0.0001);
     }
 
     @Test

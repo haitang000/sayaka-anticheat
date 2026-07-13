@@ -83,13 +83,13 @@ public class AntiCheatCommand implements TabExecutor {
 
     private void handleReload(CommandSender sender) {
         if (denyIfNoPerm(sender, PERM_ADMIN)) return;
-        plugin.reloadConfig();
-        for (Check check : plugin.getChecks()) {
-            check.reloadConfiguration();
+        List<String> errors = plugin.reloadRuntimeConfig();
+        if (!errors.isEmpty()) {
+            sender.sendMessage(plugin.getMessages().prefix() + "§c配置重载失败，继续使用上一份有效配置：");
+            errors.forEach(error -> sender.sendMessage("  §7- §c" + error));
+            return;
         }
-        if (plugin.getPacketBridge() != null) {
-            plugin.getPacketBridge().reload();
-        }
+        if (plugin.getPacketBridge() != null) plugin.getPacketBridge().reload();
         sender.sendMessage(plugin.getMessages().prefixed("reloaded", null));
     }
 
@@ -109,7 +109,7 @@ public class AntiCheatCommand implements TabExecutor {
         }
         if (!any) sender.sendMessage("  §a当前无任何违规值。");
         sender.sendMessage(String.format("  §7综合 VL: §c%.1f", data.getTotalVl()));
-        int windowHours = plugin.getConfig().getInt("punishment.strikes.window-hours", 24);
+        int windowHours = plugin.config().getInt("punishment.strikes.window-hours", 24);
         int strikes = plugin.getStore().strikeCount(target.getUniqueId(), windowHours);
         int banCount = plugin.getStore().getBanCount(target.getUniqueId());
         sender.sendMessage(String.format("  §7近 %d 小时 strike: §c%d§7，历史封禁: §c%d 次", windowHours, strikes, banCount));

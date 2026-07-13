@@ -20,14 +20,16 @@ public final class MoveUtil {
 
     private MoveUtil() {}
 
-    /** 玩家碰撞箱半宽 + 判定余量 */
-    private static final double BB_HALF_WIDTH = 0.3 + 0.05;
+    private static final double BB_HALF_WIDTH = 0.3;
+    private static final double CONTACT_EPSILON = 1.0e-4;
 
     /**
      * 跳跃提升效果。1.20.4 及以前字段名为 JUMP，1.20.5+ 改名 JUMP_BOOST，
      * 直接引用字段会在另一侧版本抛 NoSuchFieldError，故按命名空间键解析。
      */
-    public static final PotionEffectType JUMP_BOOST_TYPE = resolveJumpBoost();
+    public static PotionEffectType jumpBoostType() {
+        return resolveJumpBoost();
+    }
 
     @SuppressWarnings("deprecation")
     private static PotionEffectType resolveJumpBoost() {
@@ -42,29 +44,40 @@ public final class MoveUtil {
     public static boolean hasCollisionBelow(Location loc, double depth) {
         World world = loc.getWorld();
         if (world == null) return true;
-        double minY = loc.getY() - depth;
+        double normalizedDepth = Math.max(0.0, depth);
+        BoundingBox probe = new BoundingBox(
+                loc.getX() - BB_HALF_WIDTH + CONTACT_EPSILON,
+                loc.getY() - normalizedDepth - CONTACT_EPSILON,
+                loc.getZ() - BB_HALF_WIDTH + CONTACT_EPSILON,
+                loc.getX() + BB_HALF_WIDTH - CONTACT_EPSILON,
+                loc.getY() + CONTACT_EPSILON,
+                loc.getZ() + BB_HALF_WIDTH - CONTACT_EPSILON);
+        double minY = probe.getMinY();
         int bx0 = (int) Math.floor(loc.getX() - BB_HALF_WIDTH);
         int bx1 = (int) Math.floor(loc.getX() + BB_HALF_WIDTH);
         int bz0 = (int) Math.floor(loc.getZ() - BB_HALF_WIDTH);
         int bz1 = (int) Math.floor(loc.getZ() + BB_HALF_WIDTH);
-        // 额外向下多扫一格：栅栏/矮墙碰撞箱高 1.5，方块本体在脚部坐标的下一格空间，
-        // 只按 floor(minY) 扫会漏掉，导致站在栅栏上被误判悬浮（取宽松方向）
         int by0 = (int) Math.floor(minY) - 1;
-        int by1 = (int) Math.floor(loc.getY());
+        int by1 = (int) Math.floor(probe.getMaxY());
         if (by0 < world.getMinHeight()) return true; // 世界底部按有支撑处理
         for (int x = bx0; x <= bx1; x++) {
             for (int z = bz0; z <= bz1; z++) {
                 for (int y = by0; y <= by1; y++) {
                     Block block = world.getBlockAt(x, y, z);
-                    Material mat = block.getType();
-                    if (mat.isAir()) continue;
-                    if (mat.isSolid()) return true;
-                    // 地毯、雪层等非 solid 但有碰撞箱的方块
-                    if (!block.getCollisionShape().getBoundingBoxes().isEmpty()) return true;
+                    if (block.getType().isAir()) continue;
+                    for (BoundingBox local : block.getCollisionShape().getBoundingBoxes()) {
+                        if (overlapsTranslated(probe, local, x, y, z)) return true;
+                    }
                 }
             }
         }
         return false;
+    }
+
+    static boolean overlapsTranslated(BoundingBox probe, BoundingBox local,
+                                      int blockX, int blockY, int blockZ) {
+        BoundingBox worldBox = local.clone().shift(blockX, blockY, blockZ);
+        return worldBox.overlaps(probe);
     }
 
     /** 是否站在船 / 矿车 / 潜影贝等实体"平台"上（或紧邻） */

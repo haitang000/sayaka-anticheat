@@ -43,7 +43,6 @@ public class SpeedCheck extends Check {
         if (player.isRiptiding() || data.riptideWithin(2000)) return;
         if (data.liquidWithin(1500)) return;                          // 海豚恩惠/激流等水中变速
         if (data.teleportedWithin(2000)) return;
-        if (data.damagedWithin(2000)) return;                         // 击退
         if (data.velocityWithin(2500)) return;                        // TNT/活塞等服务端赋速
         if (data.bouncedWithin(3000)) return;
 

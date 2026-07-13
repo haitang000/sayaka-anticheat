@@ -30,26 +30,26 @@ public class AntiSpamCheck extends ChatCheck {
 
     @Override
     public void reloadConfiguration() {
-        long floodWindow = Math.max(250, plugin.getConfig()
+        long floodWindow = Math.max(250, plugin.config()
                 .getLong("checks.anti-spam.flood-window-ms", 4_000));
-        int maxMessages = Math.max(1, plugin.getConfig()
+        int maxMessages = Math.max(1, plugin.config()
                 .getInt("checks.anti-spam.max-messages", 5));
-        long duplicateWindow = Math.max(1_000, plugin.getConfig()
+        long duplicateWindow = Math.max(1_000, plugin.config()
                 .getLong("checks.anti-spam.duplicate-window-ms", 15_000));
-        int maxDuplicates = Math.max(2, plugin.getConfig()
+        int maxDuplicates = Math.max(2, plugin.config()
                 .getInt("checks.anti-spam.max-duplicates", 3));
-        int minDuplicateLength = Math.max(1, plugin.getConfig()
+        int minDuplicateLength = Math.max(1, plugin.config()
                 .getInt("checks.anti-spam.min-duplicate-length", 4));
-        long flagCooldown = Math.max(0, plugin.getConfig()
+        long flagCooldown = Math.max(0, plugin.config()
                 .getLong("checks.anti-spam.flag-cooldown-ms", 1_000));
         AntiSpamDetector.Settings detectorSettings = new AntiSpamDetector.Settings(
                 floodWindow, maxMessages, duplicateWindow, maxDuplicates,
                 minDuplicateLength, flagCooldown);
         settings = new Settings(
                 detectorSettings,
-                plugin.getConfig().getBoolean("checks.anti-spam.cancel", true),
-                Math.max(0, plugin.getConfig().getDouble("checks.anti-spam.flood-weight", 1.0)),
-                Math.max(0, plugin.getConfig().getDouble("checks.anti-spam.duplicate-weight", 1.5)));
+                plugin.config().getBoolean("checks.anti-spam.cancel", true),
+                Math.max(0, plugin.config().getDouble("checks.anti-spam.flood-weight", 1.0)),
+                Math.max(0, plugin.config().getDouble("checks.anti-spam.duplicate-weight", 1.5)));
         detectors.clear();
     }
 

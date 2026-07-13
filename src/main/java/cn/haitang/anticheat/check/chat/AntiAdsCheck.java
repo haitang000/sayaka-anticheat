@@ -31,13 +31,13 @@ public class AntiAdsCheck extends ChatCheck {
 
     @Override
     public void reloadConfiguration() {
-        List<String> tlds = plugin.getConfig().isList("checks.anti-ads.blocked-tlds")
-                ? plugin.getConfig().getStringList("checks.anti-ads.blocked-tlds")
+        List<String> tlds = plugin.config().isList("checks.anti-ads.blocked-tlds")
+                ? plugin.config().getStringList("checks.anti-ads.blocked-tlds")
                 : DEFAULT_TLDS;
         settings = new Settings(
-                plugin.getConfig().getBoolean("checks.anti-ads.cancel", true),
-                Math.max(0, plugin.getConfig().getDouble("checks.anti-ads.flag-weight", 3.0)),
-                List.copyOf(plugin.getConfig().getStringList("checks.anti-ads.allowed-hosts")),
+                plugin.config().getBoolean("checks.anti-ads.cancel", true),
+                Math.max(0, plugin.config().getDouble("checks.anti-ads.flag-weight", 3.0)),
+                List.copyOf(plugin.config().getStringList("checks.anti-ads.allowed-hosts")),
                 AntiAdsDetector.normalizeTlds(tlds));
     }
 

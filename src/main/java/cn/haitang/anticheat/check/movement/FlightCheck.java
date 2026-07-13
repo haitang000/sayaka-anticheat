@@ -44,7 +44,7 @@ public class FlightCheck extends Check {
         // ---- 1. 上升超限 ----
         double ascent = to.getY() - data.getAirStartY();
         double maxJump = cfgD("max-jump", 1.35)
-                + MoveUtil.effectLevel(player, MoveUtil.JUMP_BOOST_TYPE) * cfgD("jump-boost-bonus", 0.7);
+                + MoveUtil.effectLevel(player, MoveUtil.jumpBoostType()) * cfgD("jump-boost-bonus", 0.7);
         if (ascent > maxJump) {
             double buffered = data.buffer(type(), 1.0);
             if (buffered >= cfgD("buffer-to-flag", 2.0)) {
@@ -79,7 +79,7 @@ public class FlightCheck extends Check {
         if (data.liquidWithin(1200) || data.climbedWithin(1200)) return true;
         if (data.isInWeb() || data.isNearHoney()) return true;
         if (data.teleportedWithin(3000) || data.velocityWithin(3000)) return true;
-        if (data.damagedWithin(1500) || data.bouncedWithin(4000)) return true;
+        if (data.bouncedWithin(4000)) return true;
         return MoveUtil.standingOnEntity(player);
     }
 
@@ -99,11 +99,20 @@ public class FlightCheck extends Check {
     /** 3. 静止悬浮兜底扫描（每秒一次） */
     private void sweepStaticHover() {
         if (!isEnabled()) return;
+        double[] tps = plugin.getServer().getTPS();
+        if (tps.length > 0 && tps[0] < cfgD("static-hover-min-tps", 18.0)) {
+            for (PlayerData data : plugin.getDataManager().all()) data.setStaticHoverCount(0);
+            return;
+        }
         long now = System.currentTimeMillis();
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (isExempt(player) || isMovementExempt(player)) continue;
             PlayerData data = data(player);
             Location loc = player.getLocation();
+            if (!loc.getWorld().isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) {
+                data.setStaticHoverCount(0);
+                continue;
+            }
 
             boolean idle = now - data.getLastMoveAt() > 1500;
             // 不采信客户端 onGround 声明，只看服务端方块碰撞
@@ -114,15 +123,7 @@ public class FlightCheck extends Check {
                 data.setStaticHoverCount(count);
                 if (count >= 3) {
                     data.setStaticHoverCount(0);
-                    flag(player, 2.0, String.format("静止悬浮 %ds y=%.1f", count, loc.getY()));
-                    if (cfgB("setback", true) && shouldMitigate(player)) {
-                        Location target = data.getLastValidLocation();
-                        if (target != null && target.getWorld() != null
-                                && target.getWorld().equals(loc.getWorld())) {
-                            data.touchSetback();
-                            player.teleport(target);
-                        }
-                    }
+                    observe(player, String.format("静止悬浮 %ds y=%.1f", count, loc.getY()));
                 }
             } else {
                 data.setStaticHoverCount(0);

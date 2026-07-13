@@ -66,11 +66,11 @@ public class StepCheck extends Check {
         if (player.isInsideVehicle() || player.isFlying() || player.getAllowFlight()) return true;
         if (player.isGliding() || data.glidedWithin(2500)) return true;
         if (player.isRiptiding() || data.riptideWithin(2000)) return true;
-        if (MoveUtil.effectLevel(player, MoveUtil.JUMP_BOOST_TYPE) > 0) return true;
+        if (MoveUtil.effectLevel(player, MoveUtil.jumpBoostType()) > 0) return true;
         if (data.liquidWithin(1500) || data.climbedWithin(1500)) return true;
         if (data.levitationWithin(2500) || data.slowFallWithin(1500)) return true;
         if (data.teleportedWithin(3000) || data.velocityWithin(3000)) return true;
-        if (data.damagedWithin(1500) || data.bouncedWithin(4000)) return true;
+        if (data.bouncedWithin(4000)) return true;
         if (data.isInWeb() || data.isNearHoney()) return true;
         return MoveUtil.standingOnEntity(player);
     }

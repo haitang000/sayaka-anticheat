@@ -6,7 +6,7 @@
 
     <groupId>cn.haitang</groupId>
     <artifactId>anti-cheat</artifactId>
-    <version>1.1.0</version>
+    <version>2.0.0</version>
     <packaging>jar</packaging>
 
     <name>Sayaka AntiCheat</name>
@@ -24,24 +24,24 @@
             <url>https://repo.papermc.io/repository/maven-public/</url>
         </repository>
         <repository>
-            <id>codemc</id>
+            <id>codemc-releases</id>
             <url>https://repo.codemc.io/repository/maven-releases/</url>
         </repository>
     </repositories>
 
     <dependencies>
-        <!-- 编译期依赖：Paper API（运行时由服务端提供，兼容 Paper/Purpur，1.20+） -->
+        <!-- 编译期依赖：Paper API（运行时由服务端提供，支持 Paper/Purpur 1.20.4+） -->
         <dependency>
             <groupId>io.papermc.paper</groupId>
             <artifactId>paper-api</artifactId>
             <version>1.20.4-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
         </dependency>
-        <!-- 数据包引擎：shade 进 jar 并 relocate，服主无需安装任何前置插件 -->
         <dependency>
             <groupId>com.github.retrooper</groupId>
             <artifactId>packetevents-spigot</artifactId>
             <version>2.13.0</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -64,53 +64,6 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.0</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <artifactSet>
-                                <excludes>
-                                    <!-- Paper 服务端自带，无需打包 -->
-                                    <exclude>net.kyori:*</exclude>
-                                    <exclude>com.google.code.gson:gson</exclude>
-                                    <exclude>org.jetbrains:annotations</exclude>
-                                </excludes>
-                            </artifactSet>
-                            <relocations>
-                                <!-- PacketEvents 官方要求 relocate，避免与其他同样内嵌它的插件冲突 -->
-                                <relocation>
-                                    <pattern>com.github.retrooper.packetevents</pattern>
-                                    <shadedPattern>cn.haitang.anticheat.libs.packetevents.api</shadedPattern>
-                                </relocation>
-                                <relocation>
-                                    <pattern>io.github.retrooper.packetevents</pattern>
-                                    <shadedPattern>cn.haitang.anticheat.libs.packetevents.impl</shadedPattern>
-                                </relocation>
-                            </relocations>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>META-INF/maven/**</exclude>
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                        <exclude>module-info.class</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
                 <version>3.1.0</version>
                 <executions>
@@ -124,27 +77,16 @@
                                     <patternset>
                                         <include name="plugin.yml"/>
                                         <include name="cn/haitang/anticheat/AntiCheatPlugin.class"/>
-                                        <include name="cn/haitang/anticheat/libs/packetevents/api/PacketEvents.class"/>
-                                        <include name="com/github/retrooper/**"/>
-                                        <include name="io/github/retrooper/**"/>
                                     </patternset>
                                 </unzip>
                                 <available file="${project.build.directory}/plugin-jar-check/plugin.yml"
                                            property="plugin.descriptor.present"/>
                                 <available file="${project.build.directory}/plugin-jar-check/cn/haitang/anticheat/AntiCheatPlugin.class"
                                            property="plugin.main.present"/>
-                                <available file="${project.build.directory}/plugin-jar-check/cn/haitang/anticheat/libs/packetevents/api/PacketEvents.class"
-                                           property="packetevents.relocated.present"/>
-                                <available file="${project.build.directory}/plugin-jar-check/com/github/retrooper"
-                                           type="dir" property="packetevents.unrelocated.leak"/>
                                 <fail unless="plugin.descriptor.present"
                                       message="The built plugin JAR does not contain plugin.yml"/>
                                 <fail unless="plugin.main.present"
                                       message="The built plugin JAR does not contain the configured main class"/>
-                                <fail unless="packetevents.relocated.present"
-                                      message="The built plugin JAR does not contain relocated PacketEvents classes"/>
-                                <fail if="packetevents.unrelocated.leak"
-                                      message="Un-relocated PacketEvents classes leaked into the JAR (check shade relocations)"/>
                             </target>
                         </configuration>
                         <goals>

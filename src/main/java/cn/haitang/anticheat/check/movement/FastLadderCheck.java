@@ -33,7 +33,7 @@ public class FastLadderCheck extends Check {
 
         if (player.isInsideVehicle() || player.isGliding() || player.isRiptiding()) return;
         if (data.liquidWithin(1000) || data.levitationWithin(3000)) return;
-        if (data.velocityWithin(2000) || data.damagedWithin(1500) || data.bouncedWithin(3000)) return;
+        if (data.velocityWithin(2000) || data.bouncedWithin(3000)) return;
         if (data.teleportedWithin(1500)) return;
         // 贴梯跳跃起步豁免
         if (data.getAirTicks() <= 2) return;

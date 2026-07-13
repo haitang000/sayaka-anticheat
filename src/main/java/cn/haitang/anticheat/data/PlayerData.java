@@ -3,6 +3,7 @@ package cn.haitang.anticheat.data;
 import cn.haitang.anticheat.check.CheckType;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.util.Vector;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -44,6 +45,7 @@ public class PlayerData {
     private int hoverTicks;
     private double lastDeltaXZ;
     private double lastDeltaY;
+    private Vector lastMovementDelta = new Vector();
     private long lastMoveAt;
     private boolean collisionBelow = true;
     private boolean inWeb;
@@ -56,6 +58,10 @@ public class PlayerData {
     private long lastDamageAt;
     private long lastVelocityAt;
     private double lastVelocityMagnitude;
+    private Vector impulseVector;
+    private double impulseProjection;
+    private long impulseExpiresAt;
+    private long impulseMinExpiresAt;
     private long lastBounceAt;
     private long lastIceAt;
     private long lastSoulSandAt;
@@ -80,6 +86,7 @@ public class PlayerData {
     // ---- 容器状态（InventoryMove） ----
     private boolean containerOpen;
     private long containerOpenAt;
+    private long inventoryMoveIgnoreBefore;
     private final Deque<Long> containerActionTimes = new ArrayDeque<>();
 
     // ---- 物品使用状态（FastUse / FastBow） ----
@@ -104,11 +111,14 @@ public class PlayerData {
     private final Deque<Long> noDigBreaks = new ArrayDeque<>();
 
     // ---- 惩罚状态 ----
-    private boolean punishing;
-    private int punishmentWarnStage;
+    public enum PunishmentState { IDLE, PENDING, COMMITTED }
+
+    private PunishmentState punishmentState = PunishmentState.IDLE;
+    private final Map<CheckType, Integer> punishmentWarnStages = new EnumMap<>(CheckType.class);
     private long lastPlayerWarnAt;
     private long lastSetbackAt;
     private int staticHoverCount;
+    private int supportedTicks;
 
     // Generic exemption checks are identical for every check within one server tick.
     private int exemptionCacheTick = Integer.MIN_VALUE;
@@ -132,7 +142,7 @@ public class PlayerData {
         return vl.getOrDefault(type, 0.0);
     }
 
-    /** 当前所有检测项 VL 的总和，用于综合警告与处罚判定。 */
+    /** 当前所有检测项 VL 的总和，仅用于管理界面展示。 */
     public double getTotalVl() {
         double total = 0;
         for (double value : vl.values()) total += value;
@@ -143,14 +153,14 @@ public class PlayerData {
         vl.remove(type);
         lastVlGainAt.remove(type);
         buffer.remove(type);
-        punishmentWarnStage = 0;
+        punishmentWarnStages.remove(type);
     }
 
     public void resetAllVl() {
         vl.clear();
         lastVlGainAt.clear();
         buffer.clear();
-        punishmentWarnStage = 0;
+        punishmentWarnStages.clear();
     }
 
     /**
@@ -174,7 +184,9 @@ public class PlayerData {
                 vl.put(t, nv);
             }
         }
-        if (getTotalVl() < rewarnBelow) punishmentWarnStage = 0;
+        for (CheckType type : CheckType.values()) {
+            if (getVl(type) < rewarnBelow) punishmentWarnStages.remove(type);
+        }
     }
 
     /**
@@ -191,12 +203,13 @@ public class PlayerData {
         buffer.remove(type);
     }
 
-    public int getPunishmentWarnStage() {
-        return punishmentWarnStage;
+    public int getPunishmentWarnStage(CheckType type) {
+        return punishmentWarnStages.getOrDefault(type, 0);
     }
 
-    public void setPunishmentWarnStage(int stage) {
-        punishmentWarnStage = stage;
+    public void setPunishmentWarnStage(CheckType type, int stage) {
+        if (stage <= 0) punishmentWarnStages.remove(type);
+        else punishmentWarnStages.put(type, stage);
     }
 
     public void addViolation(ViolationRecord record) {
@@ -241,6 +254,11 @@ public class PlayerData {
     public double getLastDeltaY() { return lastDeltaY; }
     public void setLastDeltaY(double v) { this.lastDeltaY = v; }
 
+    public Vector getLastMovementDelta() { return lastMovementDelta.clone(); }
+    public void setLastMovementDelta(Vector movement) {
+        this.lastMovementDelta = movement == null ? new Vector() : movement.clone();
+    }
+
     public long getLastMoveAt() { return lastMoveAt; }
     public void setLastMoveAt(long lastMoveAt) { this.lastMoveAt = lastMoveAt; }
 
@@ -262,28 +280,78 @@ public class PlayerData {
         this.airTicks = 0;
         this.hoverTicks = 0;
         this.staticHoverCount = 0;
+        this.supportedTicks = 0;
         this.lastDeltaXZ = 0;
         this.lastDeltaY = 0;
+        this.lastMovementDelta = new Vector();
         this.collisionBelow = true;
         this.inWeb = false;
         this.nearHoney = false;
         this.airStartY = current == null ? 0 : current.getY();
         this.speedWindow.clear();
         this.moveTimes.clear();
+        clearImpulse();
     }
 
     // ---- 宽限 ----
 
     public long getJoinAt() { return joinAt; }
     public void touchTeleport() { this.lastTeleportAt = System.currentTimeMillis(); }
-    public void touchDamage() { this.lastDamageAt = System.currentTimeMillis(); }
+    /** Arms a short, consumable allowance for velocity actually issued by the server. */
+    public void startImpulse(Vector velocity) {
+        startImpulse(velocity, System.currentTimeMillis());
+    }
 
-    /** 记录服务端赋速及其强度。强度越大（跳板/大炮/钩爪），后续合法惯性持续越久 */
-    public void touchVelocity(double magnitude) {
-        this.lastVelocityAt = System.currentTimeMillis();
-        this.lastVelocityMagnitude = magnitude;
+    void startImpulse(Vector velocity, long now) {
+        if (!isFinite(velocity) || velocity.lengthSquared() < 1.0e-6) {
+            clearImpulse();
+            return;
+        }
+        this.lastVelocityAt = now;
+        this.lastVelocityMagnitude = velocity.length();
+        this.impulseVector = velocity.clone();
+        this.impulseProjection = 0.0;
+        this.impulseMinExpiresAt = now + 250L;
+        this.impulseExpiresAt = now + Math.min(2_000L,
+                Math.max(450L, 600L + (long) (lastVelocityMagnitude * 450L)));
+    }
+
+    public void consumeImpulse(Vector movement) {
+        consumeImpulse(movement, System.currentTimeMillis());
+    }
+
+    void consumeImpulse(Vector movement, long now) {
+        if (!hasActiveImpulse(now) || !isFinite(movement)) return;
+        Vector direction = impulseVector.clone().normalize();
+        impulseProjection += Math.max(0.0, movement.dot(direction));
+        if (now >= impulseMinExpiresAt
+                && impulseProjection >= Math.max(0.08, lastVelocityMagnitude * 0.8)) clearImpulse();
+    }
+
+    public boolean hasActiveImpulse() {
+        return hasActiveImpulse(System.currentTimeMillis());
+    }
+
+    boolean hasActiveImpulse(long now) {
+        if (impulseVector == null) return false;
+        if (now <= impulseExpiresAt) return true;
+        clearImpulse();
+        return false;
+    }
+
+    public void clearImpulse() {
+        impulseVector = null;
+        impulseProjection = 0.0;
+        impulseExpiresAt = 0L;
+        impulseMinExpiresAt = 0L;
+    }
+
+    private static boolean isFinite(Vector vector) {
+        return vector != null && Double.isFinite(vector.getX())
+                && Double.isFinite(vector.getY()) && Double.isFinite(vector.getZ());
     }
     public void touchBounce() { this.lastBounceAt = System.currentTimeMillis(); }
+    public void touchDamage() { this.lastDamageAt = System.currentTimeMillis(); }
     public void touchIce() { this.lastIceAt = System.currentTimeMillis(); }
     public void touchSoulSand() { this.lastSoulSandAt = System.currentTimeMillis(); }
     public void touchLiquid() { this.lastLiquidAt = System.currentTimeMillis(); }
@@ -295,11 +363,8 @@ public class PlayerData {
 
     public boolean teleportedWithin(long ms) { return within(lastTeleportAt, ms); }
     public boolean damagedWithin(long ms) { return within(lastDamageAt, ms); }
-
-    /** 赋速宽限窗口按赋速强度放大（普通击退≈0.55，插件发射可达 3+），上限 4 倍 */
     public boolean velocityWithin(long ms) {
-        double scale = Math.min(4.0, 1.0 + lastVelocityMagnitude);
-        return within(lastVelocityAt, (long) (ms * scale));
+        return hasActiveImpulse() && within(lastVelocityAt, ms);
     }
 
     public long getLastVelocityAt() { return lastVelocityAt; }
@@ -348,10 +413,17 @@ public class PlayerData {
 
     public boolean isContainerOpen() { return containerOpen; }
     public long getContainerOpenAt() { return containerOpenAt; }
+    public long getInventoryMoveIgnoreBefore() { return inventoryMoveIgnoreBefore; }
+    public void setInventoryMoveIgnoreBefore(long at) { this.inventoryMoveIgnoreBefore = at; }
 
     public void setContainerOpen(boolean open) {
         this.containerOpen = open;
-        if (open) this.containerOpenAt = System.currentTimeMillis();
+        if (open) {
+            this.containerOpenAt = System.currentTimeMillis();
+            this.inventoryMoveIgnoreBefore = containerOpenAt;
+        } else {
+            this.inventoryMoveIgnoreBefore = 0;
+        }
     }
 
     public Deque<Long> getPlaceTimes() { return placeTimes; }
@@ -401,8 +473,12 @@ public class PlayerData {
 
     // ---- 惩罚 ----
 
-    public boolean isPunishing() { return punishing; }
-    public void setPunishing(boolean punishing) { this.punishing = punishing; }
+    public boolean isPunishing() { return punishmentState != PunishmentState.IDLE; }
+    public PunishmentState getPunishmentState() { return punishmentState; }
+    public void setPunishmentState(PunishmentState state) { this.punishmentState = state; }
+    public void setPunishing(boolean punishing) {
+        this.punishmentState = punishing ? PunishmentState.PENDING : PunishmentState.IDLE;
+    }
 
     public long getLastPlayerWarnAt() { return lastPlayerWarnAt; }
     public void setLastPlayerWarnAt(long v) { this.lastPlayerWarnAt = v; }
@@ -412,6 +488,8 @@ public class PlayerData {
 
     public int getStaticHoverCount() { return staticHoverCount; }
     public void setStaticHoverCount(int v) { this.staticHoverCount = v; }
+    public int getSupportedTicks() { return supportedTicks; }
+    public void setSupportedTicks(int value) { supportedTicks = Math.max(0, value); }
 
     public Map<CheckType, Long> getLastAlertAt() { return lastAlertAt; }
 

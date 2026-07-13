@@ -30,6 +30,7 @@ public class CriticalsCheck extends Check {
         if (!(event.getDamager() instanceof Player attacker)) return;
         if (!event.isCritical()) return;
         if (isExempt(attacker)) return;
+        if (plugin.getCombatAttackContext().attack(event).isEmpty()) return;
         PlayerData data = data(attacker);
 
         if (attacker.isInsideVehicle()) return;

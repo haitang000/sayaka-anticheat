@@ -28,4 +28,5 @@ class AimCheckTest {
         assertFalse(AimCheck.isRapidTargetSwitch(1, 2, first, first));
         assertFalse(AimCheck.isRapidTargetSwitch(1, 2, first, null));
     }
+
 }

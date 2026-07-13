@@ -67,15 +67,14 @@ public class AlertManager {
 
     // ---- 玩家警告（递进第 1、2 级） ----
 
-    public void warnPlayer(Player player, int stage) {
+    public boolean warnPlayer(Player player, CheckType type, int stage) {
         PlayerData data = plugin.getDataManager().get(player);
         long now = System.currentTimeMillis();
-        if (now - data.getLastPlayerWarnAt() < WARN_THROTTLE_MS) return;
+        if (now - data.getLastPlayerWarnAt() < WARN_THROTTLE_MS) return false;
         data.setLastPlayerWarnAt(now);
 
         String keyBase = stage >= 2 ? "warn-2" : "warn-1";
-        // 兼容旧配置中的 %check%，但不向被检测玩家公开具体检测项。
-        Map<String, String> ph = Map.of("check", "异常行为");
+        Map<String, String> ph = Map.of("check", type.display());
         player.sendTitle(
                 plugin.getMessages().get(keyBase + "-title", ph),
                 plugin.getMessages().get(keyBase + "-subtitle", ph),
@@ -86,12 +85,13 @@ public class AlertManager {
         player.playSound(player.getLocation(),
                 stage >= 2 ? Sound.ENTITY_ENDER_DRAGON_GROWL : Sound.BLOCK_NOTE_BLOCK_BASS,
                 0.8f, stage >= 2 ? 1.0f : 0.6f);
+        return true;
     }
 
     // ---- 公告 ----
 
     public void announce(String key, Map<String, String> placeholders) {
-        if (!plugin.getConfig().getBoolean("punishment.announce", true)) return;
+        if (!plugin.config().getBoolean("punishment.announce", true)) return;
         String msg = plugin.getMessages().prefixed(key, placeholders);
         Bukkit.broadcastMessage(msg);
     }
