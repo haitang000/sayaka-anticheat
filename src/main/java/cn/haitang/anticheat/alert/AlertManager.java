@@ -85,6 +85,7 @@ public class AlertManager {
         player.playSound(player.getLocation(),
                 stage >= 2 ? Sound.ENTITY_ENDER_DRAGON_GROWL : Sound.BLOCK_NOTE_BLOCK_BASS,
                 0.8f, stage >= 2 ? 1.0f : 0.6f);
+        data.addWarning(new PlayerData.WarningRecord(now, type, stage, data.getVl(type)));
         return true;
     }
 

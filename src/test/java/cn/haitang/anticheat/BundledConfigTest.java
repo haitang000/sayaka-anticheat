@@ -129,6 +129,8 @@ class BundledConfigTest {
             assertFalse(config.getStringList("messages." + key).isEmpty(),
                     "messages." + key + " 应为非空列表");
         }
+        assertTrue(config.getString("messages.ban-screen", "").contains("%punishment-id%"),
+                "封禁界面应显示可供申诉和查询的处罚 ID");
     }
 
     @Test

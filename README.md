@@ -59,6 +59,7 @@
 |---|---|---|
 | `/sac status <玩家>` | 实时 VL、strike、封禁史 | `anticheat.admin` |
 | `/sac history <玩家>` | 违规明细 + 历史惩罚 | `anticheat.admin` |
+| `/sac punishment <处罚ID>` | 封禁详情、封禁前警告与检测失败日志 | `anticheat.admin` |
 | `/sac reset <玩家> [all]` | 清空 VL（`all` 连同 strike/封禁档案） | `anticheat.admin` |
 | `/sac whitelist add/remove/list` | 反作弊白名单管理 | `anticheat.whitelist` |
 | `/sac unban <玩家> [reset]` | 解封并清空 strike | `anticheat.unban` |

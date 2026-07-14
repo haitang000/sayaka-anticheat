@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
  * /sac 管理命令：
  *   status <玩家>   查看当前 VL 与状态
  *   history <玩家>  查看违规与惩罚历史
+ *   punishment <处罚ID>  查询封禁详情及封禁前证据
  *   reset <玩家> [all]  清空实时 VL（all 连同 strike/封禁档案）
  *   whitelist <add|remove|list> [玩家]  管理反作弊白名单
  *   unban <玩家> [reset]  解封并可选重置封禁次数阶梯
@@ -40,6 +41,7 @@ public class AntiCheatCommand implements TabExecutor {
     private static final String PERM_UNBAN = "anticheat.unban";
     private static final Pattern PLAYER_NAME = Pattern.compile("[A-Za-z0-9_]{1,16}");
     private static final SimpleDateFormat TIME = new SimpleDateFormat("HH:mm:ss");
+    private static final SimpleDateFormat DATE_TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
     private final AntiCheatPlugin plugin;
 
@@ -59,6 +61,7 @@ public class AntiCheatCommand implements TabExecutor {
             case "update" -> handleUpdate(sender, args);
             case "status" -> handleStatus(sender, args);
             case "history" -> handleHistory(sender, args);
+            case "punishment" -> handlePunishment(sender, args);
             case "reset" -> handleReset(sender, args);
             case "whitelist" -> handleWhitelist(sender, args);
             case "unban" -> handleUnban(sender, args);
@@ -152,6 +155,57 @@ public class AntiCheatCommand implements TabExecutor {
             sender.sendMessage(plugin.getMessages().prefix() + "§7历史惩罚:");
             for (String line : history) sender.sendMessage("  §8" + line);
         }
+    }
+
+    private void handlePunishment(CommandSender sender, String[] args) {
+        if (denyIfNoPerm(sender, PERM_ADMIN)) return;
+        if (args.length < 2) {
+            sendHelp(sender);
+            return;
+        }
+        PersistentStore.PunishmentRecord punishment = plugin.getStore().getPunishment(args[1]);
+        if (punishment == null) {
+            sender.sendMessage(plugin.getMessages().prefix() + "§c找不到处罚 ID §f" + args[1] + "§c。");
+            return;
+        }
+
+        sender.sendMessage(plugin.getMessages().prefix() + "§7处罚 ID: §f" + punishment.id());
+        sender.sendMessage("  §7玩家: §f" + punishment.playerName() + " §8(" + punishment.playerId() + ")");
+        sender.sendMessage(String.format("  §7封禁: §f%s §7至 §f%s §8(%d 小时，第 %d 次)",
+                DATE_TIME.format(new Date(punishment.bannedAt())),
+                DATE_TIME.format(new Date(punishment.expiresAt())),
+                punishment.hours(), punishment.banNumber()));
+        sender.sendMessage(String.format("  §7触发检测: §f%s §7VL §c%.1f",
+                displayCheck(punishment.check()), punishment.vl()));
+
+        sender.sendMessage("  §7封禁前玩家警告:");
+        if (punishment.warnings().isEmpty()) {
+            sender.sendMessage("    §8无");
+        } else {
+            for (PersistentStore.WarningEvidence warning : punishment.warnings()) {
+                sender.sendMessage(String.format("    §8%s §e第 %d 级 §7%s VL §c%.1f",
+                        TIME.format(new Date(warning.at())), warning.stage(),
+                        displayCheck(warning.check()), warning.vl()));
+            }
+        }
+
+        sender.sendMessage("  §7封禁前检测失败日志:");
+        if (punishment.detections().isEmpty()) {
+            sender.sendMessage("    §8无");
+        } else {
+            for (PersistentStore.DetectionEvidence detection : punishment.detections()) {
+                sender.sendMessage(String.format("    §8%s §7%s VL §c%.1f §8(%s)",
+                        TIME.format(new Date(detection.at())), displayCheck(detection.check()),
+                        detection.vl(), detection.detail()));
+            }
+        }
+    }
+
+    private static String displayCheck(String checkId) {
+        for (CheckType type : CheckType.values()) {
+            if (type.id().equalsIgnoreCase(checkId)) return type.display();
+        }
+        return checkId;
     }
 
     private void handleReset(CommandSender sender, String[] args) {
@@ -293,6 +347,7 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage(plugin.getMessages().prefix() + "§fSayaka AntiCheat §7命令:");
         sender.sendMessage("  §e/sac status <玩家> §7- 实时违规值与 strike");
         sender.sendMessage("  §e/sac history <玩家> §7- 违规与惩罚历史");
+        sender.sendMessage("  §e/sac punishment <处罚ID> §7- 查询封禁详情与封禁前证据");
         sender.sendMessage("  §e/sac reset <玩家> [all] §7- 清空违规值（all 含档案）");
         sender.sendMessage("  §e/sac whitelist add|remove|list [玩家] §7- 管理检测白名单");
         sender.sendMessage("  §e/sac unban <玩家> [reset] §7- 解封（reset 重置处罚档位）");
@@ -305,7 +360,7 @@ public class AntiCheatCommand implements TabExecutor {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
         if (args.length == 1) {
-            for (String sub : List.of("status", "history", "reset", "whitelist", "unban", "alerts", "reload", "update")) {
+            for (String sub : List.of("status", "history", "punishment", "reset", "whitelist", "unban", "alerts", "reload", "update")) {
                 if (sub.startsWith(args[0].toLowerCase())) out.add(sub);
             }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("update")) {
@@ -316,7 +371,8 @@ public class AntiCheatCommand implements TabExecutor {
             }
         } else if (args.length == 2 && !args[0].equalsIgnoreCase("alerts")
                 && !args[0].equalsIgnoreCase("reload")
-                && !args[0].equalsIgnoreCase("update")) {
+                && !args[0].equalsIgnoreCase("update")
+                && !args[0].equalsIgnoreCase("punishment")) {
             for (Player p : Bukkit.getOnlinePlayers()) {
                 if (p.getName().toLowerCase().startsWith(args[1].toLowerCase())) out.add(p.getName());
             }

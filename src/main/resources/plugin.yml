@@ -14,7 +14,7 @@ commands:
 
 permissions:
   anticheat.admin:
-    description: 使用全部管理命令（reload/update/reset/status/history）
+    description: 使用全部管理命令（reload/update/reset/status/history/punishment）
     default: op
   anticheat.alerts:
     description: 接收实时违规警报，可用 /sac alerts 开关

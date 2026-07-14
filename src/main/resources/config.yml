@@ -88,7 +88,7 @@ punishment:
   tempban-hours: [1, 6, 24, 72]
   # 踢出/封禁时是否全服公告（对旁观者也是威慑）
   announce: true
-  # 惩罚时额外执行的控制台命令，占位符: %player% %check% %hours%
+  # 惩罚时额外执行的控制台命令，占位符: %player% %check% %hours% %punishment-id%
   commands:
     on-kick: []
     #  例: - "eco take %player% 100"
@@ -560,7 +560,7 @@ checks:
 
 # ---------------- 文本 ----------------
 # 颜色代码用 & ，占位符视上下文可用:
-# %player% %check% %vl% %ping% %detail% %strikes% %max-strikes% %hours% %time%
+# %player% %check% %vl% %ping% %detail% %strikes% %max-strikes% %hours% %time% %punishment-id%
 messages:
   prefix: "&8[&cSayaka AntiCheat&8]&7 "
 
@@ -596,6 +596,7 @@ messages:
     &7原因: &f%check% &7(多次违规)
     &7封禁时长: &c%hours% 小时
     &7解封时间: &f%time%
+    &7处罚 ID: &f%punishment-id%
 
     &8若认为是误判，请联系管理员
   broadcast-kick: "&c玩家 &f%player% &c因 &f%check% &c被反作弊系统踢出"

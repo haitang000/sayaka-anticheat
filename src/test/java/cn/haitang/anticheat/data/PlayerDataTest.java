@@ -14,6 +14,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PlayerDataTest {
 
     @Test
+    void warningHistoryKeepsTheMostRecentTwentyEntries() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "tester");
+
+        for (int stage = 1; stage <= 25; stage++) {
+            data.addWarning(new PlayerData.WarningRecord(stage, CheckType.SPEED, stage, stage));
+        }
+
+        assertEquals(20, data.getRecentWarnings().size());
+        assertEquals(6, data.getRecentWarnings().getFirst().stage());
+        assertEquals(25, data.getRecentWarnings().getLast().stage());
+    }
+
+    @Test
     void totalVlIncludesEveryCheck() {
         PlayerData data = new PlayerData(UUID.randomUUID(), "player");
 

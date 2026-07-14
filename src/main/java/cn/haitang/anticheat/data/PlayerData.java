@@ -22,6 +22,9 @@ public class PlayerData {
     /** 一次违规记录（供 /sac history 查看） */
     public record ViolationRecord(long at, CheckType type, double vl, String detail) {}
 
+    /** 一次已实际发送给玩家的递进警告，封禁时会写入处罚快照。 */
+    public record WarningRecord(long at, CheckType type, int stage, double vl) {}
+
     /** 移动采样：时间戳 + 该次移动的水平距离 */
     public record MoveSample(long at, double dist) {}
 
@@ -36,6 +39,7 @@ public class PlayerData {
     private final Map<CheckType, Double> buffer = new EnumMap<>(CheckType.class);
     private final Map<CheckType, Long> lastAlertAt = new EnumMap<>(CheckType.class);
     private final Deque<ViolationRecord> recentViolations = new ArrayDeque<>();
+    private final Deque<WarningRecord> recentWarnings = new ArrayDeque<>();
 
     // ---- 移动状态（由 MovementTracker 维护，检测类只读） ----
     private Location lastLocation;
@@ -221,6 +225,15 @@ public class PlayerData {
 
     public Deque<ViolationRecord> getRecentViolations() {
         return recentViolations;
+    }
+
+    public void addWarning(WarningRecord record) {
+        recentWarnings.addLast(record);
+        while (recentWarnings.size() > 20) recentWarnings.removeFirst();
+    }
+
+    public Deque<WarningRecord> getRecentWarnings() {
+        return recentWarnings;
     }
 
     public Map<CheckType, Double> getAllVl() {

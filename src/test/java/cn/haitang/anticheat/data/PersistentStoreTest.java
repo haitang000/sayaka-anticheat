@@ -16,7 +16,9 @@ import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PersistentStoreTest {
@@ -101,6 +103,54 @@ class PersistentStoreTest {
 
         store.resetBanCount(uuid);
         assertEquals(0, store.getBanCount(uuid));
+    }
+
+    @Test
+    void punishmentSnapshotRoundTripsWithWarningsAndDetections() {
+        PersistentStore store = newStore();
+        UUID playerId = UUID.randomUUID();
+        String punishmentId = store.newPunishmentId();
+        long bannedAt = 1_700_000_000_000L;
+        PersistentStore.PunishmentRecord punishment = new PersistentStore.PunishmentRecord(
+                punishmentId, playerId, "Cheater", bannedAt, bannedAt + 6 * 3600_000L,
+                "speed", 18.5, 6, 2,
+                List.of(new PersistentStore.WarningEvidence(bannedAt - 2_000L, "speed", 2, 12.5)),
+                List.of(new PersistentStore.DetectionEvidence(
+                        bannedAt - 1_000L, "speed", 18.5, "horizontal=1.20 max=0.42")));
+
+        store.addPunishment(punishment);
+        assertTrue(store.saveNow());
+
+        PersistentStore.PunishmentRecord restored = newStore()
+                .getPunishment(punishmentId.toUpperCase());
+        assertEquals(punishmentId, restored.id());
+        assertEquals(playerId, restored.playerId());
+        assertEquals("Cheater", restored.playerName());
+        assertEquals(bannedAt, restored.bannedAt());
+        assertEquals(6, restored.hours());
+        assertEquals(2, restored.banNumber());
+        assertEquals(1, restored.warnings().size());
+        assertEquals(2, restored.warnings().get(0).stage());
+        assertEquals(12.5, restored.warnings().get(0).vl());
+        assertEquals(1, restored.detections().size());
+        assertEquals("horizontal=1.20 max=0.42", restored.detections().get(0).detail());
+
+        store.resetPlayer(playerId);
+        assertNotNull(store.getPunishment(punishmentId), "重置玩家状态不应删除独立的处罚审计记录");
+    }
+
+    @Test
+    void punishmentIdsCannotBeReused() {
+        PersistentStore store = newStore();
+        String punishmentId = store.newPunishmentId();
+        PersistentStore.PunishmentRecord punishment = new PersistentStore.PunishmentRecord(
+                punishmentId, UUID.randomUUID(), "Cheater", 10L, 20L,
+                "flight", 20.0, 1, 1, List.of(), List.of());
+
+        store.addPunishment(punishment);
+
+        assertThrows(IllegalArgumentException.class, () -> store.addPunishment(punishment));
+        assertNull(store.getPunishment("not-a-punishment-id"));
     }
 
     @Test

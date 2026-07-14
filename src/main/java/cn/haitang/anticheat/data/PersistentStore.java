@@ -18,7 +18,9 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
@@ -30,6 +32,29 @@ import java.util.logging.Logger;
 public class PersistentStore {
 
     public record WhitelistEntry(UUID uuid, String name) {}
+
+    public record WarningEvidence(long at, String check, int stage, double vl) {}
+
+    public record DetectionEvidence(long at, String check, double vl, String detail) {}
+
+    public record PunishmentRecord(
+            String id,
+            UUID playerId,
+            String playerName,
+            long bannedAt,
+            long expiresAt,
+            String check,
+            double vl,
+            int hours,
+            int banNumber,
+            List<WarningEvidence> warnings,
+            List<DetectionEvidence> detections
+    ) {
+        public PunishmentRecord {
+            warnings = List.copyOf(warnings);
+            detections = List.copyOf(detections);
+        }
+    }
 
     private static final SimpleDateFormat TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm");
 
@@ -219,6 +244,127 @@ public class PersistentStore {
         synchronized (lock) {
             return yaml.getStringList(base(uuid) + ".history");
         }
+    }
+
+    // ---- 封禁处罚快照 ----
+
+    public String newPunishmentId() {
+        synchronized (lock) {
+            String id;
+            do {
+                id = UUID.randomUUID().toString();
+            } while (yaml.contains("punishments." + id));
+            return id;
+        }
+    }
+
+    public void addPunishment(PunishmentRecord punishment) {
+        synchronized (lock) {
+            String id = canonicalPunishmentId(punishment.id());
+            if (id == null || !id.equals(punishment.id())) {
+                throw new IllegalArgumentException("处罚 ID 必须是规范的小写 UUID");
+            }
+            String path = "punishments." + id;
+            if (yaml.contains(path)) {
+                throw new IllegalArgumentException("处罚 ID 已存在: " + id);
+            }
+
+            yaml.set(path + ".player-uuid", punishment.playerId().toString());
+            yaml.set(path + ".player-name", punishment.playerName());
+            yaml.set(path + ".banned-at", punishment.bannedAt());
+            yaml.set(path + ".expires-at", punishment.expiresAt());
+            yaml.set(path + ".check", punishment.check());
+            yaml.set(path + ".vl", punishment.vl());
+            yaml.set(path + ".hours", punishment.hours());
+            yaml.set(path + ".ban-number", punishment.banNumber());
+            yaml.set(path + ".warnings", punishment.warnings().stream()
+                    .map(PersistentStore::warningMap).toList());
+            yaml.set(path + ".detections", punishment.detections().stream()
+                    .map(PersistentStore::detectionMap).toList());
+            markDirty();
+        }
+    }
+
+    public PunishmentRecord getPunishment(String punishmentId) {
+        synchronized (lock) {
+            String id = canonicalPunishmentId(punishmentId);
+            if (id == null) return null;
+            String path = "punishments." + id;
+            if (!yaml.isConfigurationSection(path)) return null;
+
+            String playerId = yaml.getString(path + ".player-uuid");
+            if (playerId == null) return null;
+            UUID uuid;
+            try {
+                uuid = UUID.fromString(playerId);
+            } catch (IllegalArgumentException invalid) {
+                logger.warning("忽略损坏的处罚记录 " + id + ": 无效玩家 UUID");
+                return null;
+            }
+
+            List<WarningEvidence> warnings = new ArrayList<>();
+            for (Map<?, ?> raw : yaml.getMapList(path + ".warnings")) {
+                warnings.add(new WarningEvidence(
+                        longValue(raw.get("at")), stringValue(raw.get("check")),
+                        intValue(raw.get("stage")), doubleValue(raw.get("vl"))));
+            }
+            List<DetectionEvidence> detections = new ArrayList<>();
+            for (Map<?, ?> raw : yaml.getMapList(path + ".detections")) {
+                detections.add(new DetectionEvidence(
+                        longValue(raw.get("at")), stringValue(raw.get("check")),
+                        doubleValue(raw.get("vl")), stringValue(raw.get("detail"))));
+            }
+
+            return new PunishmentRecord(
+                    id, uuid, yaml.getString(path + ".player-name", uuid.toString()),
+                    yaml.getLong(path + ".banned-at"), yaml.getLong(path + ".expires-at"),
+                    yaml.getString(path + ".check", "unknown"), yaml.getDouble(path + ".vl"),
+                    yaml.getInt(path + ".hours"), yaml.getInt(path + ".ban-number"),
+                    warnings, detections);
+        }
+    }
+
+    private static Map<String, Object> warningMap(WarningEvidence warning) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("at", warning.at());
+        values.put("check", warning.check());
+        values.put("stage", warning.stage());
+        values.put("vl", warning.vl());
+        return values;
+    }
+
+    private static Map<String, Object> detectionMap(DetectionEvidence detection) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("at", detection.at());
+        values.put("check", detection.check());
+        values.put("vl", detection.vl());
+        values.put("detail", detection.detail());
+        return values;
+    }
+
+    private static String canonicalPunishmentId(String id) {
+        if (id == null) return null;
+        try {
+            return UUID.fromString(id.trim()).toString();
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private static long longValue(Object value) {
+        return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private static int intValue(Object value) {
+        return value instanceof Number number ? number.intValue() : 0;
+    }
+
+    private static double doubleValue(Object value) {
+        return value instanceof Number number ? number.doubleValue() : 0.0;
     }
 
     // ---- 保存 ----

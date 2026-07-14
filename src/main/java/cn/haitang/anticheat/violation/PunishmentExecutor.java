@@ -3,6 +3,7 @@ package cn.haitang.anticheat.violation;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.CheckType;
 import cn.haitang.anticheat.data.PlayerData;
+import cn.haitang.anticheat.data.PersistentStore;
 import io.papermc.paper.ban.BanListType;
 import org.bukkit.Bukkit;
 import org.bukkit.ban.ProfileBanList;
@@ -59,7 +60,7 @@ public class PunishmentExecutor implements Listener {
         int windowHours = plugin.config().getInt("punishment.strikes.window-hours", 24);
         int strikes = plugin.getStore().strikeCount(playerId, windowHours) + 1;
         int toTempban = plugin.config().getInt("punishment.strikes.to-tempban", 3);
-        if (strikes >= toTempban) tempban(player, data, type);
+        if (strikes >= toTempban) tempban(player, data, type, vl);
         else kick(player, data, type, vl, strikes, toTempban);
     }
 
@@ -95,27 +96,32 @@ public class PunishmentExecutor implements Listener {
                 String.format("[踢出] %s VL %.1f (strike %d/%d)", type.display(), vl, strikes, maxStrikes));
         commit(data);
         plugin.getAlertManager().announce("broadcast-kick", ph);
-        runHookCommands("punishment.commands.on-kick", player.getName(), type, 0);
+        runHookCommands("punishment.commands.on-kick", player.getName(), type, 0, "");
         plugin.getLogger().info(String.format("已踢出 %s：%s VL %.1f（strike %d/%d）",
                 player.getName(), type.id(), vl, strikes, maxStrikes));
     }
 
-    private void tempban(Player player, PlayerData data, CheckType type) {
+    private void tempban(Player player, PlayerData data, CheckType type, double vl) {
         int banCount = plugin.getStore().getBanCount(player.getUniqueId());
         List<Integer> ladder = plugin.config().getIntegerList("punishment.tempban-hours");
         if (ladder.isEmpty()) ladder = List.of(1, 6, 24, 72);
         int hours = ladder.get(Math.min(banCount, ladder.size() - 1));
-        Date expiry = new Date(System.currentTimeMillis() + hours * 3600_000L);
+        long bannedAt = System.currentTimeMillis();
+        Date expiry = new Date(bannedAt + hours * 3600_000L);
+        String punishmentId = plugin.getStore().newPunishmentId();
 
         Map<String, String> ph = Map.of(
                 "player", player.getName(),
                 "check", type.display(),
+                "vl", String.format("%.1f", vl),
                 "hours", String.valueOf(hours),
-                "time", TIME.format(expiry)
+                "time", TIME.format(expiry),
+                "punishment-id", punishmentId
         );
         String screen = plugin.getMessages().get("ban-screen", ph);
-        String reason = org.bukkit.ChatColor.stripColor(
-                String.format("反作弊：%s 多次违规，封禁 %d 小时", type.display(), hours));
+        if (!screen.contains(punishmentId)) {
+            screen += "\n\n§8处罚 ID: §f" + punishmentId;
+        }
         try {
             player.ban(screen, expiry, BAN_SOURCE, false);
         } catch (RuntimeException error) {
@@ -132,11 +138,30 @@ public class PunishmentExecutor implements Listener {
 
         plugin.getStore().incrementBanCount(player.getUniqueId());
         plugin.getStore().clearStrikes(player.getUniqueId());
+        plugin.getStore().addPunishment(new PersistentStore.PunishmentRecord(
+                punishmentId,
+                player.getUniqueId(),
+                player.getName(),
+                bannedAt,
+                expiry.getTime(),
+                type.id(),
+                vl,
+                hours,
+                banCount + 1,
+                data.getRecentWarnings().stream()
+                        .map(warning -> new PersistentStore.WarningEvidence(
+                                warning.at(), warning.type().id(), warning.stage(), warning.vl()))
+                        .toList(),
+                data.getRecentViolations().stream()
+                        .map(detection -> new PersistentStore.DetectionEvidence(
+                                detection.at(), detection.type().id(), detection.vl(), detection.detail()))
+                        .toList()));
         plugin.getStore().addHistory(player.getUniqueId(),
-                String.format("[封禁] %s，时长 %d 小时（第 %d 次封禁）", type.display(), hours, banCount + 1));
+                String.format("[封禁] %s，时长 %d 小时（第 %d 次封禁，处罚 ID %s）",
+                        type.display(), hours, banCount + 1, punishmentId));
         commit(data);
         plugin.getAlertManager().announce("broadcast-ban", ph);
-        runHookCommands("punishment.commands.on-tempban", player.getName(), type, hours);
+        runHookCommands("punishment.commands.on-tempban", player.getName(), type, hours, punishmentId);
         try {
             player.kickPlayer(screen);
         } catch (RuntimeException error) {
@@ -150,15 +175,17 @@ public class PunishmentExecutor implements Listener {
                 plugin.getLogger().warning("封禁已建立但踢出被取消: " + player.getName());
             }
         });
-        plugin.getLogger().info(String.format("已临时封禁 %s：%s，%d 小时（第 %d 次）",
-                player.getName(), type.id(), hours, banCount + 1));
+        plugin.getLogger().info(String.format("已临时封禁 %s：%s VL %.1f，%d 小时（第 %d 次，处罚 ID %s）",
+                player.getName(), type.id(), vl, hours, banCount + 1, punishmentId));
     }
 
-    private void runHookCommands(String configPath, String playerName, CheckType type, int hours) {
+    private void runHookCommands(String configPath, String playerName, CheckType type, int hours,
+                                 String punishmentId) {
         for (String cmd : plugin.config().getStringList(configPath)) {
             String parsed = cmd.replace("%player%", playerName)
                     .replace("%check%", type.id())
-                    .replace("%hours%", String.valueOf(hours));
+                    .replace("%hours%", String.valueOf(hours))
+                    .replace("%punishment-id%", punishmentId);
             Bukkit.getScheduler().runTask(plugin, () ->
                     Bukkit.dispatchCommand(Bukkit.getConsoleSender(), parsed));
         }
