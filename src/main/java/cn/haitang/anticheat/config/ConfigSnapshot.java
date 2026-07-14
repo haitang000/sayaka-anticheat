@@ -119,6 +119,7 @@ public final class ConfigSnapshot {
         nonNegativeInt(config, errors, "settings.parallel-analysis.threads");
         positiveInt(config, errors, "settings.parallel-analysis.queue-capacity");
         positiveInt(config, errors, "settings.parallel-analysis.completions-per-tick");
+        positiveInt(config, errors, "updates.check-interval-minutes");
 
         ConfigurationSection decayOverrides = config.getConfigurationSection("decay.per-check");
         if (decayOverrides != null) {

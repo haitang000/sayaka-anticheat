@@ -31,6 +31,7 @@ import java.util.regex.Pattern;
  *   unban <玩家> [reset]  解封并可选重置封禁次数阶梯
  *   alerts          开关个人警报
  *   reload          重载配置
+ *   update [check]  安装更新并热重载，或仅检查更新
  */
 public class AntiCheatCommand implements TabExecutor {
 
@@ -55,6 +56,7 @@ public class AntiCheatCommand implements TabExecutor {
         switch (args[0].toLowerCase()) {
             case "alerts" -> handleAlerts(sender);
             case "reload" -> handleReload(sender);
+            case "update" -> handleUpdate(sender, args);
             case "status" -> handleStatus(sender, args);
             case "history" -> handleHistory(sender, args);
             case "reset" -> handleReset(sender, args);
@@ -91,6 +93,19 @@ public class AntiCheatCommand implements TabExecutor {
         }
         if (plugin.getPacketBridge() != null) plugin.getPacketBridge().reload();
         sender.sendMessage(plugin.getMessages().prefixed("reloaded", null));
+    }
+
+    private void handleUpdate(CommandSender sender, String[] args) {
+        if (denyIfNoPerm(sender, PERM_ADMIN)) return;
+        if (args.length >= 2 && args[1].equalsIgnoreCase("check")) {
+            plugin.getUpdateManager().check(sender);
+            return;
+        }
+        if (args.length >= 2) {
+            sendHelp(sender);
+            return;
+        }
+        plugin.getUpdateManager().install(sender);
     }
 
     private void handleStatus(CommandSender sender, String[] args) {
@@ -283,21 +298,25 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage("  §e/sac unban <玩家> [reset] §7- 解封（reset 重置处罚档位）");
         sender.sendMessage("  §e/sac alerts §7- 开关个人实时警报");
         sender.sendMessage("  §e/sac reload §7- 重载配置");
+        sender.sendMessage("  §e/sac update [check] §7- 安装更新并热重载（check 仅检查）");
     }
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
         if (args.length == 1) {
-            for (String sub : List.of("status", "history", "reset", "whitelist", "unban", "alerts", "reload")) {
+            for (String sub : List.of("status", "history", "reset", "whitelist", "unban", "alerts", "reload", "update")) {
                 if (sub.startsWith(args[0].toLowerCase())) out.add(sub);
             }
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("update")) {
+            if ("check".startsWith(args[1].toLowerCase())) out.add("check");
         } else if (args.length == 2 && args[0].equalsIgnoreCase("whitelist")) {
             for (String action : List.of("add", "remove", "list")) {
                 if (action.startsWith(args[1].toLowerCase())) out.add(action);
             }
         } else if (args.length == 2 && !args[0].equalsIgnoreCase("alerts")
-                && !args[0].equalsIgnoreCase("reload")) {
+                && !args[0].equalsIgnoreCase("reload")
+                && !args[0].equalsIgnoreCase("update")) {
             for (Player p : Bukkit.getOnlinePlayers()) {
                 if (p.getName().toLowerCase().startsWith(args[1].toLowerCase())) out.add(p.getName());
             }

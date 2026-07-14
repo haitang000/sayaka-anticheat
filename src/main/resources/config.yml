@@ -1,5 +1,12 @@
 config-version: 2
 
+# ---------------- 自动更新 ----------------
+updates:
+  # 后台检查 GitHub 的最新稳定 Release；发现新版本时通知控制台和在线管理员
+  enabled: true
+  # 最低按 5 分钟执行，默认每 30 分钟检查一次
+  check-interval-minutes: 30
+
 # ============================================================
 #  Sayaka AntiCheat 反作弊配置
 #
@@ -601,6 +608,15 @@ messages:
   no-permission: "&c你没有权限执行此操作。"
   player-not-found: "&c找不到玩家 &f%player%&c。"
   reloaded: "&a配置已重载。"
+  update-available: "&e发现新版本 &f%latest% &7（当前 %current%）。使用 &f/sac update &7更新。"
+  update-checking: "&7正在检查 GitHub Release..."
+  update-current: "&a当前已是最新版本 &f%version%&a。"
+  update-busy: "&e已有更新检查或安装任务正在进行。"
+  update-disabled: "&e自动更新已在配置中关闭。"
+  update-download-start: "&7正在检查并下载最新版本..."
+  update-ready: "&a版本 &f%latest% &a已校验，服务器将在 3 秒后热重载。"
+  update-failed: "&c更新失败：%error%"
+  update-check-failed: "&c检查更新失败：%error%"
   reset-done: "&a已清空 &f%player% &a的违规数据。"
   whitelist-added: "&a已将 &f%player% &a加入反作弊白名单。"
   whitelist-removed: "&a已将 &f%player% &a移出反作弊白名单。"

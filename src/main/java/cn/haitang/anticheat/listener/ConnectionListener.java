@@ -53,6 +53,7 @@ public class ConnectionListener implements Listener {
         PlayerData data = plugin.getDataManager().get(event.getPlayer());
         data.setBedrock(plugin.getBedrockSupport().isBedrock(event.getPlayer()));
         data.resetMovement(event.getPlayer().getLocation());
+        plugin.getUpdateManager().notifyIfAvailable(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

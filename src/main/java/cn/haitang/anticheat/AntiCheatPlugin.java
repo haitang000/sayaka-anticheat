@@ -43,6 +43,7 @@ import cn.haitang.anticheat.packet.EntityPositionHistory;
 import cn.haitang.anticheat.packet.PacketBridge;
 import cn.haitang.anticheat.util.BedrockSupport;
 import cn.haitang.anticheat.util.Messages;
+import cn.haitang.anticheat.update.UpdateManager;
 import cn.haitang.anticheat.violation.PunishmentExecutor;
 import cn.haitang.anticheat.violation.ViolationManager;
 import org.bukkit.command.PluginCommand;
@@ -52,6 +53,7 @@ import org.bukkit.scheduler.BukkitTask;
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.event.PacketListenerCommon;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -73,6 +75,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     private PunishmentExecutor punishmentExecutor;
     private ViolationManager violationManager;
     private ParallelAnalysisExecutor analysisExecutor;
+    private UpdateManager updateManager;
     private volatile ConfigSnapshot runtimeConfig;
     private ChatExemptionCache chatExemptions;
     private CombatAttackContext combatAttackContext;
@@ -113,6 +116,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
         dataManager = new PlayerDataManager();
         bedrockSupport = new BedrockSupport(getLogger());
         messages = new Messages(this);
+        updateManager = new UpdateManager(this);
         alertManager = new AlertManager(this);
         punishmentExecutor = new PunishmentExecutor(this);
         violationManager = new ViolationManager(this);
@@ -182,6 +186,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
         violationManager.startDecayTask();
         aimCheck.start();
         saveTask = getServer().getScheduler().runTaskTimer(this, store::saveAsync, 1200L, 1200L);
+        updateManager.start();
 
         // /reload 或热插拔时，为已在线玩家补上基岩身份标记
         getServer().getOnlinePlayers().forEach(p ->
@@ -192,6 +197,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (updateManager != null) updateManager.shutdown();
         if (saveTask != null) saveTask.cancel();
         if (violationManager != null) violationManager.shutdown();
         if (flightCheck != null) flightCheck.shutdown();
@@ -221,6 +227,8 @@ public final class AntiCheatPlugin extends JavaPlugin {
     public PacketTimeline getPacketTimeline() { return packetTimeline; }
     public EntityPositionHistory getEntityPositionHistory() { return entityPositionHistory; }
     public PacketBridge getPacketBridge() { return packetBridge; }
+    public UpdateManager getUpdateManager() { return updateManager; }
+    public File getPluginJarFile() { return getFile(); }
 
     public List<String> reloadRuntimeConfig() {
         super.reloadConfig();
@@ -232,6 +240,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
                     + "existing administrator values were preserved.");
         }
         for (Check check : checks) check.reloadConfiguration();
+        if (updateManager != null) updateManager.reloadConfiguration();
         return List.of();
     }
 
