@@ -62,6 +62,8 @@ public class PlayerData {
     private double impulseProjection;
     private long impulseExpiresAt;
     private long impulseMinExpiresAt;
+    private long serverLaunchExpiresAt;
+    private boolean serverLaunchAirborne;
     private long lastBounceAt;
     private long lastIceAt;
     private long lastSoulSandAt;
@@ -291,20 +293,26 @@ public class PlayerData {
         this.speedWindow.clear();
         this.moveTimes.clear();
         clearImpulse();
+        clearServerLaunch();
     }
 
     // ---- 宽限 ----
 
     public long getJoinAt() { return joinAt; }
     public void touchTeleport() { this.lastTeleportAt = System.currentTimeMillis(); }
-    /** Arms a short, consumable allowance for velocity actually issued by the server. */
+    /** Records velocity actually issued by the server for both response and movement exemptions. */
     public void startImpulse(Vector velocity) {
         startImpulse(velocity, System.currentTimeMillis());
     }
 
+    /**
+     * Server-issued velocity keeps movement checks exempt for the estimated trajectory instead
+     * of losing the exemption as soon as the first response is consumed.
+     */
     void startImpulse(Vector velocity, long now) {
         if (!isFinite(velocity) || velocity.lengthSquared() < 1.0e-6) {
             clearImpulse();
+            clearServerLaunch();
             return;
         }
         this.lastVelocityAt = now;
@@ -314,6 +322,9 @@ public class PlayerData {
         this.impulseMinExpiresAt = now + 250L;
         this.impulseExpiresAt = now + Math.min(2_000L,
                 Math.max(450L, 600L + (long) (lastVelocityMagnitude * 450L)));
+        this.serverLaunchExpiresAt = now + estimateServerLaunchMs(velocity);
+        this.serverLaunchAirborne = false;
+        this.speedWindow.clear();
     }
 
     public void consumeImpulse(Vector movement) {
@@ -346,6 +357,56 @@ public class PlayerData {
         impulseMinExpiresAt = 0L;
     }
 
+    public boolean hasActiveServerLaunch() {
+        return hasActiveServerLaunch(System.currentTimeMillis());
+    }
+
+    boolean hasActiveServerLaunch(long now) {
+        return serverLaunchExpiresAt != 0L && now < serverLaunchExpiresAt;
+    }
+
+    /**
+     * Updates the launch lifecycle from server-side collision state.
+     *
+     * @return true when a launch ended on this movement, so movement baselines can restart here
+     */
+    public boolean updateServerLaunch(boolean collisionBelow, long now) {
+        if (serverLaunchExpiresAt == 0L) return false;
+        if (!collisionBelow) serverLaunchAirborne = true;
+        if (now < serverLaunchExpiresAt && (!serverLaunchAirborne || !collisionBelow)) return false;
+        clearServerLaunch();
+        return true;
+    }
+
+    private void clearServerLaunch() {
+        serverLaunchExpiresAt = 0L;
+        serverLaunchAirborne = false;
+        speedWindow.clear();
+    }
+
+    /** Estimate the vanilla-style flight/slowdown time with one second of collision tolerance. */
+    static long estimateServerLaunchMs(Vector velocity) {
+        double verticalVelocity = Math.max(0.0, velocity.getY());
+        double verticalPosition = 0.0;
+        int verticalTicks = 0;
+        while (verticalVelocity > 0.0 || verticalPosition > 0.0) {
+            verticalPosition += verticalVelocity;
+            verticalVelocity = (verticalVelocity - 0.08) * 0.98;
+            verticalTicks++;
+            if (verticalTicks >= 280) break;
+        }
+
+        double horizontalVelocity = Math.hypot(velocity.getX(), velocity.getZ());
+        int horizontalTicks = 0;
+        while (horizontalVelocity > 0.15 && horizontalTicks < 280) {
+            horizontalVelocity *= 0.91;
+            horizontalTicks++;
+        }
+
+        long estimate = (Math.max(verticalTicks, horizontalTicks) + 20L) * 50L;
+        return Math.max(1_000L, Math.min(15_000L, estimate));
+    }
+
     private static boolean isFinite(Vector vector) {
         return vector != null && Double.isFinite(vector.getX())
                 && Double.isFinite(vector.getY()) && Double.isFinite(vector.getZ());
@@ -364,7 +425,12 @@ public class PlayerData {
     public boolean teleportedWithin(long ms) { return within(lastTeleportAt, ms); }
     public boolean damagedWithin(long ms) { return within(lastDamageAt, ms); }
     public boolean velocityWithin(long ms) {
-        return hasActiveImpulse() && within(lastVelocityAt, ms);
+        return velocityWithin(ms, System.currentTimeMillis());
+    }
+
+    boolean velocityWithin(long ms, long now) {
+        return hasActiveServerLaunch(now)
+                || (hasActiveImpulse(now) && within(lastVelocityAt, ms, now));
     }
 
     public long getLastVelocityAt() { return lastVelocityAt; }
@@ -379,7 +445,11 @@ public class PlayerData {
     public boolean slowFallWithin(long ms) { return within(lastSlowFallAt, ms); }
 
     private boolean within(long at, long ms) {
-        return at != 0 && System.currentTimeMillis() - at < ms;
+        return within(at, ms, System.currentTimeMillis());
+    }
+
+    private boolean within(long at, long ms, long now) {
+        return at != 0 && now - at < ms;
     }
 
     // ---- 战斗 ----

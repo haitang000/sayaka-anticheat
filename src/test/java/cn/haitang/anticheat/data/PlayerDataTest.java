@@ -91,4 +91,30 @@ class PlayerDataTest {
         data.consumeImpulse(new Vector(0.9, 0.0, 0.0), 1_300L);
         assertFalse(data.hasActiveImpulse(1_300L), "response along the impulse should consume it");
     }
+
+    @Test
+    void knockbackDuringJumpRemainsExemptUntilLanding() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+        data.startImpulse(new Vector(0.4, 0.4, 0.0), 1_000L);
+
+        data.consumeImpulse(new Vector(0.5, 0.5, 0.0), 1_300L);
+        assertFalse(data.hasActiveImpulse(1_300L), "the short knockback response is consumed");
+        assertTrue(data.velocityWithin(50L, 1_300L),
+                "Flight must stay exempt while the knocked-back player is airborne");
+
+        assertFalse(data.updateServerLaunch(false, 1_350L));
+        assertTrue(data.hasActiveServerLaunch(1_350L));
+        assertTrue(data.updateServerLaunch(true, 2_000L), "landing should finish the launch early");
+        assertFalse(data.hasActiveServerLaunch(2_000L));
+    }
+
+    @Test
+    void strongerVerticalLaunchGetsLongerTrajectoryAllowance() {
+        long shortLaunch = PlayerData.estimateServerLaunchMs(new Vector(0.0, 0.5, 0.0));
+        long tallLaunch = PlayerData.estimateServerLaunchMs(new Vector(0.0, 2.5, 0.0));
+
+        assertTrue(shortLaunch >= 1_000L);
+        assertTrue(tallLaunch > shortLaunch);
+        assertTrue(tallLaunch <= 15_000L);
+    }
 }

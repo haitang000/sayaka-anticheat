@@ -64,6 +64,14 @@ public class MovementTracker implements Listener {
 
         // ---- 滞空 / 悬浮计数 ----
         boolean collision = MoveUtil.hasCollisionBelow(to, GROUND_DEPTH);
+        boolean serverLaunchEnded = data.updateServerLaunch(collision, now);
+        if (serverLaunchEnded) {
+            // A timed-out launch may still be airborne. Restart Flight from the current position
+            // instead of comparing it with the original pressure plate height.
+            data.setAirTicks(0);
+            data.setHoverTicks(0);
+            data.setAirStartY(to.getY());
+        }
         data.setCollisionBelow(collision);
         if (collision) {
             data.setSupportedTicks(data.getSupportedTicks() + 1);
@@ -99,9 +107,14 @@ public class MovementTracker implements Listener {
 
         // ---- 速度采样窗口（1.5 秒滚动） ----
         var window = data.getSpeedWindow();
-        window.addLast(new PlayerData.MoveSample(now, distXZ));
-        while (!window.isEmpty() && now - window.peekFirst().at() > 1500) {
-            window.removeFirst();
+        if (data.hasActiveServerLaunch() || serverLaunchEnded) {
+            // Do not let legal launch displacement poison the first Speed window after landing.
+            window.clear();
+        } else {
+            window.addLast(new PlayerData.MoveSample(now, distXZ));
+            while (!window.isEmpty() && now - window.peekFirst().at() > 1500) {
+                window.removeFirst();
+            }
         }
 
         data.setLastMoveAt(now);
