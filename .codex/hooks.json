@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"$(git rev-parse --show-toplevel)/.codex/hooks/verify-and-commit.ps1\"",
+            "commandWindows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& (Join-Path (git rev-parse --show-toplevel) '.codex/hooks/verify-and-commit.ps1')\"",
+            "timeout": 30,
+            "statusMessage": "Recording the Git baseline"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"$(git rev-parse --show-toplevel)/.codex/hooks/verify-and-commit.ps1\"",
+            "commandWindows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& (Join-Path (git rev-parse --show-toplevel) '.codex/hooks/verify-and-commit.ps1')\"",
+            "timeout": 30,
+            "statusMessage": "Checking verification and commit status"
+          }
+        ]
+      }
+    ]
+  }
+}
