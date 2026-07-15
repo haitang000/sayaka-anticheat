@@ -56,6 +56,23 @@ public class PersistentStore {
         }
     }
 
+    /** 申诉状态。PENDING = 待处理，APPROVED = 通过（通常伴随解封），REJECTED = 驳回。 */
+    public enum AppealStatus { PENDING, APPROVED, REJECTED }
+
+    public record AppealRecord(
+            String punishmentId,
+            String playerName,
+            String reason,
+            String contact,
+            long submittedAt,
+            AppealStatus status,
+            long resolvedAt,
+            String note
+    ) {}
+
+    /** submitAppeal 的结果：申诉是否被接受。 */
+    public enum AppealSubmitResult { OK, PUNISHMENT_NOT_FOUND, ALREADY_RESOLVED }
+
     private static final SimpleDateFormat TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm");
 
     /** 提交异步保存任务；返回 false 表示执行器拒绝（队列满或已关闭）。 */
@@ -322,6 +339,114 @@ public class PersistentStore {
                     yaml.getInt(path + ".hours"), yaml.getInt(path + ".ban-number"),
                     warnings, detections);
         }
+    }
+
+    /** 列出全部封禁处罚快照，按封禁时间倒序（最新在前）。供管理仪表盘使用。 */
+    public List<PunishmentRecord> listPunishments() {
+        synchronized (lock) {
+            ConfigurationSection section = yaml.getConfigurationSection("punishments");
+            if (section == null) return List.of();
+            List<PunishmentRecord> records = new ArrayList<>();
+            for (String id : section.getKeys(false)) {
+                PunishmentRecord record = getPunishment(id);
+                if (record != null) records.add(record);
+            }
+            records.sort(Comparator.comparingLong(PunishmentRecord::bannedAt).reversed());
+            return records;
+        }
+    }
+
+    // ---- 申诉 ----
+
+    private String appealBase(String id) {
+        return "appeals." + id;
+    }
+
+    /**
+     * 提交或更新一条申诉。仅当处罚 ID 存在时才受理；若已存在且已被处理（通过/驳回），
+     * 拒绝再次提交，避免玩家绕过管理员决定反复申诉。
+     */
+    public AppealSubmitResult submitAppeal(String punishmentId, String reason, String contact) {
+        synchronized (lock) {
+            String id = canonicalPunishmentId(punishmentId);
+            if (id == null || !yaml.isConfigurationSection("punishments." + id)) {
+                return AppealSubmitResult.PUNISHMENT_NOT_FOUND;
+            }
+            String path = appealBase(id);
+            String existing = yaml.getString(path + ".status");
+            if (existing != null && !existing.equalsIgnoreCase(AppealStatus.PENDING.name())) {
+                return AppealSubmitResult.ALREADY_RESOLVED;
+            }
+            boolean isNew = existing == null;
+            if (isNew) {
+                yaml.set(path + ".player-name", yaml.getString("punishments." + id + ".player-name", ""));
+                yaml.set(path + ".submitted-at", System.currentTimeMillis());
+                yaml.set(path + ".status", AppealStatus.PENDING.name());
+                yaml.set(path + ".resolved-at", 0L);
+                yaml.set(path + ".note", "");
+            }
+            yaml.set(path + ".reason", reason);
+            yaml.set(path + ".contact", contact);
+            markDirty();
+            return AppealSubmitResult.OK;
+        }
+    }
+
+    public AppealRecord getAppeal(String punishmentId) {
+        synchronized (lock) {
+            String id = canonicalPunishmentId(punishmentId);
+            if (id == null || !yaml.isConfigurationSection(appealBase(id))) return null;
+            return readAppealLocked(id);
+        }
+    }
+
+    public List<AppealRecord> listAppeals() {
+        synchronized (lock) {
+            ConfigurationSection section = yaml.getConfigurationSection("appeals");
+            if (section == null) return List.of();
+            List<AppealRecord> records = new ArrayList<>();
+            for (String id : section.getKeys(false)) {
+                AppealRecord record = readAppealLocked(id);
+                if (record != null) records.add(record);
+            }
+            records.sort(Comparator.comparingLong(AppealRecord::submittedAt).reversed());
+            return records;
+        }
+    }
+
+    /** 处理一条申诉（通过/驳回）。返回 false 表示该处罚没有待处理的申诉。 */
+    public boolean resolveAppeal(String punishmentId, boolean approved, String note) {
+        synchronized (lock) {
+            String id = canonicalPunishmentId(punishmentId);
+            if (id == null || !yaml.isConfigurationSection(appealBase(id))) return false;
+            String path = appealBase(id);
+            yaml.set(path + ".status",
+                    (approved ? AppealStatus.APPROVED : AppealStatus.REJECTED).name());
+            yaml.set(path + ".resolved-at", System.currentTimeMillis());
+            yaml.set(path + ".note", note == null ? "" : note);
+            markDirty();
+            return true;
+        }
+    }
+
+    private AppealRecord readAppealLocked(String id) {
+        String path = appealBase(id);
+        if (!yaml.isConfigurationSection(path)) return null;
+        AppealStatus status;
+        try {
+            status = AppealStatus.valueOf(yaml.getString(path + ".status", "PENDING"));
+        } catch (IllegalArgumentException invalid) {
+            status = AppealStatus.PENDING;
+        }
+        return new AppealRecord(
+                id,
+                yaml.getString(path + ".player-name", ""),
+                yaml.getString(path + ".reason", ""),
+                yaml.getString(path + ".contact", ""),
+                yaml.getLong(path + ".submitted-at"),
+                status,
+                yaml.getLong(path + ".resolved-at"),
+                yaml.getString(path + ".note", ""));
     }
 
     private static Map<String, Object> warningMap(WarningEvidence warning) {

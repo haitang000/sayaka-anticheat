@@ -168,6 +168,87 @@ class PersistentStoreTest {
         assertTrue(store.getHistory(uuid).isEmpty());
     }
 
+    // ---- 申诉 ----
+
+    private String seedPunishment(PersistentStore store) {
+        String id = store.newPunishmentId();
+        store.addPunishment(new PersistentStore.PunishmentRecord(
+                id, UUID.randomUUID(), "Cheater", 10L, 20L,
+                "speed", 18.0, 6, 1, List.of(), List.of()));
+        return id;
+    }
+
+    @Test
+    void appealCanOnlyBeSubmittedForAnExistingPunishment() {
+        PersistentStore store = newStore();
+        assertEquals(PersistentStore.AppealSubmitResult.PUNISHMENT_NOT_FOUND,
+                store.submitAppeal(UUID.randomUUID().toString(), "误判了", ""));
+        assertNull(store.getAppeal(UUID.randomUUID().toString()));
+    }
+
+    @Test
+    void appealRoundTripsAndResubmitUpdatesReasonWhilePending() {
+        PersistentStore store = newStore();
+        String id = seedPunishment(store);
+
+        assertEquals(PersistentStore.AppealSubmitResult.OK,
+                store.submitAppeal(id, "第一次理由", "qq:123"));
+        PersistentStore.AppealRecord appeal = store.getAppeal(id.toUpperCase());
+        assertNotNull(appeal);
+        assertEquals("第一次理由", appeal.reason());
+        assertEquals("qq:123", appeal.contact());
+        assertEquals(PersistentStore.AppealStatus.PENDING, appeal.status());
+        assertEquals("Cheater", appeal.playerName());
+
+        // 待处理期间允许更新理由
+        assertEquals(PersistentStore.AppealSubmitResult.OK,
+                store.submitAppeal(id, "补充理由", "qq:456"));
+        assertEquals("补充理由", store.getAppeal(id).reason());
+        assertEquals(1, store.listAppeals().size());
+    }
+
+    @Test
+    void resolvedAppealCannotBeResubmitted() {
+        PersistentStore store = newStore();
+        String id = seedPunishment(store);
+        store.submitAppeal(id, "理由", "");
+
+        assertTrue(store.resolveAppeal(id, false, "证据充分"));
+        PersistentStore.AppealRecord appeal = store.getAppeal(id);
+        assertEquals(PersistentStore.AppealStatus.REJECTED, appeal.status());
+        assertEquals("证据充分", appeal.note());
+
+        assertEquals(PersistentStore.AppealSubmitResult.ALREADY_RESOLVED,
+                store.submitAppeal(id, "再试一次", ""));
+    }
+
+    @Test
+    void resolveWithoutAppealReturnsFalse() {
+        PersistentStore store = newStore();
+        String id = seedPunishment(store);
+        assertFalse(store.resolveAppeal(id, true, ""));
+    }
+
+    @Test
+    void appealsSurviveReloadAndListPunishmentsIsNewestFirst() {
+        PersistentStore store = newStore();
+        String older = store.newPunishmentId();
+        store.addPunishment(new PersistentStore.PunishmentRecord(
+                older, UUID.randomUUID(), "A", 1_000L, 2_000L, "speed", 1, 1, 1, List.of(), List.of()));
+        String newer = store.newPunishmentId();
+        store.addPunishment(new PersistentStore.PunishmentRecord(
+                newer, UUID.randomUUID(), "B", 5_000L, 6_000L, "flight", 1, 1, 1, List.of(), List.of()));
+        store.submitAppeal(newer, "申诉理由", "");
+        assertTrue(store.saveNow());
+
+        PersistentStore reloaded = newStore();
+        List<PersistentStore.PunishmentRecord> all = reloaded.listPunishments();
+        assertEquals(2, all.size());
+        assertEquals(newer, all.get(0).id(), "listPunishments 应按封禁时间倒序");
+        assertNotNull(reloaded.getAppeal(newer));
+        assertNull(reloaded.getAppeal(older));
+    }
+
     // ---- 白名单 ----
 
     @Test

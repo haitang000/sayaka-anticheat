@@ -44,6 +44,7 @@ import cn.haitang.anticheat.packet.PacketBridge;
 import cn.haitang.anticheat.util.BedrockSupport;
 import cn.haitang.anticheat.util.Messages;
 import cn.haitang.anticheat.update.UpdateManager;
+import cn.haitang.anticheat.web.WebServer;
 import cn.haitang.anticheat.violation.PunishmentExecutor;
 import cn.haitang.anticheat.violation.ViolationManager;
 import org.bukkit.command.PluginCommand;
@@ -88,6 +89,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     private FlightCheck flightCheck;
     private AimCheck aimCheck;
     private BukkitTask saveTask;
+    private WebServer webServer;
 
     @Override
     public void onEnable() {
@@ -188,6 +190,9 @@ public final class AntiCheatPlugin extends JavaPlugin {
         saveTask = getServer().getScheduler().runTaskTimer(this, store::saveAsync, 1200L, 1200L);
         updateManager.start();
 
+        // 插件加载时同步启动内置 Web 面板（申诉 + 管理仪表盘）；失败不影响反作弊核心
+        webServer = WebServer.start(this);
+
         // /reload 或热插拔时，为已在线玩家补上基岩身份标记
         getServer().getOnlinePlayers().forEach(p ->
                 dataManager.get(p).setBedrock(bedrockSupport.isBedrock(p)));
@@ -197,6 +202,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (webServer != null) webServer.stop();
         if (updateManager != null) updateManager.shutdown();
         if (saveTask != null) saveTask.cancel();
         if (violationManager != null) violationManager.shutdown();
@@ -228,6 +234,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     public EntityPositionHistory getEntityPositionHistory() { return entityPositionHistory; }
     public PacketBridge getPacketBridge() { return packetBridge; }
     public UpdateManager getUpdateManager() { return updateManager; }
+    public WebServer getWebServer() { return webServer; }
     public File getPluginJarFile() { return getFile(); }
 
     public List<String> reloadRuntimeConfig() {

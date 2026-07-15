@@ -65,6 +65,7 @@ public class AntiCheatCommand implements TabExecutor {
             case "reset" -> handleReset(sender, args);
             case "whitelist" -> handleWhitelist(sender, args);
             case "unban" -> handleUnban(sender, args);
+            case "web" -> handleWeb(sender);
             default -> sendHelp(sender);
         }
         return true;
@@ -343,6 +344,21 @@ public class AntiCheatCommand implements TabExecutor {
         return target;
     }
 
+    private void handleWeb(CommandSender sender) {
+        if (denyIfNoPerm(sender, PERM_ADMIN)) return;
+        var web = plugin.getWebServer();
+        if (web == null) {
+            sender.sendMessage(plugin.getMessages().prefix()
+                    + "§eWeb 面板未启用或启动失败。请检查 config.yml 的 §fweb §e段与控制台日志。");
+            return;
+        }
+        sender.sendMessage(plugin.getMessages().prefix() + "§f反作弊 Web 面板");
+        sender.sendMessage("  §7地址: §b" + web.displayUrl());
+        sender.sendMessage("  §7管理令牌: §f" + web.adminToken()
+                + (web.isTokenGenerated() ? " §8(本次启动随机生成，可在 config.yml 固定)" : ""));
+        sender.sendMessage("  §8玩家凭封禁界面上的处罚 ID 申诉；管理员用上面的令牌登录后台。");
+    }
+
     private void sendHelp(CommandSender sender) {
         sender.sendMessage(plugin.getMessages().prefix() + "§fSayaka AntiCheat §7命令:");
         sender.sendMessage("  §e/sac status <玩家> §7- 实时违规值与 strike");
@@ -351,6 +367,7 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage("  §e/sac reset <玩家> [all] §7- 清空违规值（all 含档案）");
         sender.sendMessage("  §e/sac whitelist add|remove|list [玩家] §7- 管理检测白名单");
         sender.sendMessage("  §e/sac unban <玩家> [reset] §7- 解封（reset 重置处罚档位）");
+        sender.sendMessage("  §e/sac web §7- 查看面板地址与当前管理令牌");
         sender.sendMessage("  §e/sac alerts §7- 开关个人实时警报");
         sender.sendMessage("  §e/sac reload §7- 重载配置");
         sender.sendMessage("  §e/sac update [check] §7- 安装更新并热重载（check 仅检查）");
@@ -360,7 +377,7 @@ public class AntiCheatCommand implements TabExecutor {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
         if (args.length == 1) {
-            for (String sub : List.of("status", "history", "punishment", "reset", "whitelist", "unban", "alerts", "reload", "update")) {
+            for (String sub : List.of("status", "history", "punishment", "reset", "whitelist", "unban", "web", "alerts", "reload", "update")) {
                 if (sub.startsWith(args[0].toLowerCase())) out.add(sub);
             }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("update")) {
@@ -372,6 +389,7 @@ public class AntiCheatCommand implements TabExecutor {
         } else if (args.length == 2 && !args[0].equalsIgnoreCase("alerts")
                 && !args[0].equalsIgnoreCase("reload")
                 && !args[0].equalsIgnoreCase("update")
+                && !args[0].equalsIgnoreCase("web")
                 && !args[0].equalsIgnoreCase("punishment")) {
             for (Player p : Bukkit.getOnlinePlayers()) {
                 if (p.getName().toLowerCase().startsWith(args[1].toLowerCase())) out.add(p.getName());

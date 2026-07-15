@@ -44,6 +44,15 @@ public enum CheckType {
         this.defaultEnforcement = defaultEnforcement;
     }
 
+    /** 按 {@link #id()} 查找检测项；未知 id 返回 {@code null}。 */
+    public static CheckType byId(String id) {
+        if (id == null) return null;
+        for (CheckType type : values()) {
+            if (type.id.equalsIgnoreCase(id)) return type;
+        }
+        return null;
+    }
+
     public String id() {
         return id;
     }

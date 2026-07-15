@@ -121,6 +121,12 @@ public final class ConfigSnapshot {
         positiveInt(config, errors, "settings.parallel-analysis.completions-per-tick");
         positiveInt(config, errors, "updates.check-interval-minutes");
 
+        positiveInt(config, errors, "web.threads");
+        if (!config.isInt("web.port") || config.getInt("web.port") < 1
+                || config.getInt("web.port") > 65535) {
+            errors.add("web.port must be an integer between 1 and 65535");
+        }
+
         ConfigurationSection decayOverrides = config.getConfigurationSection("decay.per-check");
         if (decayOverrides != null) {
             for (Map.Entry<String, Object> entry : decayOverrides.getValues(false).entrySet()) {
