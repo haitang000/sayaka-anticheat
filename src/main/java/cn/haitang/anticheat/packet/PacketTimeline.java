@@ -109,6 +109,16 @@ public final class PacketTimeline {
                 attackSequence, attackNanos, precedingSwingSequence);
     }
 
+    /**
+     * True number of arm-swing (click) packets received within the last {@code windowNanos}.
+     * Measured at the protocol layer, so it reflects real per-click timing instead of the
+     * server-tick-batched Bukkit events that collapse many same-tick clicks into one.
+     */
+    public int swingCountWithin(UUID playerId, long windowNanos) {
+        Timeline timeline = timelines.get(playerId);
+        return timeline == null ? 0 : timeline.swingCountWithin(windowNanos);
+    }
+
     public boolean wasImpulseSent(UUID playerId, long armedAtNanos, Vector expected) {
         Timeline timeline = timelines.get(playerId);
         return timeline != null && timeline.wasImpulseSent(armedAtNanos, expected);
@@ -283,6 +293,9 @@ public final class PacketTimeline {
         private final Deque<AttackPacket> attacks = new ArrayDeque<>();
         private final Deque<Long> swings = new ArrayDeque<>();
         private final Deque<Long> swingTimes = new ArrayDeque<>();
+        // Longer swing-timestamp window (nanos) used purely for CPS counting; the 16-entry
+        // swings/swingTimes above stay reserved for attack↔swing correlation.
+        private final Deque<Long> clickSwingNanos = new ArrayDeque<>();
         private final Deque<Impulse> impulses = new ArrayDeque<>();
         private final Map<Long, Long> keepAliveSent = new LinkedHashMap<>();
         private final Map<Integer, Transaction> transactions = new LinkedHashMap<>();
@@ -327,6 +340,8 @@ public final class PacketTimeline {
                 swings.removeFirst();
                 swingTimes.removeFirst();
             }
+            clickSwingNanos.addLast(now);
+            while (clickSwingNanos.size() > 512) clickSwingNanos.removeFirst();
             addLocked(seq, now, SampleType.SWING);
         }
 
@@ -351,6 +366,16 @@ public final class PacketTimeline {
                         attack.confirmedServerTick());
             }
             return null;
+        }
+
+        synchronized int swingCountWithin(long windowNanos) {
+            long now = System.nanoTime();
+            int count = 0;
+            for (var iterator = clickSwingNanos.descendingIterator(); iterator.hasNext(); ) {
+                if (now - iterator.next() > windowNanos) break;
+                count++;
+            }
+            return count;
         }
 
         synchronized boolean hasSwingNear(long attackSequence, long attackNanos,
