@@ -4,6 +4,7 @@ import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
 import cn.haitang.anticheat.data.PlayerData;
+import cn.haitang.anticheat.packet.PacketTimeline;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -54,11 +55,11 @@ public class AutoClickerCheck extends Check {
         PlayerData data = data(player);
         long now = System.currentTimeMillis();
 
+        // One entry per countable click event. No wall-clock dedupe here: the server processes
+        // a whole tick's packets in one burst, so every click within the same 50ms tick fires
+        // its event at (nearly) the same millisecond. A dedupe window would collapse them all
+        // into one, capping the measured rate at ~1/tick (~20 CPS) no matter the real CPS.
         Deque<Long> clicks = data.getClicks();
-        Long lastClick = clicks.peekLast();
-        if (lastClick != null && now - lastClick <= cfgI("dedupe-ms", 8)) {
-            return;
-        }
         clicks.addLast(now);
         while (!clicks.isEmpty() && now - clicks.peekFirst() > 6000) clicks.removeFirst();
 
@@ -71,6 +72,7 @@ public class AutoClickerCheck extends Check {
         for (Long t : clicks) {
             if (now - t <= 1000) cps++;
         }
+        cps = boundByPacketSwings(player, cps);
 
         int hardMaxCps = cfgI("hard-max-cps", 28);
         if (cps >= hardMaxCps) {
@@ -94,6 +96,19 @@ public class AutoClickerCheck extends Check {
         } else if (cps < maxCps - 4) {
             data.setCpsSustainStart(0);
         }
+    }
+
+    /**
+     * Caps the event-derived CPS by the true number of arm-swing packets seen in the last second.
+     * The protocol layer sees exactly one swing per physical click, so this neutralises any double
+     * dispatch of the same click across the attack/swing event handlers without ever collapsing
+     * genuinely distinct clicks (the failure of the old millisecond dedupe).
+     */
+    private int boundByPacketSwings(Player player, int cps) {
+        PacketTimeline timeline = plugin.getPacketTimeline();
+        if (timeline == null) return cps;
+        int swings = timeline.swingCountWithin(player.getUniqueId(), 1_000_000_000L);
+        return swings > 0 ? Math.min(cps, swings) : cps;
     }
 
     private void checkRobotic(Player player, PlayerData data, long now, Deque<Long> clicks) {
