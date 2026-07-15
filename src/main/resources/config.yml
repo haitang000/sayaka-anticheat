@@ -285,27 +285,36 @@ checks:
     buffer-to-flag: 2.5
 
   # 攻击射线（Hitbox：准星未穿过目标碰撞箱 / 隔墙攻击）
+  # 射线取攻击包时刻的位置与视角，目标碰撞箱按客户端已确认的服务端 tick
+  # 回溯，并对客户端插值窗口内的历史快照取并集——直接用伤害事件时刻的
+  # 服务端状态判定会把转头攻击、追打移动目标的正常命中判成脱靶
   hitbox:
     enabled: true
     enforcement: mitigate
     # 极近身时碰撞箱与视角变化很剧烈，不参与射线判定
     min-distance: 0.8
     max-ray-distance: 6.0
-    ray-distance-margin: 1.0
+    ray-distance-margin: 1.5
+    # 目标碰撞箱并集覆盖的客户端实体插值窗口（tick）
+    interpolation-window-ticks: 3
     # 基础碰撞箱扩张，以及网络和双方移动产生的额外容差
-    horizontal-tolerance: 0.12
-    vertical-tolerance: 0.12
+    horizontal-tolerance: 0.18
+    vertical-tolerance: 0.15
     ping-tolerance-per-ms: 0.00045
     max-ping-ms: 180
     movement-tolerance-multiplier: 0.35
-    max-movement-tolerance: 0.10
-    max-horizontal-tolerance: 0.30
+    max-movement-tolerance: 0.25
+    max-horizontal-tolerance: 0.45
+    # 传送/击退后位置必然失配，宽限期内不判
     teleport-grace-ms: 750
-    # 连续脱靶才上报；方块阻挡是更强证据，每次累积更快且立即取消命中
+    velocity-grace-ms: 750
+    # 视角包晚于攻击包到达，甩头瞬间的偶发脱靶属于正常现象：
+    # 干净命中足额抵扣缓冲，连续净脱靶才上报；方块阻挡是更强证据，
+    # 每次累积更快且立即取消命中
     miss-buffer-increment: 1.0
     blocked-buffer-increment: 2.0
-    buffer-decay: 0.5
-    buffer-to-flag: 2.5
+    buffer-decay: 1.0
+    buffer-to-flag: 4.0
     block-margin: 0.05
     cancel-missed-hits: true
     cancel-blocked-hits: true
