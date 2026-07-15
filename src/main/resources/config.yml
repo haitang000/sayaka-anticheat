@@ -622,7 +622,6 @@ messages:
   update-checking: "&7正在检查 GitHub Release..."
   update-current: "&a当前已是最新版本 &f%version%&a。"
   update-busy: "&e已有更新检查或安装任务正在进行。"
-  update-disabled: "&e自动更新已在配置中关闭。"
   update-download-start: "&7正在检查并下载最新版本..."
   update-ready: "&a版本 &f%latest% &a已校验，服务器将在 3 秒后热重载。"
   update-failed: "&c更新失败：%error%"
