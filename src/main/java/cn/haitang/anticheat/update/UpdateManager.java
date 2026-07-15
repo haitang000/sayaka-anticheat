@@ -7,6 +7,7 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -27,14 +28,21 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
 
-/** Checks stable GitHub releases and stages verified updates for Bukkit hot reload. */
+/** Checks GitHub releases, including prereleases, and stages verified updates for Bukkit hot reload. */
 public final class UpdateManager {
 
     private static final String REPOSITORY = "haitang000/sayaka-anticheat";
-    private static final URI LATEST_RELEASE = URI.create("https://github.com/" + REPOSITORY + "/releases/latest");
+    private static final URI RELEASE_FEED = URI.create("https://github.com/" + REPOSITORY + "/releases.atom");
     private static final long MAX_ARTIFACT_BYTES = 64L * 1024L * 1024L;
     private static final long MAX_DESCRIPTOR_BYTES = 128L * 1024L;
+    private static final int MAX_FEED_BYTES = 2 * 1024 * 1024;
     private static final long MIN_CHECK_INTERVAL_TICKS = 5L * 60L * 20L;
 
     record Release(SemanticVersion version, String tag, URI page, URI download) {
@@ -144,19 +152,58 @@ public final class UpdateManager {
     private Optional<Release> findAvailableRelease() throws IOException, InterruptedException {
         SemanticVersion current = SemanticVersion.parse(currentVersion())
                 .orElseThrow(() -> new IOException("invalid installed version " + currentVersion()));
-        HttpRequest request = HttpRequest.newBuilder(LATEST_RELEASE)
+        HttpRequest request = HttpRequest.newBuilder(RELEASE_FEED)
                 .timeout(Duration.ofSeconds(15))
                 .header("User-Agent", "Sayaka-AntiCheat/" + currentVersion())
                 .header("Cache-Control", "no-cache")
-                .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                .GET()
                 .build();
-        HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
-        if (response.statusCode() < 200 || response.statusCode() >= 400) {
+        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        if (response.statusCode() != 200) {
+            response.body().close();
             throw new IOException("GitHub returned HTTP " + response.statusCode());
         }
-        Release latest = releaseFromLatestUri(response.uri())
-                .orElseThrow(() -> new IOException("GitHub latest release redirect was invalid"));
-        return latest.version().compareTo(current) > 0 ? Optional.of(latest) : Optional.empty();
+        Optional<Release> latest;
+        try (InputStream body = response.body()) {
+            byte[] feed = body.readNBytes(MAX_FEED_BYTES + 1);
+            if (feed.length > MAX_FEED_BYTES) throw new IOException("GitHub release feed is too large");
+            latest = latestReleaseFromFeed(new ByteArrayInputStream(feed));
+        }
+        if (latest.isEmpty()) throw new IOException("GitHub release feed contained no valid releases");
+        return latest.get().version().compareTo(current) > 0 ? latest : Optional.empty();
+    }
+
+    static Optional<Release> latestReleaseFromFeed(InputStream feed) throws IOException {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+
+            NodeList entries = factory.newDocumentBuilder().parse(feed)
+                    .getElementsByTagNameNS("http://www.w3.org/2005/Atom", "entry");
+            Release latest = null;
+            for (int entryIndex = 0; entryIndex < entries.getLength(); entryIndex++) {
+                Element entry = (Element) entries.item(entryIndex);
+                NodeList links = entry.getElementsByTagNameNS("http://www.w3.org/2005/Atom", "link");
+                for (int linkIndex = 0; linkIndex < links.getLength(); linkIndex++) {
+                    Element link = (Element) links.item(linkIndex);
+                    if (!"alternate".equals(link.getAttribute("rel"))) continue;
+                    Optional<Release> candidate = releaseFromLatestUri(URI.create(link.getAttribute("href")));
+                    if (candidate.isPresent()
+                            && (latest == null || candidate.get().version().compareTo(latest.version()) > 0)) {
+                        latest = candidate.get();
+                    }
+                }
+            }
+            return Optional.ofNullable(latest);
+        } catch (ParserConfigurationException | SAXException | IllegalArgumentException error) {
+            throw new IOException("invalid GitHub release feed", error);
+        }
     }
 
     static Optional<Release> releaseFromLatestUri(URI page) {

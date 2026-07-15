@@ -2,7 +2,7 @@ config-version: 2
 
 # ---------------- 自动更新 ----------------
 updates:
-  # 后台检查 GitHub 的最新稳定 Release；发现新版本时通知控制台和在线管理员
+  # 后台检查 GitHub 的最新 Release（包括预览版）；发现新版本时通知控制台和在线管理员
   enabled: true
   # 最低按 5 分钟执行，默认每 30 分钟检查一次
   check-interval-minutes: 30

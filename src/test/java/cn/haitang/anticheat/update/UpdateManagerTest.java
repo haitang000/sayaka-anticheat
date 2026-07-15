@@ -3,6 +3,7 @@ package cn.haitang.anticheat.update;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -38,6 +39,26 @@ class UpdateManagerTest {
                 URI.create("https://example.com/haitang000/sayaka-anticheat/releases/tag/v9.0.0")).isEmpty());
         assertTrue(UpdateManager.releaseFromLatestUri(
                 URI.create("https://github.com/other/project/releases/tag/v9.0.0")).isEmpty());
+    }
+
+    @Test
+    void findsHighestVersionIncludingPrereleasesInReleaseFeed() throws Exception {
+        String feed = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <feed xmlns="http://www.w3.org/2005/Atom">
+                  <entry><link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0-beta.2"/></entry>
+                  <entry><link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0-beta.3"/></entry>
+                  <entry><link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.0.0"/></entry>
+                </feed>
+                """;
+
+        UpdateManager.Release release = UpdateManager.latestReleaseFromFeed(
+                new ByteArrayInputStream(feed.getBytes(StandardCharsets.UTF_8))).orElseThrow();
+
+        assertEquals("2.1.0-beta.3", release.version().toString());
+        assertEquals("v2.1.0-beta.3", release.tag());
+        assertEquals("https://github.com/haitang000/sayaka-anticheat/releases/download/"
+                + "v2.1.0-beta.3/Sayaka-AntiCheat-2.1.0-beta.3.jar", release.download().toString());
     }
 
     @Test
