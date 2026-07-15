@@ -111,7 +111,31 @@ class UpdateManagerTest {
         }
 
         assertFalse(invokesBukkitReload.get(),
-                "staged plugin updates must wait for a full restart instead of reloading packet plugins");
+                "isolated updates must never reload PacketEvents or the rest of the Bukkit server");
+    }
+
+    @Test
+    void swapsAndRestoresPluginJarForIsolatedHotReload() throws Exception {
+        Path current = temporaryDirectory.resolve("Sayaka-AntiCheat-old.jar");
+        Path staged = temporaryDirectory.resolve("update/Sayaka-AntiCheat-new.jar");
+        Path target = temporaryDirectory.resolve("Sayaka-AntiCheat-new.jar");
+        Path backup = temporaryDirectory.resolve("update/Sayaka-AntiCheat-old.jar.rollback");
+        Files.createDirectories(staged.getParent());
+        Files.writeString(current, "old");
+        Files.writeString(staged, "new");
+
+        UpdateManager.replacePluginJar(current, staged, target, backup);
+
+        assertFalse(Files.exists(current));
+        assertEquals("new", Files.readString(target));
+        assertEquals("old", Files.readString(backup));
+
+        UpdateManager.restorePluginJar(current, staged, target, backup);
+
+        assertEquals("old", Files.readString(current));
+        assertEquals("new", Files.readString(staged));
+        assertFalse(Files.exists(target));
+        assertFalse(Files.exists(backup));
     }
 
     private UpdateManager.Release release(String tag) {

@@ -35,7 +35,7 @@ import java.util.regex.Pattern;
  *   unban <玩家> [reset]  解封并可选重置封禁次数阶梯
  *   alerts          开关个人警报
  *   reload          重载配置
- *   update [check]  安装更新并在下次重启时应用，或仅检查更新
+ *   update [check]  安装更新并仅热重载本插件，或仅检查更新
  */
 public class AntiCheatCommand implements TabExecutor {
 
@@ -395,7 +395,7 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage("  §e/sac web §7- 生成管理后台一次性登录链接");
         sender.sendMessage("  §e/sac alerts §7- 开关个人实时警报");
         sender.sendMessage("  §e/sac reload §7- 重载配置");
-        sender.sendMessage("  §e/sac update [check] §7- 安装更新并在下次重启时应用（check 仅检查）");
+        sender.sendMessage("  §e/sac update [check] §7- 安装更新并仅热重载本插件（check 仅检查）");
     }
 
     @Override
