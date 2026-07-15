@@ -105,7 +105,7 @@ public final class SayakaVelocityPlugin {
         }
         if (settings.webEnabled() && dashboard == null) {
             try {
-                dashboard = DashboardServer.start(store, proxy::getPlayerCount, settings, logger);
+                dashboard = DashboardServer.start(store, proxy::getPlayerCount, banCache::remove, settings, logger);
             } catch (Exception error) {
                 logger.warn("Sayaka Web 面板暂未启动，将在 30 秒后重试: {}", error.getMessage());
             }

@@ -5,6 +5,8 @@ import cn.haitang.anticheat.shared.NetworkModels.AppealSubmitResult;
 import cn.haitang.anticheat.shared.NetworkModels.EnforcementDecision;
 import cn.haitang.anticheat.shared.NetworkModels.EnforcementKind;
 import cn.haitang.anticheat.shared.NetworkModels.EnforcementRequest;
+import cn.haitang.anticheat.shared.NetworkModels.PardonResult;
+import cn.haitang.anticheat.shared.NetworkModels.PunishmentFilter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -106,8 +108,88 @@ class JdbcNetworkStoreTest {
         assertNotEquals("", restored.detections().get(0).detail());
     }
 
+    @Test
+    void filtersAndPagesPunishmentsWithoutPerRowLookups() throws Exception {
+        long now = 1_700_000_000_000L;
+        UUID firstPlayer = UUID.randomUUID();
+        UUID secondPlayer = UUID.randomUUID();
+        var first = store.prepareEnforcement(
+                request(firstPlayer, "Alice", "lobby", "speed", 1), now - 2_000L).punishment();
+        var second = store.prepareEnforcement(
+                request(secondPlayer, "Bob", "survival", "reach", 1), now - 1_000L).punishment();
+        store.submitAppeal(first.id(), "请复查这次速度判定", "alice@example.test", now - 500L);
+
+        var page = store.queryPunishments(new PunishmentFilter(
+                "alice", true, AppealStatus.PENDING, "lobby", "speed", now - 10_000L, now),
+                1, 1, now);
+
+        assertEquals(1, page.total());
+        assertEquals(first.id(), page.items().get(0).punishment().id());
+        assertTrue(page.items().get(0).active());
+        assertEquals(AppealStatus.PENDING, page.items().get(0).appealStatus());
+
+        var all = store.queryPunishments(new PunishmentFilter(
+                "", null, null, null, null, 0, 0), 1, 1, now);
+        assertEquals(2, all.total());
+        assertEquals(second.id(), all.items().get(0).punishment().id());
+
+        var overview = store.dashboardOverview(now - 3 * 86_400_000L, now, 86_400_000L, now);
+        assertEquals(2, overview.periodPunishments());
+        assertEquals(3, overview.trend().size());
+        assertEquals(2, overview.activeBans());
+        assertEquals(1, overview.pendingAppeals());
+    }
+
+    @Test
+    void exposesPlayerProfilesAndAuditsWhitelistChanges() throws Exception {
+        long now = System.currentTimeMillis();
+        UUID player = UUID.randomUUID();
+        store.prepareEnforcement(request(player, "Builder", "creative", "scaffold", 1), now);
+
+        store.addWhitelistAudited(player, "Builder", now + 1);
+        store.addWhitelistAudited(player, "Builder", now + 2);
+
+        assertEquals(1, store.listWhitelist().size());
+        assertEquals(player, store.searchPlayers("build", 20).get(0).playerId());
+        var profile = store.playerProfile(player, now + 3).orElseThrow();
+        assertTrue(profile.whitelisted());
+        assertEquals(1, profile.punishments().size());
+        assertTrue(profile.history().stream().anyMatch(entry -> entry.text().contains("白名单")));
+
+        assertTrue(store.removeWhitelistAudited(player, now + 4));
+        assertFalse(store.removeWhitelistAudited(player, now + 5));
+        assertFalse(store.playerProfile(player, now + 6).orElseThrow().whitelisted());
+    }
+
+    @Test
+    void oldPunishmentCannotPardonANewerActiveBan() throws Exception {
+        long now = System.currentTimeMillis();
+        UUID player = UUID.randomUUID();
+        String first = store.prepareEnforcement(request(player, "Repeat", "lobby", "speed", 1), now)
+                .punishment().id();
+        assertEquals(PardonResult.OK, store.pardonPunishment(first, false, "第一次复查", now + 1));
+
+        String second = store.prepareEnforcement(request(player, "Repeat", "lobby", "reach", 1), now + 2)
+                .punishment().id();
+        assertEquals(PardonResult.NOT_ACTIVE,
+                store.pardonPunishment(first, true, "不应解除新处罚", now + 3));
+        assertEquals(second, store.findActiveBan(player, now + 4).orElseThrow().punishmentId());
+        assertEquals(2, store.banCount(player));
+
+        assertEquals(PardonResult.OK,
+                store.pardonPunishment(second, true, "复查通过", now + 5));
+        assertFalse(store.findActiveBan(player, now + 6).isPresent());
+        assertEquals(0, store.banCount(player));
+        assertTrue(store.historyEntries(player).stream().anyMatch(entry -> entry.text().contains("复查通过")));
+    }
+
     private static EnforcementRequest request(UUID player, String serverId, int threshold) {
-        return new EnforcementRequest(player, "Cheater", serverId, "speed", 20.0,
+        return request(player, "Cheater", serverId, "speed", threshold);
+    }
+
+    private static EnforcementRequest request(UUID player, String playerName, String serverId,
+                                              String check, int threshold) {
+        return new EnforcementRequest(player, playerName, serverId, check, 20.0,
                 24, threshold, List.of(1, 6, 24),
                 List.of(new NetworkModels.WarningEvidence(10L, "speed", 2, 12.0)),
                 List.of(new NetworkModels.DetectionEvidence(11L, "speed", 20.0, "bps=12.0")));

@@ -62,6 +62,8 @@ PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 
 群组模式使用 MariaDB/MySQL 共享 strike、白名单、处罚、封禁和申诉。只有 Velocity 组件启动 HTTP 面板，因此同机多个后端不会争用 8080。
 
+面板包含玩家申诉入口，以及带服务端分页检索、处罚趋势、来源服/检测分布、玩家审计档案、精确解封、共享白名单和 CSV 导出的管理后台。Web 解封与申诉通过会立即失效 Velocity 封禁缓存；历史处罚和证据仍保留用于审计。
+
 1. 创建数据库和账号，并确保所有 Paper 后端与 Velocity 都能连接。
 2. 在每个 Paper 的 `plugins/SayakaAntiCheat/config.yml` 中设置 `network.enabled: true`，使用同一数据库连接，并为每个后端设置唯一的 `network.server-id`；保持 `web.enabled: false`，随后完整重启 Paper。
 3. 启动 Velocity 一次以生成 `plugins/sayaka-anticheat/config.toml`，配置同一数据库。通过环境变量 `SAYAKA_DATABASE_PASSWORD` 和 `SAYAKA_ADMIN_TOKEN` 提供密码与管理令牌。

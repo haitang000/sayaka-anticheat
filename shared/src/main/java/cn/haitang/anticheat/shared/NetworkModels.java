@@ -81,4 +81,75 @@ public final class NetworkModels {
     ) {}
 
     public enum AppealSubmitResult { OK, PUNISHMENT_NOT_FOUND, ALREADY_RESOLVED }
+
+    public record Page<T>(List<T> items, int page, int pageSize, long total) {
+        public Page {
+            items = List.copyOf(items);
+        }
+    }
+
+    public record PunishmentFilter(
+            String query,
+            Boolean active,
+            AppealStatus appealStatus,
+            String serverId,
+            String check,
+            long from,
+            long to
+    ) {}
+
+    public record AppealFilter(String query, AppealStatus status, long from, long to) {}
+
+    public record PunishmentView(Punishment punishment, boolean active, AppealStatus appealStatus) {}
+
+    public record AppealView(Appeal appeal, Punishment punishment, boolean active) {}
+
+    public record HistoryEntry(long at, String text) {}
+
+    public record PlayerReference(UUID playerId, String playerName) {}
+
+    public record PlayerProfile(
+            UUID playerId,
+            String playerName,
+            int banCount,
+            boolean whitelisted,
+            ActiveBan activeBan,
+            List<HistoryEntry> history,
+            List<Punishment> punishments
+    ) {
+        public PlayerProfile {
+            history = List.copyOf(history);
+            punishments = List.copyOf(punishments);
+        }
+    }
+
+    public record TimeBucket(long start, long count) {}
+
+    public record NamedCount(String name, long count) {}
+
+    public record DashboardOverview(
+            long totalPunishments,
+            long periodPunishments,
+            long activeBans,
+            long totalAppeals,
+            long pendingAppeals,
+            List<TimeBucket> trend,
+            List<NamedCount> checks,
+            List<NamedCount> servers
+    ) {
+        public DashboardOverview {
+            trend = List.copyOf(trend);
+            checks = List.copyOf(checks);
+            servers = List.copyOf(servers);
+        }
+    }
+
+    public record FilterOptions(List<String> servers, List<String> checks) {
+        public FilterOptions {
+            servers = List.copyOf(servers);
+            checks = List.copyOf(checks);
+        }
+    }
+
+    public enum PardonResult { OK, PUNISHMENT_NOT_FOUND, NOT_ACTIVE }
 }
