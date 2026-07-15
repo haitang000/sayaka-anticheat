@@ -23,7 +23,7 @@ class CrossServerCodecTest {
                 "speed", 21.5, 1, 2,
                 List.of(new PersistentStore.WarningEvidence(900L, "speed", 2, 12.5)),
                 List.of(new PersistentStore.DetectionEvidence(
-                        950L, "speed", 21.5, "horizontal=1.2")));
+                        950L, "speed", 21.5, "horizontal=1.2", 42)));
         CrossServerCodec.Envelope envelope = new CrossServerCodec.Envelope(
                 "BAN", "server-a", 1_000L, state,
                 new CrossServerCodec.SyncedPunishment(record, "§c封禁\n§7ID: " + punishmentId),

@@ -96,7 +96,8 @@ final class CrossServerCodec {
                 "at", detection.at(),
                 "check", detection.check(),
                 "vl", detection.vl(),
-                "detail", detection.detail())).toList());
+                "detail", detection.detail(),
+                "ping", detection.ping())).toList());
         return values;
     }
 
@@ -111,7 +112,8 @@ final class CrossServerCodec {
         for (Map<String, Object> detection : mapList(values.get("detections"))) {
             detections.add(new PersistentStore.DetectionEvidence(
                     longValue(detection.get("at")), string(detection.get("check")),
-                    doubleValue(detection.get("vl")), string(detection.get("detail"))));
+                    doubleValue(detection.get("vl")), string(detection.get("detail")),
+                    intValue(detection.get("ping"))));
         }
         PersistentStore.PunishmentRecord record = new PersistentStore.PunishmentRecord(
                 string(values.get("id")),

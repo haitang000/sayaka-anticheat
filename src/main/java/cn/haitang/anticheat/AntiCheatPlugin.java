@@ -33,10 +33,12 @@ import cn.haitang.anticheat.check.player.NoSlowCheck;
 import cn.haitang.anticheat.check.world.FastBreakCheck;
 import cn.haitang.anticheat.check.world.ScaffoldCheck;
 import cn.haitang.anticheat.command.AntiCheatCommand;
+import cn.haitang.anticheat.command.ReportCommand;
 import cn.haitang.anticheat.concurrent.ParallelAnalysisExecutor;
 import cn.haitang.anticheat.config.ConfigSnapshot;
 import cn.haitang.anticheat.data.PersistentStore;
 import cn.haitang.anticheat.data.PlayerDataManager;
+import cn.haitang.anticheat.listener.ChatLog;
 import cn.haitang.anticheat.listener.ConnectionListener;
 import cn.haitang.anticheat.packet.PacketTimeline;
 import cn.haitang.anticheat.packet.EntityPositionHistory;
@@ -86,6 +88,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     private PacketBridge packetBridge;
     private PacketListenerCommon packetBridgeRegistration;
     private CrossServerSync crossServerSync;
+    private ChatLog chatLog;
 
     private final List<Check> checks = new ArrayList<>();
     private FlightCheck flightCheck;
@@ -188,6 +191,8 @@ public final class AntiCheatPlugin extends JavaPlugin {
         pm.registerEvents(combatAttackContext, this);
         pm.registerEvents(punishmentExecutor, this);
         pm.registerEvents(new ConnectionListener(this), this);
+        chatLog = new ChatLog(this);
+        pm.registerEvents(chatLog, this);
         pm.registerEvents(new MovementTracker(this), this);
         for (Check check : checks) {
             pm.registerEvents(check, this);
@@ -198,6 +203,13 @@ public final class AntiCheatPlugin extends JavaPlugin {
             AntiCheatCommand executor = new AntiCheatCommand(this);
             command.setExecutor(executor);
             command.setTabCompleter(executor);
+        }
+
+        PluginCommand reportCommand = getCommand("report");
+        if (reportCommand != null) {
+            ReportCommand executor = new ReportCommand(this);
+            reportCommand.setExecutor(executor);
+            reportCommand.setTabCompleter(executor);
         }
 
         violationManager.startDecayTask();
@@ -252,6 +264,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     public UpdateManager getUpdateManager() { return updateManager; }
     public WebServer getWebServer() { return webServer; }
     public CrossServerSync getCrossServerSync() { return crossServerSync; }
+    public ChatLog getChatLog() { return chatLog; }
     public File getPluginJarFile() { return getFile(); }
 
     public List<String> reloadRuntimeConfig() {

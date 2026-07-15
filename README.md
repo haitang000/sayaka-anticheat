@@ -53,7 +53,7 @@
 ./mvnw package   # 需要 JDK 17+；无需预装 Maven
 ```
 
-产物在 `target/Sayaka-AntiCheat-2.1.0.2-beta.1.jar`。PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
+产物在 `target/Sayaka-AntiCheat-2.1.0.3-beta.1.jar`。PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 
 ### 跨服处罚同步
 
@@ -86,6 +86,9 @@ Redis 只应监听内网或通过防火墙限制来源。`required: true` 会在
 | `/sac alerts` | 开关个人实时警报 | `anticheat.alerts` |
 | `/sac reload` | 重载配置 | `anticheat.admin` |
 | `/sac update [check]` | 安装 GitHub 最新 Release 并热重载；`check` 仅检查 | `anticheat.admin` |
+| `/report <玩家> [原因]` | 玩家举报其他玩家；举报进入管理面板并实时通知在线管理员 | `anticheat.report`（默认全员） |
+
+玩家举报有冷却（`report.cooldown-seconds`，默认 60 秒）防止刷屏。管理后台新增「实时监控」页，可查看在线玩家的延迟与实时违规值、最近聊天记录（`web.chat-log-size` 条）与累计检测数量；封禁详情的检测证据现会显示触发时玩家的网络延迟。
 
 插件默认每 30 分钟检查一次 GitHub 的最新 Release（包括预览版）。发现更高版本后，控制台与在线管理员会收到提示；执行 `/sac update` 后会下载并校验 JAR，再通过 Bukkit 更新目录进行一次服务器级热重载，整个过程无需重启 JVM。可在 `updates` 配置段关闭或调整后台检查；关闭后台检查不影响手动使用 `/sac update` 或 `/sac update check`。
 

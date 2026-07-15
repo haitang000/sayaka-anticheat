@@ -117,7 +117,7 @@ class PersistentStoreTest {
                 "speed", 18.5, 6, 2,
                 List.of(new PersistentStore.WarningEvidence(bannedAt - 2_000L, "speed", 2, 12.5)),
                 List.of(new PersistentStore.DetectionEvidence(
-                        bannedAt - 1_000L, "speed", 18.5, "horizontal=1.20 max=0.42")));
+                        bannedAt - 1_000L, "speed", 18.5, "horizontal=1.20 max=0.42", 85)));
 
         store.addPunishment(punishment);
         assertTrue(store.saveNow());
@@ -135,6 +135,7 @@ class PersistentStoreTest {
         assertEquals(12.5, restored.warnings().get(0).vl());
         assertEquals(1, restored.detections().size());
         assertEquals("horizontal=1.20 max=0.42", restored.detections().get(0).detail());
+        assertEquals(85, restored.detections().get(0).ping());
 
         store.resetPlayer(playerId);
         assertNotNull(store.getPunishment(punishmentId), "重置玩家状态不应删除独立的处罚审计记录");

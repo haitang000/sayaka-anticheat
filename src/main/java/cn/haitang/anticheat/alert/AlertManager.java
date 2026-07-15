@@ -58,6 +58,19 @@ public class AlertManager {
         }
     }
 
+    /**
+     * 向在线管理员（持 {@link #PERM_ALERTS} 且未用 /sac alerts 关闭）推送一条消息。
+     * 用于玩家举报等低频但重要的通知，不受违规警报节流影响。
+     */
+    public void notifyStaff(String message) {
+        plugin.getLogger().info(stripColor(message));
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (online.hasPermission(PERM_ALERTS) && !alertsDisabled.contains(online.getUniqueId())) {
+                online.sendMessage(message);
+            }
+        }
+    }
+
     public boolean toggleAlerts(Player player) {
         UUID id = player.getUniqueId();
         if (alertsDisabled.remove(id)) return true;   // 重新开启

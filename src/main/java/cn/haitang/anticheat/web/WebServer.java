@@ -3,6 +3,8 @@ package cn.haitang.anticheat.web;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.CheckType;
 import cn.haitang.anticheat.data.PersistentStore;
+import cn.haitang.anticheat.data.PlayerData;
+import cn.haitang.anticheat.listener.ChatLog;
 import cn.haitang.anticheat.violation.PunishmentExecutor;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -21,6 +23,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -134,9 +137,12 @@ public final class WebServer {
         server.createContext("/api/appeal/submit", wrap(this::handleAppealSubmit));
         server.createContext("/api/admin/login/exchange", wrap(this::handleLoginExchange));
         server.createContext("/api/admin/overview", wrap(requireAdmin(this::handleOverview)));
+        server.createContext("/api/admin/live", wrap(requireAdmin(this::handleLive)));
         server.createContext("/api/admin/punishments", wrap(requireAdmin(this::handlePunishments)));
         server.createContext("/api/admin/appeals", wrap(requireAdmin(this::handleAppeals)));
         server.createContext("/api/admin/appeals/resolve", wrap(requireAdmin(this::handleResolve)));
+        server.createContext("/api/admin/reports", wrap(requireAdmin(this::handleReports)));
+        server.createContext("/api/admin/reports/resolve", wrap(requireAdmin(this::handleReportResolve)));
         server.createContext("/app.js", wrap(this::handleAppJavascript));
         server.createContext("/", wrap(this::handleStatic));
     }
@@ -292,6 +298,115 @@ public final class WebServer {
         body.put("activeBans", activeBans);
         body.put("totalAppeals", appeals.size());
         body.put("pendingAppeals", pending);
+        body.put("totalDetections", plugin.getViolationManager().totalDetections());
+        body.put("pendingReports", plugin.getStore().countPendingReports());
+        sendJson(exchange, 200, body);
+    }
+
+    /** 实时监控：在线玩家的延迟与实时违规值，以及最近聊天记录。 */
+    private void handleLive(HttpExchange exchange) throws IOException {
+        List<Object> players;
+        try {
+            players = syncCall(this::snapshotOnlinePlayers);
+        } catch (Exception ignored) {
+            players = new ArrayList<>();
+        }
+
+        List<Object> chat = new ArrayList<>();
+        ChatLog chatLog = plugin.getChatLog();
+        if (chatLog != null) {
+            for (ChatLog.Entry entry : chatLog.recent(100)) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("at", entry.at());
+                item.put("player", entry.player());
+                item.put("message", entry.message());
+                chat.add(item);
+            }
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("players", players);
+        body.put("chat", chat);
+        body.put("totalDetections", plugin.getViolationManager().totalDetections());
+        sendJson(exchange, 200, body);
+    }
+
+    /** 主线程执行：读取每个在线玩家的实时 VL 状态与延迟，按综合 VL 从高到低排序。 */
+    private List<Object> snapshotOnlinePlayers() {
+        List<Player> online = new ArrayList<>(Bukkit.getOnlinePlayers());
+        online.sort(Comparator.comparingDouble(this::liveTotalVl).reversed());
+
+        List<Object> list = new ArrayList<>();
+        for (Player player : online) {
+            PlayerData data = plugin.getDataManager().getIfPresent(player.getUniqueId());
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("name", player.getName());
+            item.put("uuid", player.getUniqueId().toString());
+            item.put("ping", player.getPing());
+            item.put("bedrock", data != null && data.isBedrock());
+            item.put("whitelisted", plugin.getStore().isWhitelisted(player.getUniqueId()));
+            item.put("totalVl", round1(data == null ? 0.0 : data.getTotalVl()));
+
+            List<Object> checks = new ArrayList<>();
+            if (data != null) {
+                data.getAllVl().entrySet().stream()
+                        .filter(entry -> entry.getValue() > 0)
+                        .sorted(Map.Entry.<CheckType, Double>comparingByValue().reversed())
+                        .forEach(entry -> {
+                            Map<String, Object> check = new LinkedHashMap<>();
+                            check.put("check", entry.getKey().display());
+                            check.put("vl", round1(entry.getValue()));
+                            checks.add(check);
+                        });
+            }
+            item.put("checks", checks);
+            list.add(item);
+        }
+        return list;
+    }
+
+    private double liveTotalVl(Player player) {
+        PlayerData data = plugin.getDataManager().getIfPresent(player.getUniqueId());
+        return data == null ? 0.0 : data.getTotalVl();
+    }
+
+    private void handleReports(HttpExchange exchange) throws IOException {
+        List<Object> list = new ArrayList<>();
+        for (PersistentStore.ReportRecord report : plugin.getStore().listReports()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", report.id());
+            item.put("reporter", report.reporterName());
+            item.put("target", report.targetName());
+            item.put("targetUuid", report.targetId() == null ? null : report.targetId().toString());
+            item.put("reason", report.reason());
+            item.put("at", report.at());
+            item.put("handled", report.handled());
+            list.add(item);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("reports", list);
+        sendJson(exchange, 200, body);
+    }
+
+    private void handleReportResolve(HttpExchange exchange) throws IOException {
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            sendJson(exchange, 405, error("仅支持 POST"));
+            return;
+        }
+        Map<String, Object> json = readJsonBody(exchange);
+        if (json == null) {
+            sendJson(exchange, 400, error("请求体不是合法 JSON"));
+            return;
+        }
+        String id = asString(json.get("id")).trim();
+        boolean handled = !Boolean.FALSE.equals(json.get("handled"));
+        if (!plugin.getStore().setReportHandled(id, handled)) {
+            sendJson(exchange, 404, error("未找到该举报"));
+            return;
+        }
+        plugin.getStore().saveAsync();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
         sendJson(exchange, 200, body);
     }
 
@@ -413,6 +528,7 @@ public final class WebServer {
             item.put("check", dt != null ? dt.display() : evidence.check());
             item.put("vl", round1(evidence.vl()));
             item.put("detail", evidence.detail());
+            item.put("ping", evidence.ping());
             detections.add(item);
         }
         map.put("detections", detections);

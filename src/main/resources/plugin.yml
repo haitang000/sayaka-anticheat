@@ -1,6 +1,6 @@
 name: SayakaAntiCheat
 prefix: Sayaka AntiCheat
-version: '2.1.0.2-beta.1'
+version: '2.1.0.3-beta.1'
 main: cn.haitang.anticheat.AntiCheatPlugin
 api-version: '1.20'
 depend: [packetevents]
@@ -11,6 +11,9 @@ commands:
   sac:
     description: 反作弊管理命令
     usage: /sac help
+  report:
+    description: 举报其他玩家
+    usage: /report <玩家> [原因]
 
 permissions:
   anticheat.admin:
@@ -19,6 +22,9 @@ permissions:
   anticheat.alerts:
     description: 接收实时违规警报，可用 /sac alerts 开关
     default: op
+  anticheat.report:
+    description: 使用 /report 举报其他玩家
+    default: true
   anticheat.bypass:
     description: 绕过所有检测（谨慎授予）
     default: false

@@ -19,8 +19,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class PlayerData {
 
-    /** 一次违规记录（供 /sac history 查看） */
-    public record ViolationRecord(long at, CheckType type, double vl, String detail) {}
+    /** 一次违规记录（供 /sac history 查看）。ping 为该次触发时玩家的网络延迟（毫秒）。 */
+    public record ViolationRecord(long at, CheckType type, double vl, String detail, int ping) {}
 
     /** 一次已实际发送给玩家的递进警告，封禁时会写入处罚快照。 */
     public record WarningRecord(long at, CheckType type, int stage, double vl) {}

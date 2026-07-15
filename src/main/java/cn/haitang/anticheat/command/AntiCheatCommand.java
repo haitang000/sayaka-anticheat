@@ -211,9 +211,9 @@ public class AntiCheatCommand implements TabExecutor {
             sender.sendMessage("    §8无");
         } else {
             for (PersistentStore.DetectionEvidence detection : punishment.detections()) {
-                sender.sendMessage(String.format("    §8%s §7%s VL §c%.1f §8(%s)",
+                sender.sendMessage(String.format("    §8%s §7%s VL §c%.1f §8(%s, 延迟 %dms)",
                         TIME.format(new Date(detection.at())), displayCheck(detection.check()),
-                        detection.vl(), detection.detail()));
+                        detection.vl(), detection.detail(), detection.ping()));
             }
         }
     }

@@ -37,7 +37,7 @@ public class PersistentStore {
 
     public record WarningEvidence(long at, String check, int stage, double vl) {}
 
-    public record DetectionEvidence(long at, String check, double vl, String detail) {}
+    public record DetectionEvidence(long at, String check, double vl, String detail, int ping) {}
 
     public record PlayerPunishmentState(
             UUID playerId,
@@ -87,6 +87,18 @@ public class PersistentStore {
 
     /** submitAppeal 的结果：申诉是否被接受。 */
     public enum AppealSubmitResult { OK, PUNISHMENT_NOT_FOUND, ALREADY_RESOLVED }
+
+    /** 一条玩家举报：谁举报了谁、原因、时间，以及是否已被管理员处理。 */
+    public record ReportRecord(
+            String id,
+            UUID reporterId,
+            String reporterName,
+            UUID targetId,
+            String targetName,
+            String reason,
+            long at,
+            boolean handled
+    ) {}
 
     private static final SimpleDateFormat TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm");
     private static final String PUNISHMENT_ID_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -411,7 +423,8 @@ public class PersistentStore {
             for (Map<?, ?> raw : yaml.getMapList(path + ".detections")) {
                 detections.add(new DetectionEvidence(
                         longValue(raw.get("at")), stringValue(raw.get("check")),
-                        doubleValue(raw.get("vl")), stringValue(raw.get("detail"))));
+                        doubleValue(raw.get("vl")), stringValue(raw.get("detail")),
+                        intValue(raw.get("ping"))));
             }
 
             return new PunishmentRecord(
@@ -531,6 +544,104 @@ public class PersistentStore {
                 yaml.getString(path + ".note", ""));
     }
 
+    // ---- 玩家举报 ----
+
+    /** 举报保留上限，超出后丢弃最旧的记录，避免 data.yml 无限增长。 */
+    private static final int MAX_REPORTS = 200;
+
+    /** 新增一条举报，返回生成的举报 ID。超过上限时丢弃最旧的记录。 */
+    public String addReport(UUID reporterId, String reporterName,
+                            UUID targetId, String targetName, String reason) {
+        synchronized (lock) {
+            String id = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            String path = "reports." + id;
+            yaml.set(path + ".reporter-uuid", reporterId == null ? "" : reporterId.toString());
+            yaml.set(path + ".reporter-name", reporterName);
+            yaml.set(path + ".target-uuid", targetId == null ? "" : targetId.toString());
+            yaml.set(path + ".target-name", targetName);
+            yaml.set(path + ".reason", reason);
+            yaml.set(path + ".at", System.currentTimeMillis());
+            yaml.set(path + ".handled", false);
+            trimReportsLocked();
+            markDirty();
+            return id;
+        }
+    }
+
+    /** 标记举报为已处理 / 未处理。返回 false 表示举报不存在。 */
+    public boolean setReportHandled(String id, boolean handled) {
+        synchronized (lock) {
+            String path = "reports." + id;
+            if (id == null || !yaml.isConfigurationSection(path)) return false;
+            yaml.set(path + ".handled", handled);
+            markDirty();
+            return true;
+        }
+    }
+
+    /** 列出全部举报，按提交时间倒序（最新在前）。 */
+    public List<ReportRecord> listReports() {
+        synchronized (lock) {
+            ConfigurationSection section = yaml.getConfigurationSection("reports");
+            if (section == null) return List.of();
+            List<ReportRecord> records = new ArrayList<>();
+            for (String id : section.getKeys(false)) {
+                ReportRecord record = readReportLocked(id);
+                if (record != null) records.add(record);
+            }
+            records.sort(Comparator.comparingLong(ReportRecord::at).reversed());
+            return List.copyOf(records);
+        }
+    }
+
+    /** 未处理举报数量，供仪表盘概览显示。 */
+    public long countPendingReports() {
+        synchronized (lock) {
+            ConfigurationSection section = yaml.getConfigurationSection("reports");
+            if (section == null) return 0;
+            long pending = 0;
+            for (String id : section.getKeys(false)) {
+                if (!yaml.getBoolean("reports." + id + ".handled", false)) pending++;
+            }
+            return pending;
+        }
+    }
+
+    private ReportRecord readReportLocked(String id) {
+        String path = "reports." + id;
+        if (!yaml.isConfigurationSection(path)) return null;
+        return new ReportRecord(
+                id,
+                parseUuidOrNull(yaml.getString(path + ".reporter-uuid", "")),
+                yaml.getString(path + ".reporter-name", ""),
+                parseUuidOrNull(yaml.getString(path + ".target-uuid", "")),
+                yaml.getString(path + ".target-name", ""),
+                yaml.getString(path + ".reason", ""),
+                yaml.getLong(path + ".at"),
+                yaml.getBoolean(path + ".handled", false));
+    }
+
+    /** 保留最新的 MAX_REPORTS 条，删除更早的记录。调用方必须已持有 lock。 */
+    private void trimReportsLocked() {
+        ConfigurationSection section = yaml.getConfigurationSection("reports");
+        if (section == null) return;
+        List<String> ids = new ArrayList<>(section.getKeys(false));
+        if (ids.size() <= MAX_REPORTS) return;
+        ids.sort(Comparator.comparingLong(id -> yaml.getLong("reports." + id + ".at")));
+        for (int i = 0; i < ids.size() - MAX_REPORTS; i++) {
+            yaml.set("reports." + ids.get(i), null);
+        }
+    }
+
+    private static UUID parseUuidOrNull(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
+    }
+
     private static Map<String, Object> warningMap(WarningEvidence warning) {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("at", warning.at());
@@ -546,6 +657,7 @@ public class PersistentStore {
         values.put("check", detection.check());
         values.put("vl", detection.vl());
         values.put("detail", detection.detail());
+        values.put("ping", detection.ping());
         return values;
     }
 

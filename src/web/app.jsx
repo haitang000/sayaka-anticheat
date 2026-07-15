@@ -9,6 +9,7 @@ const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
 const fmt = (ts) => (ts ? dayjs(ts).format('YYYY-MM-DD HH:mm') : '—');
+const fmtTime = (ts) => (ts ? dayjs(ts).format('HH:mm:ss') : '—');
 const TOKEN_KEY = 'sayaka-admin-token';
 
 function readLoginTicket() {
@@ -73,6 +74,7 @@ function EvidenceBlock({ punishment }) {
               { title: '时间', dataIndex: 'at', render: fmt, width: 150 },
               { title: '检测', dataIndex: 'check' },
               { title: 'VL', dataIndex: 'vl', width: 70 },
+              { title: '延迟', dataIndex: 'ping', width: 90, render: (p) => (p != null ? p + ' ms' : '—') },
               { title: '详情', dataIndex: 'detail' },
             ]} />
         </div>
@@ -202,28 +204,49 @@ function AdminDashboard({ token, onLogout }) {
   const [overview, setOverview] = useState(null);
   const [punishments, setPunishments] = useState([]);
   const [appeals, setAppeals] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [live, setLive] = useState(null);
   const [loading, setLoading] = useState(true);
   const [drawer, setDrawer] = useState(null);
-  const [tab, setTab] = useState('punishments');
+  const [tab, setTab] = useState('live');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [o, p, a] = await Promise.all([
+      const [o, p, a, r] = await Promise.all([
         api('/api/admin/overview', { token }),
         api('/api/admin/punishments', { token }),
         api('/api/admin/appeals', { token }),
+        api('/api/admin/reports', { token }),
       ]);
       setOverview(o);
       setPunishments(p.punishments || []);
       setAppeals(a.appeals || []);
+      setReports(r.reports || []);
     } catch (e) {
       if (e.status === 401) { message.error('令牌已失效，请重新登录'); onLogout(); }
       else message.error(e.message);
     } finally { setLoading(false); }
   }, [token, onLogout]);
 
+  const loadLive = useCallback(async () => {
+    try {
+      const d = await api('/api/admin/live', { token });
+      setLive(d);
+    } catch (e) {
+      if (e.status === 401) { message.error('令牌已失效，请重新登录'); onLogout(); }
+    }
+  }, [token, onLogout]);
+
   useEffect(() => { load(); }, [load]);
+
+  // 实时监控页每 4 秒自动刷新在线玩家与聊天
+  useEffect(() => {
+    if (tab !== 'live') return undefined;
+    loadLive();
+    const timer = setInterval(loadLive, 4000);
+    return () => clearInterval(timer);
+  }, [tab, loadLive]);
 
   const resolve = (record, approved) => {
     Modal.confirm({
@@ -248,6 +271,49 @@ function AdminDashboard({ token, onLogout }) {
       },
     });
   };
+
+  const resolveReport = async (record) => {
+    try {
+      await api('/api/admin/reports/resolve', {
+        method: 'POST', token,
+        body: { id: record.id, handled: true },
+      });
+      message.success('已标记为处理');
+      load();
+    } catch (e) { message.error(e.message); }
+  };
+
+  const liveCols = [
+    { title: '玩家', dataIndex: 'name',
+      render: (n, r) => (
+        <Space size={4}>
+          {n}
+          {r.bedrock && <Tag>基岩</Tag>}
+          {r.whitelisted && <Tag color="green">白名单</Tag>}
+        </Space>
+      ) },
+    { title: '延迟', dataIndex: 'ping', width: 100, sorter: (a, b) => a.ping - b.ping,
+      render: (p) => p + ' ms' },
+    { title: '综合 VL', dataIndex: 'totalVl', width: 100, defaultSortOrder: 'descend',
+      sorter: (a, b) => a.totalVl - b.totalVl },
+    { title: '触发检测', dataIndex: 'checks',
+      render: (cs) => (cs && cs.length
+        ? <Space size={4} wrap>{cs.map((c, i) => <Tag key={i} color="volcano">{c.check} {c.vl}</Tag>)}</Space>
+        : <Text type="secondary">无</Text>) },
+  ];
+
+  const reportCols = [
+    { title: '举报者', dataIndex: 'reporter', width: 130 },
+    { title: '被举报', dataIndex: 'target', width: 130 },
+    { title: '原因', dataIndex: 'reason', ellipsis: true },
+    { title: '时间', dataIndex: 'at', width: 150, render: fmt },
+    { title: '状态', dataIndex: 'handled', width: 100,
+      render: (h) => h ? <Tag color="green">已处理</Tag> : <Tag color="gold">待处理</Tag> },
+    { title: '操作', key: 'op', width: 110, fixed: 'right',
+      render: (_, r) => (r.handled
+        ? <Text type="secondary">—</Text>
+        : <Button size="small" type="primary" onClick={() => resolveReport(r)}>标记处理</Button>) },
+  ];
 
   const punishmentCols = [
     { title: '玩家', dataIndex: 'playerName', width: 130, fixed: 'left' },
@@ -282,24 +348,63 @@ function AdminDashboard({ token, onLogout }) {
 
   return (
     <div>
-      <Row gutter={16}>
-        <Col xs={12} sm={8} md={6}><Card><Statistic title="在线玩家" value={overview && overview.onlinePlayers >= 0 ? overview.onlinePlayers : '—'} /></Card></Col>
-        <Col xs={12} sm={8} md={6}><Card><Statistic title="启用检测" value={overview ? overview.enabledChecks : 0} suffix={'/ ' + (overview ? overview.totalChecks : 0)} /></Card></Col>
-        <Col xs={12} sm={8} md={6}><Card><Statistic title="当前封禁" value={overview ? overview.activeBans : 0} /></Card></Col>
-        <Col xs={12} sm={8} md={6}><Card><Statistic title="待处理申诉" valueStyle={{ color: overview && overview.pendingAppeals > 0 ? '#faad14' : undefined }} value={overview ? overview.pendingAppeals : 0} /></Card></Col>
+      <Row gutter={[16, 16]}>
+        <Col xs={12} sm={8} md={6} lg={4}><Card><Statistic title="在线玩家" value={overview && overview.onlinePlayers >= 0 ? overview.onlinePlayers : '—'} /></Card></Col>
+        <Col xs={12} sm={8} md={6} lg={4}><Card><Statistic title="启用检测" value={overview ? overview.enabledChecks : 0} suffix={'/ ' + (overview ? overview.totalChecks : 0)} /></Card></Col>
+        <Col xs={12} sm={8} md={6} lg={4}><Card><Statistic title="累计检测" value={overview ? overview.totalDetections : 0} /></Card></Col>
+        <Col xs={12} sm={8} md={6} lg={4}><Card><Statistic title="当前封禁" value={overview ? overview.activeBans : 0} /></Card></Col>
+        <Col xs={12} sm={8} md={6} lg={4}><Card><Statistic title="待处理申诉" valueStyle={{ color: overview && overview.pendingAppeals > 0 ? '#faad14' : undefined }} value={overview ? overview.pendingAppeals : 0} /></Card></Col>
+        <Col xs={12} sm={8} md={6} lg={4}><Card><Statistic title="待处理举报" valueStyle={{ color: overview && overview.pendingReports > 0 ? '#faad14' : undefined }} value={overview ? overview.pendingReports : 0} /></Card></Col>
       </Row>
 
       <Card style={{ marginTop: 16 }}
-        tabList={[{ key: 'punishments', tab: '处罚记录 (' + punishments.length + ')' }, { key: 'appeals', tab: '申诉管理 (' + appeals.length + ')' }]}
+        tabList={[
+          { key: 'live', tab: '实时监控' },
+          { key: 'punishments', tab: '处罚记录 (' + punishments.length + ')' },
+          { key: 'appeals', tab: '申诉管理 (' + appeals.length + ')' },
+          { key: 'reports', tab: '举报 (' + reports.length + ')' },
+        ]}
         activeTabKey={tab} onTabChange={setTab}
-        tabBarExtraContent={<Button onClick={load} loading={loading} icon={Icons.ReloadOutlined ? React.createElement(Icons.ReloadOutlined) : null}>刷新</Button>}>
-        {tab === 'punishments'
-          ? <Table rowKey="id" size="small" loading={loading} dataSource={punishments}
-              columns={punishmentCols} scroll={{ x: 900 }}
-              locale={{ emptyText: <Empty description="暂无处罚记录" /> }} />
-          : <Table rowKey="punishmentId" size="small" loading={loading} dataSource={appeals}
-              columns={appealCols} scroll={{ x: 900 }}
-              locale={{ emptyText: <Empty description="暂无申诉" /> }} />}
+        tabBarExtraContent={<Button onClick={() => { load(); loadLive(); }} loading={loading} icon={Icons.ReloadOutlined ? React.createElement(Icons.ReloadOutlined) : null}>刷新</Button>}>
+        {tab === 'live' && (
+          <div>
+            <Text type="secondary">每 4 秒自动刷新 · 在线 {live && live.players ? live.players.length : 0} 人 · 累计检测 {live ? live.totalDetections : 0} 次</Text>
+            <Table rowKey="uuid" size="small" style={{ marginTop: 8 }}
+              dataSource={live ? live.players : []} columns={liveCols}
+              pagination={false} scroll={{ x: 700 }}
+              locale={{ emptyText: <Empty description="暂无在线玩家" /> }} />
+            <div style={{ marginTop: 16 }}>
+              <Text strong>最近聊天</Text>
+              <div style={{ marginTop: 8, maxHeight: 320, overflowY: 'auto', border: '1px solid rgba(128,128,128,0.2)', borderRadius: 6, padding: 12 }}>
+                {live && live.chat && live.chat.length > 0
+                  ? live.chat.map((c, i) => (
+                      <div key={i} style={{ padding: '2px 0' }}>
+                        <Text type="secondary">{fmtTime(c.at)}</Text>{' '}
+                        <Text strong>{c.player}</Text>
+                        <Text type="secondary">: </Text>
+                        <Text>{c.message}</Text>
+                      </div>
+                    ))
+                  : <Empty description="暂无聊天记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+              </div>
+            </div>
+          </div>
+        )}
+        {tab === 'punishments' && (
+          <Table rowKey="id" size="small" loading={loading} dataSource={punishments}
+            columns={punishmentCols} scroll={{ x: 900 }}
+            locale={{ emptyText: <Empty description="暂无处罚记录" /> }} />
+        )}
+        {tab === 'appeals' && (
+          <Table rowKey="punishmentId" size="small" loading={loading} dataSource={appeals}
+            columns={appealCols} scroll={{ x: 900 }}
+            locale={{ emptyText: <Empty description="暂无申诉" /> }} />
+        )}
+        {tab === 'reports' && (
+          <Table rowKey="id" size="small" loading={loading} dataSource={reports}
+            columns={reportCols} scroll={{ x: 800 }}
+            locale={{ emptyText: <Empty description="暂无举报" /> }} />
+        )}
       </Card>
 
       <Drawer width={560} open={!!drawer} onClose={() => setDrawer(null)} title="处罚详情">

@@ -12,6 +12,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 递进式惩罚的调度中心。
@@ -30,8 +31,16 @@ public class ViolationManager {
     private final AntiCheatPlugin plugin;
     private BukkitTask decayTask;
 
+    /** 自插件启动以来累计触发的违规次数，仅供管理面板"实时检测数量"展示。 */
+    private final AtomicLong totalDetections = new AtomicLong();
+
     public ViolationManager(AntiCheatPlugin plugin) {
         this.plugin = plugin;
+    }
+
+    /** 自启动以来的累计违规次数。 */
+    public long totalDetections() {
+        return totalDetections.get();
     }
 
     /**
@@ -47,8 +56,9 @@ public class ViolationManager {
 
         double vl = data.addVl(type, weight);
         double totalVl = data.getTotalVl();
+        totalDetections.incrementAndGet();
         data.addViolation(new PlayerData.ViolationRecord(
-                System.currentTimeMillis(), type, vl, detail));
+                System.currentTimeMillis(), type, vl, detail, player.getPing()));
 
         if (plugin.config().getBoolean("settings.debug")) {
             plugin.getLogger().info(String.format("[DEBUG] %s %s +%.1f => VL %.1f, total %.1f (%s)",
@@ -81,7 +91,7 @@ public class ViolationManager {
         if (plugin.getStore().isWhitelisted(player.getUniqueId())) return;
         PlayerData data = plugin.getDataManager().get(player);
         data.addViolation(new PlayerData.ViolationRecord(
-                System.currentTimeMillis(), type, data.getVl(type), detail));
+                System.currentTimeMillis(), type, data.getVl(type), detail, player.getPing()));
         plugin.getAlertManager().staffAlert(player, type, data.getVl(type), detail);
     }
 

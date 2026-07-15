@@ -25,6 +25,13 @@ web:
   admin-token: ""
   # 处理 HTTP 请求的线程数
   threads: 2
+  # 管理面板"实时监控"保留的最近聊天条数（0 关闭聊天记录，最大 1000）
+  chat-log-size: 100
+
+# ---------------- 玩家举报 ----------------
+report:
+  # 同一玩家两次 /report 之间的冷却秒数，防止刷屏（0 关闭冷却）
+  cooldown-seconds: 60
 
 # ---------------- 跨服处罚同步 ----------------
 # 多台 Paper/Purpur 子服连接同一个 Redis 后，strike、封禁档位、处罚历史、
@@ -688,5 +695,13 @@ messages:
   unbanned-reset: "&a已解除 &f%player% &a的封禁，并重置封禁次数阶梯。"
   alerts-on: "&a已开启违规警报。"
   alerts-off: "&7已关闭违规警报。"
+  # —— 玩家举报 ——
+  report-usage: "&e用法: &f/report <玩家> [原因]"
+  report-self: "&c你不能举报自己。"
+  report-target-offline: "&c找不到在线玩家 &f%player%&c。"
+  report-cooldown: "&e举报太频繁，请在 &f%seconds% &e秒后再试。"
+  report-success: "&a已举报 &f%player%&a，感谢你的反馈，管理员会尽快处理。"
+  report-received: "&8[&c举报&8] &e%reporter% &7举报了 &f%player% &8(%reason%)"
+
   anti-spam-blocked: "&c消息发送过快或内容重复，请稍后再试。"
   anti-ads-blocked: "&c消息包含未获准的服务器地址、域名或邀请链接。"

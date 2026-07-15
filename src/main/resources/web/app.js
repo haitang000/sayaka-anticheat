@@ -31,6 +31,7 @@
   var { Header, Content } = Layout;
   var { Title, Text, Paragraph } = Typography;
   var fmt = (ts) => ts ? dayjs(ts).format("YYYY-MM-DD HH:mm") : "—";
+  var fmtTime = (ts) => ts ? dayjs(ts).format("HH:mm:ss") : "—";
   var TOKEN_KEY = "sayaka-admin-token";
   function readLoginTicket() {
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
@@ -98,6 +99,7 @@
           { title: "时间", dataIndex: "at", render: fmt, width: 150 },
           { title: "检测", dataIndex: "check" },
           { title: "VL", dataIndex: "vl", width: 70 },
+          { title: "延迟", dataIndex: "ping", width: 90, render: (p) => p != null ? p + " ms" : "—" },
           { title: "详情", dataIndex: "detail" }
         ]
       }
@@ -226,20 +228,24 @@
     const [overview, setOverview] = useState(null);
     const [punishments, setPunishments] = useState([]);
     const [appeals, setAppeals] = useState([]);
+    const [reports, setReports] = useState([]);
+    const [live, setLive] = useState(null);
     const [loading, setLoading] = useState(true);
     const [drawer, setDrawer] = useState(null);
-    const [tab, setTab] = useState("punishments");
+    const [tab, setTab] = useState("live");
     const load = useCallback(async () => {
       setLoading(true);
       try {
-        const [o, p, a] = await Promise.all([
+        const [o, p, a, r] = await Promise.all([
           api("/api/admin/overview", { token }),
           api("/api/admin/punishments", { token }),
-          api("/api/admin/appeals", { token })
+          api("/api/admin/appeals", { token }),
+          api("/api/admin/reports", { token })
         ]);
         setOverview(o);
         setPunishments(p.punishments || []);
         setAppeals(a.appeals || []);
+        setReports(r.reports || []);
       } catch (e) {
         if (e.status === 401) {
           message.error("令牌已失效，请重新登录");
@@ -249,9 +255,26 @@
         setLoading(false);
       }
     }, [token, onLogout]);
+    const loadLive = useCallback(async () => {
+      try {
+        const d = await api("/api/admin/live", { token });
+        setLive(d);
+      } catch (e) {
+        if (e.status === 401) {
+          message.error("令牌已失效，请重新登录");
+          onLogout();
+        }
+      }
+    }, [token, onLogout]);
     useEffect(() => {
       load();
     }, [load]);
+    useEffect(() => {
+      if (tab !== "live") return void 0;
+      loadLive();
+      const timer = setInterval(loadLive, 4e3);
+      return () => clearInterval(timer);
+    }, [tab, loadLive]);
     const resolve = (record, approved) => {
       Modal.confirm({
         title: approved ? "通过该申诉并解封玩家？" : "驳回该申诉？",
@@ -270,6 +293,64 @@
         }
       });
     };
+    const resolveReport = async (record) => {
+      try {
+        await api("/api/admin/reports/resolve", {
+          method: "POST",
+          token,
+          body: { id: record.id, handled: true }
+        });
+        message.success("已标记为处理");
+        load();
+      } catch (e) {
+        message.error(e.message);
+      }
+    };
+    const liveCols = [
+      {
+        title: "玩家",
+        dataIndex: "name",
+        render: (n, r) => /* @__PURE__ */ React.createElement(Space, { size: 4 }, n, r.bedrock && /* @__PURE__ */ React.createElement(Tag, null, "基岩"), r.whitelisted && /* @__PURE__ */ React.createElement(Tag, { color: "green" }, "白名单"))
+      },
+      {
+        title: "延迟",
+        dataIndex: "ping",
+        width: 100,
+        sorter: (a, b) => a.ping - b.ping,
+        render: (p) => p + " ms"
+      },
+      {
+        title: "综合 VL",
+        dataIndex: "totalVl",
+        width: 100,
+        defaultSortOrder: "descend",
+        sorter: (a, b) => a.totalVl - b.totalVl
+      },
+      {
+        title: "触发检测",
+        dataIndex: "checks",
+        render: (cs) => cs && cs.length ? /* @__PURE__ */ React.createElement(Space, { size: 4, wrap: true }, cs.map((c, i) => /* @__PURE__ */ React.createElement(Tag, { key: i, color: "volcano" }, c.check, " ", c.vl))) : /* @__PURE__ */ React.createElement(Text, { type: "secondary" }, "无")
+      }
+    ];
+    const reportCols = [
+      { title: "举报者", dataIndex: "reporter", width: 130 },
+      { title: "被举报", dataIndex: "target", width: 130 },
+      { title: "原因", dataIndex: "reason", ellipsis: true },
+      { title: "时间", dataIndex: "at", width: 150, render: fmt },
+      {
+        title: "状态",
+        dataIndex: "handled",
+        width: 100,
+        render: (h) => h ? /* @__PURE__ */ React.createElement(Tag, { color: "green" }, "已处理") : /* @__PURE__ */ React.createElement(Tag, { color: "gold" }, "待处理")
+      },
+      {
+        title: "操作",
+        key: "op",
+        width: 110,
+        fixed: "right",
+        render: (_, r) => r.handled ? /* @__PURE__ */ React.createElement(Text, { type: "secondary" }, "—") : /* @__PURE__ */ React.createElement(Button, { size: "small", type: "primary", onClick: () => resolveReport(r) }, "标记处理")
+      }
+    ];
     const punishmentCols = [
       { title: "玩家", dataIndex: "playerName", width: 130, fixed: "left" },
       { title: "检测", dataIndex: "checkDisplay", ellipsis: true },
@@ -316,16 +397,37 @@
         render: (_, r) => /* @__PURE__ */ React.createElement(Space, { size: "small" }, /* @__PURE__ */ React.createElement(Button, { size: "small", onClick: () => setDrawer(r.punishment) }, "详情"), r.status === "PENDING" && /* @__PURE__ */ React.createElement(Button, { size: "small", type: "primary", onClick: () => resolve(r, true) }, "通过"), r.status === "PENDING" && /* @__PURE__ */ React.createElement(Button, { size: "small", danger: true, onClick: () => resolve(r, false) }, "驳回"))
       }
     ];
-    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Row, { gutter: 16 }, /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "在线玩家", value: overview && overview.onlinePlayers >= 0 ? overview.onlinePlayers : "—" }))), /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "启用检测", value: overview ? overview.enabledChecks : 0, suffix: "/ " + (overview ? overview.totalChecks : 0) }))), /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "当前封禁", value: overview ? overview.activeBans : 0 }))), /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "待处理申诉", valueStyle: { color: overview && overview.pendingAppeals > 0 ? "#faad14" : void 0 }, value: overview ? overview.pendingAppeals : 0 })))), /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Row, { gutter: [16, 16] }, /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6, lg: 4 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "在线玩家", value: overview && overview.onlinePlayers >= 0 ? overview.onlinePlayers : "—" }))), /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6, lg: 4 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "启用检测", value: overview ? overview.enabledChecks : 0, suffix: "/ " + (overview ? overview.totalChecks : 0) }))), /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6, lg: 4 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "累计检测", value: overview ? overview.totalDetections : 0 }))), /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6, lg: 4 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "当前封禁", value: overview ? overview.activeBans : 0 }))), /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6, lg: 4 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "待处理申诉", valueStyle: { color: overview && overview.pendingAppeals > 0 ? "#faad14" : void 0 }, value: overview ? overview.pendingAppeals : 0 }))), /* @__PURE__ */ React.createElement(Col, { xs: 12, sm: 8, md: 6, lg: 4 }, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement(Statistic, { title: "待处理举报", valueStyle: { color: overview && overview.pendingReports > 0 ? "#faad14" : void 0 }, value: overview ? overview.pendingReports : 0 })))), /* @__PURE__ */ React.createElement(
       Card,
       {
         style: { marginTop: 16 },
-        tabList: [{ key: "punishments", tab: "处罚记录 (" + punishments.length + ")" }, { key: "appeals", tab: "申诉管理 (" + appeals.length + ")" }],
+        tabList: [
+          { key: "live", tab: "实时监控" },
+          { key: "punishments", tab: "处罚记录 (" + punishments.length + ")" },
+          { key: "appeals", tab: "申诉管理 (" + appeals.length + ")" },
+          { key: "reports", tab: "举报 (" + reports.length + ")" }
+        ],
         activeTabKey: tab,
         onTabChange: setTab,
-        tabBarExtraContent: /* @__PURE__ */ React.createElement(Button, { onClick: load, loading, icon: Icons.ReloadOutlined ? React.createElement(Icons.ReloadOutlined) : null }, "刷新")
+        tabBarExtraContent: /* @__PURE__ */ React.createElement(Button, { onClick: () => {
+          load();
+          loadLive();
+        }, loading, icon: Icons.ReloadOutlined ? React.createElement(Icons.ReloadOutlined) : null }, "刷新")
       },
-      tab === "punishments" ? /* @__PURE__ */ React.createElement(
+      tab === "live" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Text, { type: "secondary" }, "每 4 秒自动刷新 · 在线 ", live && live.players ? live.players.length : 0, " 人 · 累计检测 ", live ? live.totalDetections : 0, " 次"), /* @__PURE__ */ React.createElement(
+        Table,
+        {
+          rowKey: "uuid",
+          size: "small",
+          style: { marginTop: 8 },
+          dataSource: live ? live.players : [],
+          columns: liveCols,
+          pagination: false,
+          scroll: { x: 700 },
+          locale: { emptyText: /* @__PURE__ */ React.createElement(Empty, { description: "暂无在线玩家" }) }
+        }
+      ), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 16 } }, /* @__PURE__ */ React.createElement(Text, { strong: true }, "最近聊天"), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8, maxHeight: 320, overflowY: "auto", border: "1px solid rgba(128,128,128,0.2)", borderRadius: 6, padding: 12 } }, live && live.chat && live.chat.length > 0 ? live.chat.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "2px 0" } }, /* @__PURE__ */ React.createElement(Text, { type: "secondary" }, fmtTime(c.at)), " ", /* @__PURE__ */ React.createElement(Text, { strong: true }, c.player), /* @__PURE__ */ React.createElement(Text, { type: "secondary" }, ": "), /* @__PURE__ */ React.createElement(Text, null, c.message))) : /* @__PURE__ */ React.createElement(Empty, { description: "暂无聊天记录", image: Empty.PRESENTED_IMAGE_SIMPLE })))),
+      tab === "punishments" && /* @__PURE__ */ React.createElement(
         Table,
         {
           rowKey: "id",
@@ -336,7 +438,8 @@
           scroll: { x: 900 },
           locale: { emptyText: /* @__PURE__ */ React.createElement(Empty, { description: "暂无处罚记录" }) }
         }
-      ) : /* @__PURE__ */ React.createElement(
+      ),
+      tab === "appeals" && /* @__PURE__ */ React.createElement(
         Table,
         {
           rowKey: "punishmentId",
@@ -346,6 +449,18 @@
           columns: appealCols,
           scroll: { x: 900 },
           locale: { emptyText: /* @__PURE__ */ React.createElement(Empty, { description: "暂无申诉" }) }
+        }
+      ),
+      tab === "reports" && /* @__PURE__ */ React.createElement(
+        Table,
+        {
+          rowKey: "id",
+          size: "small",
+          loading,
+          dataSource: reports,
+          columns: reportCols,
+          scroll: { x: 800 },
+          locale: { emptyText: /* @__PURE__ */ React.createElement(Empty, { description: "暂无举报" }) }
         }
       )
     ), /* @__PURE__ */ React.createElement(Drawer, { width: 560, open: !!drawer, onClose: () => setDrawer(null), title: "处罚详情" }, /* @__PURE__ */ React.createElement(EvidenceBlock, { punishment: drawer })));

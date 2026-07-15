@@ -157,7 +157,8 @@ public class PunishmentExecutor implements Listener {
                         .toList(),
                 data.getRecentViolations().stream()
                         .map(detection -> new PersistentStore.DetectionEvidence(
-                                detection.at(), detection.type().id(), detection.vl(), detection.detail()))
+                                detection.at(), detection.type().id(), detection.vl(),
+                                detection.detail(), detection.ping()))
                         .toList());
         plugin.getStore().addPunishment(punishment);
         plugin.getStore().addHistory(player.getUniqueId(),
