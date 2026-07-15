@@ -25,8 +25,17 @@ public class PlayerData {
     /** 一次已实际发送给玩家的递进警告，封禁时会写入处罚快照。 */
     public record WarningRecord(long at, CheckType type, int stage, double vl) {}
 
-    /** 移动采样：时间戳 + 该次移动的水平距离 */
-    public record MoveSample(long at, double dist) {}
+    /**
+     * 移动采样：时间戳 + 该次移动的水平距离 + 该刻是否有地面支撑。
+     * grounded 供 NoSlow 排除空中样本：空中水平惯性按空气阻力（0.91/tick）衰减，
+     * 远慢于地面摩擦，用减速上限判定会误判跳跃/坠落中喝药水等合法移动。
+     */
+    public record MoveSample(long at, double dist, boolean grounded) {
+        /** 兼容旧调用点：默认视为有地面支撑。 */
+        public MoveSample(long at, double dist) {
+            this(at, dist, true);
+        }
+    }
 
     private final UUID uuid;
     private final String name;

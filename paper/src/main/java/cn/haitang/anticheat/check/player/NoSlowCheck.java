@@ -60,6 +60,10 @@ public class NoSlowCheck extends Check {
         long last = 0;
         for (PlayerData.MoveSample sample : data.getSpeedWindow()) {
             if (sample.at() < graceEnd) continue;
+            // 空中样本一律跳过：起跳/坠落前的水平惯性按空气阻力（0.91/tick）衰减，
+            // 远慢于地面摩擦，可在起始宽限之后仍高于减速上限。跳跃或坠落中喝药水
+            // 因此会被误判，而地面上的 NoSlow（惯性被摩擦迅速吸收）仍照常判定。
+            if (!sample.grounded()) continue;
             if (first == 0) first = sample.at();
             last = sample.at();
             total += sample.dist();

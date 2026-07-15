@@ -111,7 +111,7 @@ public class MovementTracker implements Listener {
             // Do not let legal launch displacement poison the first Speed window after landing.
             window.clear();
         } else {
-            window.addLast(new PlayerData.MoveSample(now, distXZ));
+            window.addLast(new PlayerData.MoveSample(now, distXZ, collision));
             while (!window.isEmpty() && now - window.peekFirst().at() > 1500) {
                 window.removeFirst();
             }
