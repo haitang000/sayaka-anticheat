@@ -121,7 +121,7 @@ public final class WebServer {
         web.registerRoutes();
         server.start();
 
-        plugin.getLogger().info("反作弊 Web 面板已启动: http://" + displayHost(bind) + ":" + port + "/");
+        plugin.getLogger().info("反作弊 Web 面板已启动: " + web.displayUrl());
         if (generated) {
             plugin.getLogger().info("管理后台访问令牌（本次随机生成，可在 config.yml 的 web.admin-token 固定）: " + token);
         }
@@ -630,8 +630,13 @@ public final class WebServer {
 
     /** 供管理员查看的面板地址，例如 {@code http://<服务器IP>:8080/}。 */
     public String displayUrl() {
-        if (!publicUrl.isBlank()) return publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
-        return "http://" + displayHost(bind) + ":" + port() + "/";
+        return formatDisplayUrl(publicUrl, bind, port());
+    }
+
+    static String formatDisplayUrl(String publicUrl, String bind, int port) {
+        String configured = publicUrl == null ? "" : publicUrl.trim();
+        if (!configured.isBlank()) return configured.endsWith("/") ? configured : configured + "/";
+        return "http://" + displayHost(bind) + ":" + port + "/";
     }
 
     /** 创建一个两分钟内有效、只能兑换一次的管理员直达链接。 */
