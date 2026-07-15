@@ -11,6 +11,13 @@ const { Title, Text, Paragraph } = Typography;
 const fmt = (ts) => (ts ? dayjs(ts).format('YYYY-MM-DD HH:mm') : '—');
 const TOKEN_KEY = 'sayaka-admin-token';
 
+function takeLoginTicket() {
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
+  const ticket = new URLSearchParams(hash).get('admin-login');
+  if (ticket) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  return ticket;
+}
+
 async function api(path, { method = 'GET', body, token } = {}) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
@@ -296,10 +303,32 @@ function AdminDashboard({ token, onLogout }) {
   );
 }
 
-function AdminView() {
+function AdminView({ loginTicket, clearLoginTicket }) {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || '');
+  const [exchanging, setExchanging] = useState(!!loginTicket);
   const connect = (t) => { localStorage.setItem(TOKEN_KEY, t); setToken(t); };
   const logout = () => { localStorage.removeItem(TOKEN_KEY); setToken(''); };
+  useEffect(() => {
+    if (!loginTicket) return;
+    let active = true;
+    api('/api/admin/login/exchange', { method: 'POST', body: { ticket: loginTicket } })
+      .then((data) => {
+        if (!active) return;
+        localStorage.setItem(TOKEN_KEY, data.token);
+        setToken(data.token);
+      })
+      .catch((e) => {
+        if (active) message.error(e.status === 401 ? '一次性登录链接无效、已使用或已过期' : e.message);
+      })
+      .finally(() => {
+        clearLoginTicket(null);
+        if (active) setExchanging(false);
+      });
+    return () => { active = false; };
+  }, [loginTicket, clearLoginTicket]);
+  if (exchanging) {
+    return <div style={{ textAlign: 'center', padding: 64 }}><Spin tip="正在登录管理后台…" /></div>;
+  }
   return token
     ? <div>
         <div style={{ textAlign: 'right', marginBottom: 12 }}>
@@ -312,7 +341,8 @@ function AdminView() {
 
 // ---------------- 应用根 ----------------
 function App() {
-  const [view, setView] = useState('appeal');
+  const [loginTicket, setLoginTicket] = useState(takeLoginTicket);
+  const [view, setView] = useState(loginTicket ? 'admin' : 'appeal');
   const [dark, setDark] = useState(() => window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
   useEffect(() => {
     if (!window.matchMedia) return;
@@ -327,11 +357,11 @@ function App() {
       <Layout style={{ minHeight: '100%' }}>
         <Header style={{ display: 'flex', alignItems: 'center', gap: 16, background: dark ? '#141414' : '#d4380d' }}>
           <Text style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>Sayaka AntiCheat</Text>
-          <Segmented value={view} onChange={setView}
+          <Segmented value={view} onChange={setView} disabled={!!loginTicket}
             options={[{ label: '玩家申诉', value: 'appeal' }, { label: '管理后台', value: 'admin' }]} />
         </Header>
         <Content style={{ padding: 24 }}>
-          {view === 'appeal' ? <AppealView /> : <AdminView />}
+          {view === 'appeal' ? <AppealView /> : <AdminView loginTicket={loginTicket} clearLoginTicket={setLoginTicket} />}
         </Content>
       </Layout>
     </ConfigProvider>

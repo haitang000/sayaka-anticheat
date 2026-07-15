@@ -380,10 +380,8 @@ public class AntiCheatCommand implements TabExecutor {
             return;
         }
         sender.sendMessage(plugin.getMessages().prefix() + "§f反作弊 Web 面板");
-        sender.sendMessage("  §7地址: §b" + web.displayUrl());
-        sender.sendMessage("  §7管理令牌: §f" + web.adminToken()
-                + (web.isTokenGenerated() ? " §8(本次启动随机生成，可在 config.yml 固定)" : ""));
-        sender.sendMessage("  §8玩家凭封禁界面上的处罚 ID 申诉；管理员用上面的令牌登录后台。");
+        sender.sendMessage("  §7一次性登录链接: §b" + web.createOneTimeLoginUrl());
+        sender.sendMessage("  §8链接在 2 分钟内有效且只能使用一次；打开后将自动进入管理后台。");
     }
 
     private void sendHelp(CommandSender sender) {
@@ -394,7 +392,7 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage("  §e/sac reset <玩家> [all] §7- 清空违规值（all 含档案）");
         sender.sendMessage("  §e/sac whitelist add|remove|list [玩家] §7- 管理检测白名单");
         sender.sendMessage("  §e/sac unban <玩家> [reset] §7- 解封（reset 重置处罚档位）");
-        sender.sendMessage("  §e/sac web §7- 查看面板地址与当前管理令牌");
+        sender.sendMessage("  §e/sac web §7- 生成管理后台一次性登录链接");
         sender.sendMessage("  §e/sac alerts §7- 开关个人实时警报");
         sender.sendMessage("  §e/sac reload §7- 重载配置");
         sender.sendMessage("  §e/sac update [check] §7- 安装更新并热重载（check 仅检查）");

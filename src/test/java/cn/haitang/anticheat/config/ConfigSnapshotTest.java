@@ -82,4 +82,11 @@ class ConfigSnapshotTest {
 
         assertTrue(ConfigSnapshot.validate(config).size() >= 3);
     }
+
+    @Test
+    void rejectsInvalidWebPublicUrl() {
+        config.set("web.public-url", "https://sac.example.com/panel");
+        assertTrue(ConfigSnapshot.validate(config).stream()
+                .anyMatch(error -> error.startsWith("web.public-url")));
+    }
 }

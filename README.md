@@ -82,11 +82,14 @@ Redis 只应监听内网或通过防火墙限制来源。`required: true` 会在
 | `/sac reset <玩家> [all]` | 清空 VL（`all` 连同 strike/封禁档案） | `anticheat.admin` |
 | `/sac whitelist add/remove/list` | 反作弊白名单管理 | `anticheat.whitelist` |
 | `/sac unban <玩家> [reset]` | 解封并清空 strike | `anticheat.unban` |
+| `/sac web` | 生成 2 分钟内有效、仅可使用一次的管理后台直达链接 | `anticheat.admin` |
 | `/sac alerts` | 开关个人实时警报 | `anticheat.alerts` |
 | `/sac reload` | 重载配置 | `anticheat.admin` |
 | `/sac update [check]` | 安装 GitHub 最新 Release 并热重载；`check` 仅检查 | `anticheat.admin` |
 
 插件默认每 30 分钟检查一次 GitHub 的最新 Release（包括预览版）。发现更高版本后，控制台与在线管理员会收到提示；执行 `/sac update` 后会下载并校验 JAR，再通过 Bukkit 更新目录进行一次服务器级热重载，整个过程无需重启 JVM。可在 `updates` 配置段关闭或调整后台检查；关闭后台检查不影响手动使用 `/sac update` 或 `/sac update check`。
+
+Web 面板使用域名、HTTPS 或反向代理时，应将 `web.public-url` 配置为管理员实际访问的完整地址；`/sac web` 会基于该地址生成一次性登录链接。链接中的票据位于 URL fragment，不会随 HTTP 请求发送，兑换成功后也会立即从地址栏移除。
 
 `anticheat.bypass` 完全绕过检测（默认无人持有）；`anticheat.antispam.bypass` / `anticheat.antiads.bypass` 仅绕过对应聊天检测。以上权限默认均不给 OP 之外的人。
 

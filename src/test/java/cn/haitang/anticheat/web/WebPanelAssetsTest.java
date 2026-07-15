@@ -22,6 +22,8 @@ class WebPanelAssetsTest {
         assertFalse(html.contains("text/babel"));
         assertFalse(javascript.matches("(?s).*\\bimport\\s+(?:[({*]|[A-Za-z_$]).*"));
         assertTrue(javascript.contains("ReactDOM.createRoot"));
+        assertTrue(javascript.contains("admin-login"));
+        assertTrue(javascript.contains("/api/admin/login/exchange"));
     }
 
     private static String resource(String path) throws IOException {

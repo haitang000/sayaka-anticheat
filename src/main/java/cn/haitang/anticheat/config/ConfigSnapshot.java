@@ -8,6 +8,7 @@ import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -129,6 +130,23 @@ public final class ConfigSnapshot {
         if (!config.isInt("web.port") || config.getInt("web.port") < 1
                 || config.getInt("web.port") > 65535) {
             errors.add("web.port must be an integer between 1 and 65535");
+        }
+        String configuredPublicUrl = config.getString("web.public-url", "");
+        String publicUrl = configuredPublicUrl == null ? "" : configuredPublicUrl.trim();
+        if (!publicUrl.isEmpty()) {
+            try {
+                URI uri = URI.create(publicUrl);
+                String scheme = uri.getScheme();
+                String path = uri.getRawPath();
+                if (scheme == null || (!scheme.equalsIgnoreCase("http")
+                        && !scheme.equalsIgnoreCase("https")) || uri.getHost() == null
+                        || (path != null && !path.isEmpty() && !path.equals("/"))
+                        || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+                    errors.add("web.public-url must be an HTTP(S) origin URL without path, query, or fragment");
+                }
+            } catch (IllegalArgumentException invalid) {
+                errors.add("web.public-url must be a valid URL");
+            }
         }
 
         if (config.getBoolean("cross-server.enabled", false)) {

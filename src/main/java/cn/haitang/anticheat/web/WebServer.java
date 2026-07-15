@@ -58,11 +58,13 @@ public final class WebServer {
     private final String indexHtml;
     private final String appJavascript;
     private final String bind;
+    private final String publicUrl;
     private final RateLimiter appealLimiter = new RateLimiter(20, 60_000L);
+    private final OneTimeLoginTokens loginTokens = new OneTimeLoginTokens();
 
     private WebServer(AntiCheatPlugin plugin, HttpServer server, ThreadPoolExecutor executor,
                       String adminToken, boolean tokenGenerated, String indexHtml,
-                      String appJavascript, String bind) {
+                      String appJavascript, String bind, String publicUrl) {
         this.plugin = plugin;
         this.server = server;
         this.executor = executor;
@@ -71,6 +73,7 @@ public final class WebServer {
         this.indexHtml = indexHtml;
         this.appJavascript = appJavascript;
         this.bind = bind;
+        this.publicUrl = publicUrl;
     }
 
     /**
@@ -111,7 +114,10 @@ public final class WebServer {
         executor.allowCoreThreadTimeOut(true);
         server.setExecutor(executor);
 
-        WebServer web = new WebServer(plugin, server, executor, token, generated, html, javascript, bind);
+        String configuredPublicUrl = plugin.config().getString("web.public-url", "");
+        String publicUrl = configuredPublicUrl == null ? "" : configuredPublicUrl.trim();
+        WebServer web = new WebServer(plugin, server, executor, token, generated, html, javascript,
+                bind, publicUrl);
         web.registerRoutes();
         server.start();
 
@@ -125,6 +131,7 @@ public final class WebServer {
     private void registerRoutes() {
         server.createContext("/api/appeal/lookup", wrap(this::handleAppealLookup));
         server.createContext("/api/appeal/submit", wrap(this::handleAppealSubmit));
+        server.createContext("/api/admin/login/exchange", wrap(this::handleLoginExchange));
         server.createContext("/api/admin/overview", wrap(requireAdmin(this::handleOverview)));
         server.createContext("/api/admin/punishments", wrap(requireAdmin(this::handlePunishments)));
         server.createContext("/api/admin/appeals", wrap(requireAdmin(this::handleAppeals)));
@@ -170,6 +177,26 @@ public final class WebServer {
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
         }
+    }
+
+    private void handleLoginExchange(HttpExchange exchange) throws IOException {
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            sendJson(exchange, 405, error("仅支持 POST"));
+            return;
+        }
+        Map<String, Object> json = readJsonBody(exchange);
+        if (json == null) {
+            sendJson(exchange, 400, error("请求体不是合法 JSON"));
+            return;
+        }
+        String ticket = asString(json.get("ticket")).trim();
+        if (!loginTokens.redeem(ticket)) {
+            sendJson(exchange, 401, error("一次性登录链接无效、已使用或已过期"));
+            return;
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("token", adminToken);
+        sendJson(exchange, 200, body);
     }
 
     private void handleAppealLookup(HttpExchange exchange) throws IOException {
@@ -603,7 +630,13 @@ public final class WebServer {
 
     /** 供管理员查看的面板地址，例如 {@code http://<服务器IP>:8080/}。 */
     public String displayUrl() {
+        if (!publicUrl.isBlank()) return publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
         return "http://" + displayHost(bind) + ":" + port() + "/";
+    }
+
+    /** 创建一个两分钟内有效、只能兑换一次的管理员直达链接。 */
+    public String createOneTimeLoginUrl() {
+        return displayUrl() + "#admin-login=" + loginTokens.issue();
     }
 
     /** 固定窗口限流：每个来源在窗口内最多 {@code limit} 次。 */

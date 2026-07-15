@@ -32,6 +32,12 @@
   var { Title, Text, Paragraph } = Typography;
   var fmt = (ts) => ts ? dayjs(ts).format("YYYY-MM-DD HH:mm") : "—";
   var TOKEN_KEY = "sayaka-admin-token";
+  function takeLoginTicket() {
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+    const ticket = new URLSearchParams(hash).get("admin-login");
+    if (ticket) window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    return ticket;
+  }
   async function api(path, { method = "GET", body, token } = {}) {
     const headers = {};
     if (body) headers["Content-Type"] = "application/json";
@@ -340,8 +346,9 @@
       )
     ), /* @__PURE__ */ React.createElement(Drawer, { width: 560, open: !!drawer, onClose: () => setDrawer(null), title: "处罚详情" }, /* @__PURE__ */ React.createElement(EvidenceBlock, { punishment: drawer })));
   }
-  function AdminView() {
+  function AdminView({ loginTicket, clearLoginTicket }) {
     const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
+    const [exchanging, setExchanging] = useState(!!loginTicket);
     const connect = (t) => {
       localStorage.setItem(TOKEN_KEY, t);
       setToken(t);
@@ -350,10 +357,31 @@
       localStorage.removeItem(TOKEN_KEY);
       setToken("");
     };
+    useEffect(() => {
+      if (!loginTicket) return;
+      let active = true;
+      api("/api/admin/login/exchange", { method: "POST", body: { ticket: loginTicket } }).then((data) => {
+        if (!active) return;
+        localStorage.setItem(TOKEN_KEY, data.token);
+        setToken(data.token);
+      }).catch((e) => {
+        if (active) message.error(e.status === 401 ? "一次性登录链接无效、已使用或已过期" : e.message);
+      }).finally(() => {
+        clearLoginTicket(null);
+        if (active) setExchanging(false);
+      });
+      return () => {
+        active = false;
+      };
+    }, [loginTicket, clearLoginTicket]);
+    if (exchanging) {
+      return /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: 64 } }, /* @__PURE__ */ React.createElement(Spin, { tip: "正在登录管理后台…" }));
+    }
     return token ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right", marginBottom: 12 } }, /* @__PURE__ */ React.createElement(Button, { size: "small", onClick: logout }, "退出登录")), /* @__PURE__ */ React.createElement(AdminDashboard, { token, onLogout: logout })) : /* @__PURE__ */ React.createElement(AdminLogin, { onConnect: connect });
   }
   function App() {
-    const [view, setView] = useState("appeal");
+    const [loginTicket, setLoginTicket] = useState(takeLoginTicket);
+    const [view, setView] = useState(loginTicket ? "admin" : "appeal");
     const [dark, setDark] = useState(() => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
     useEffect(() => {
       if (!window.matchMedia) return;
@@ -367,9 +395,10 @@
       {
         value: view,
         onChange: setView,
+        disabled: !!loginTicket,
         options: [{ label: "玩家申诉", value: "appeal" }, { label: "管理后台", value: "admin" }]
       }
-    )), /* @__PURE__ */ React.createElement(Content, { style: { padding: 24 } }, view === "appeal" ? /* @__PURE__ */ React.createElement(AppealView, null) : /* @__PURE__ */ React.createElement(AdminView, null))));
+    )), /* @__PURE__ */ React.createElement(Content, { style: { padding: 24 } }, view === "appeal" ? /* @__PURE__ */ React.createElement(AppealView, null) : /* @__PURE__ */ React.createElement(AdminView, { loginTicket, clearLoginTicket: setLoginTicket }))));
   }
   ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(App, null));
 })();
