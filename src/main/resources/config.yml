@@ -23,6 +23,27 @@ web:
   # 处理 HTTP 请求的线程数
   threads: 2
 
+# ---------------- 跨服处罚同步 ----------------
+# 多台 Paper/Purpur 子服连接同一个 Redis 后，strike、封禁档位、处罚历史、
+# 处罚快照和有效封禁会实时同步；离线子服重启时会从 Redis 自动补齐。
+cross-server:
+  enabled: false
+  # true = Redis 首次连接失败时停止加载，避免跨服封禁失效；false = 回退为单服模式
+  required: true
+  # 同一组服务器必须使用相同命名空间；不同网络应使用不同值
+  namespace: "sayaka"
+  # 周期对账用于补偿短暂断线期间漏掉的 Pub/Sub 消息
+  refresh-seconds: 5
+  redis:
+    host: "127.0.0.1"
+    port: 6379
+    username: ""
+    password: ""
+    database: 0
+    ssl: false
+    connect-timeout-ms: 2000
+    socket-timeout-ms: 2000
+
 # ============================================================
 #  Sayaka AntiCheat 反作弊配置
 #

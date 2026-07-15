@@ -127,6 +127,23 @@ public final class ConfigSnapshot {
             errors.add("web.port must be an integer between 1 and 65535");
         }
 
+        if (config.getBoolean("cross-server.enabled", false)) {
+            String host = config.getString("cross-server.redis.host", "").trim();
+            String namespace = config.getString("cross-server.namespace", "").trim();
+            if (host.isEmpty()) errors.add("cross-server.redis.host must not be blank");
+            if (!namespace.matches("[A-Za-z0-9:_-]+")) {
+                errors.add("cross-server.namespace may only contain letters, numbers, :, _, and -");
+            }
+            int redisPort = config.getInt("cross-server.redis.port", 0);
+            if (!config.isInt("cross-server.redis.port") || redisPort < 1 || redisPort > 65535) {
+                errors.add("cross-server.redis.port must be an integer between 1 and 65535");
+            }
+            nonNegativeInt(config, errors, "cross-server.redis.database");
+            positiveInt(config, errors, "cross-server.redis.connect-timeout-ms");
+            positiveInt(config, errors, "cross-server.redis.socket-timeout-ms");
+            positiveInt(config, errors, "cross-server.refresh-seconds");
+        }
+
         ConfigurationSection decayOverrides = config.getConfigurationSection("decay.per-check");
         if (decayOverrides != null) {
             for (Map.Entry<String, Object> entry : decayOverrides.getValues(false).entrySet()) {

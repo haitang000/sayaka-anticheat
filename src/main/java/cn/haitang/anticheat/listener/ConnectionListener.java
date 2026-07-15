@@ -36,6 +36,13 @@ public class ConnectionListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onLogin(PlayerLoginEvent event) {
+        if (plugin.getCrossServerSync() != null
+                && plugin.getCrossServerSync().isActive(event.getPlayer().getUniqueId())) {
+            String screen = plugin.getCrossServerSync().activeScreen(event.getPlayer().getUniqueId());
+            event.disallow(PlayerLoginEvent.Result.KICK_BANNED,
+                    screen == null || screen.isBlank() ? "§c你正在被反作弊系统临时封禁" : screen);
+            return;
+        }
         if (event.getResult() != PlayerLoginEvent.Result.KICK_BANNED) return;
 
         ProfileBanList banList = Bukkit.getBanList(BanListType.PROFILE);

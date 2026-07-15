@@ -41,6 +41,7 @@ import cn.haitang.anticheat.listener.ConnectionListener;
 import cn.haitang.anticheat.packet.PacketTimeline;
 import cn.haitang.anticheat.packet.EntityPositionHistory;
 import cn.haitang.anticheat.packet.PacketBridge;
+import cn.haitang.anticheat.sync.CrossServerSync;
 import cn.haitang.anticheat.util.BedrockSupport;
 import cn.haitang.anticheat.util.Messages;
 import cn.haitang.anticheat.update.UpdateManager;
@@ -84,6 +85,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     private EntityPositionHistory entityPositionHistory;
     private PacketBridge packetBridge;
     private PacketListenerCommon packetBridgeRegistration;
+    private CrossServerSync crossServerSync;
 
     private final List<Check> checks = new ArrayList<>();
     private FlightCheck flightCheck;
@@ -124,6 +126,19 @@ public final class AntiCheatPlugin extends JavaPlugin {
         violationManager = new ViolationManager(this);
         analysisExecutor = new ParallelAnalysisExecutor(this);
         store = new PersistentStore(this);
+        if (config().getBoolean("cross-server.enabled", false)) {
+            crossServerSync = new CrossServerSync(this);
+            if (!crossServerSync.start()) {
+                crossServerSync.shutdown();
+                crossServerSync = null;
+                if (config().getBoolean("cross-server.required", true)) {
+                    getLogger().severe("跨服同步为必需功能，插件将停止加载");
+                    getServer().getPluginManager().disablePlugin(this);
+                    return;
+                }
+                getLogger().warning("跨服同步不可用，继续以单服模式运行");
+            }
+        }
         packetTimeline = new PacketTimeline(this);
         entityPositionHistory = new EntityPositionHistory(this);
         combatAttackContext = new CombatAttackContext(this);
@@ -203,6 +218,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         if (webServer != null) webServer.stop();
+        if (crossServerSync != null) crossServerSync.shutdown();
         if (updateManager != null) updateManager.shutdown();
         if (saveTask != null) saveTask.cancel();
         if (violationManager != null) violationManager.shutdown();
@@ -235,6 +251,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     public PacketBridge getPacketBridge() { return packetBridge; }
     public UpdateManager getUpdateManager() { return updateManager; }
     public WebServer getWebServer() { return webServer; }
+    public CrossServerSync getCrossServerSync() { return crossServerSync; }
     public File getPluginJarFile() { return getFile(); }
 
     public List<String> reloadRuntimeConfig() {

@@ -53,6 +53,23 @@
 
 产物在 `target/Sayaka-AntiCheat-2.1.0-beta.1.jar`。PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 
+### 跨服处罚同步
+
+多子服部署时，在每台服的 `config.yml` 中启用 `cross-server.enabled`，并配置相同的 Redis 地址与 `namespace`。插件会同步 strike、封禁档位、处罚历史、完整处罚快照和当前有效封禁；封禁与解封实时广播，节点重启后也会从 Redis 补齐离线期间的数据。
+
+```yaml
+cross-server:
+  enabled: true
+  required: true
+  namespace: "my-network"
+  redis:
+    host: "10.0.0.10"
+    port: 6379
+    password: "change-me"
+```
+
+Redis 只应监听内网或通过防火墙限制来源。`required: true` 会在 Redis 首次连接失败时停止插件加载，避免玩家利用同步故障切服绕过封禁；配置变更需要重启子服。
+
 ## 🎮 命令与权限
 
 | 命令 | 说明 | 权限 |

@@ -72,4 +72,14 @@ class ConfigSnapshotTest {
         config.set("checks.auto-clicker.cycle-max-length", 1);
         assertTrue(ConfigSnapshot.validate(config).size() >= 3);
     }
+
+    @Test
+    void validatesEnabledCrossServerSettings() {
+        config.set("cross-server.enabled", true);
+        config.set("cross-server.namespace", "network with spaces");
+        config.set("cross-server.redis.port", 70000);
+        config.set("cross-server.redis.connect-timeout-ms", 0);
+
+        assertTrue(ConfigSnapshot.validate(config).size() >= 3);
+    }
 }

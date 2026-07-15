@@ -154,6 +154,64 @@ class PersistentStoreTest {
     }
 
     @Test
+    void crossServerPunishmentImportIsIdempotent() {
+        PersistentStore store = newStore();
+        PersistentStore.PunishmentRecord punishment = new PersistentStore.PunishmentRecord(
+                UUID.randomUUID().toString(), UUID.randomUUID(), "Cheater", 10L, 20L,
+                "flight", 20.0, 1, 1, List.of(), List.of());
+
+        assertTrue(store.importPunishment(punishment));
+        assertFalse(store.importPunishment(punishment));
+        assertEquals(1, store.listPunishments().size());
+    }
+
+    @Test
+    void appliesCrossServerStateWithoutRemovingWhitelist() {
+        PersistentStore store = newStore();
+        UUID uuid = UUID.randomUUID();
+        store.addWhitelist(uuid, "Cheater");
+
+        store.applyPunishmentState(new PersistentStore.PlayerPunishmentState(
+                uuid, "Cheater", List.of(10L, 20L), 3, List.of("history")));
+
+        assertTrue(store.isWhitelisted(uuid));
+        assertEquals(2, store.getPunishmentState(uuid).strikes().size());
+        assertEquals(3, store.getBanCount(uuid));
+        assertEquals(List.of("history"), store.getHistory(uuid));
+    }
+
+    @Test
+    void reapplyingIdenticalCrossServerStateDoesNotDirtyStore() {
+        PersistentStore store = newStore();
+        UUID uuid = UUID.randomUUID();
+        PersistentStore.PlayerPunishmentState state = new PersistentStore.PlayerPunishmentState(
+                uuid, "Cheater", List.of(10L), 1, List.of("history"));
+        store.applyPunishmentState(state);
+        assertTrue(store.saveNow());
+
+        store.applyPunishmentState(state);
+
+        assertFalse(store.isDirty());
+    }
+
+    @Test
+    void listsPlayerStatesForInitialCrossServerMigration() {
+        PersistentStore store = newStore();
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        store.addStrike(first, "First");
+        store.incrementBanCount(second);
+
+        List<PersistentStore.PlayerPunishmentState> states = store.listPunishmentStates();
+
+        assertEquals(2, states.size());
+        assertTrue(states.stream().anyMatch(state -> state.playerId().equals(first)
+                && state.strikes().size() == 1));
+        assertTrue(states.stream().anyMatch(state -> state.playerId().equals(second)
+                && state.banCount() == 1));
+    }
+
+    @Test
     void resetPlayerWipesStrikesBansAndHistory() {
         PersistentStore store = newStore();
         UUID uuid = UUID.randomUUID();

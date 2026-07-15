@@ -95,6 +95,9 @@ public class PunishmentExecutor implements Listener {
         plugin.getStore().addHistory(playerId,
                 String.format("[踢出] %s VL %.1f (strike %d/%d)", type.display(), vl, strikes, maxStrikes));
         commit(data);
+        if (plugin.getCrossServerSync() != null) {
+            plugin.getCrossServerSync().publishState(playerId);
+        }
         plugin.getAlertManager().announce("broadcast-kick", ph);
         runHookCommands("punishment.commands.on-kick", player.getName(), type, 0, "");
         plugin.getLogger().info(String.format("已踢出 %s：%s VL %.1f（strike %d/%d）",
@@ -138,7 +141,7 @@ public class PunishmentExecutor implements Listener {
 
         plugin.getStore().incrementBanCount(player.getUniqueId());
         plugin.getStore().clearStrikes(player.getUniqueId());
-        plugin.getStore().addPunishment(new PersistentStore.PunishmentRecord(
+        PersistentStore.PunishmentRecord punishment = new PersistentStore.PunishmentRecord(
                 punishmentId,
                 player.getUniqueId(),
                 player.getName(),
@@ -155,11 +158,15 @@ public class PunishmentExecutor implements Listener {
                 data.getRecentViolations().stream()
                         .map(detection -> new PersistentStore.DetectionEvidence(
                                 detection.at(), detection.type().id(), detection.vl(), detection.detail()))
-                        .toList()));
+                        .toList());
+        plugin.getStore().addPunishment(punishment);
         plugin.getStore().addHistory(player.getUniqueId(),
                 String.format("[封禁] %s，时长 %d 小时（第 %d 次封禁，处罚 ID %s）",
                         type.display(), hours, banCount + 1, punishmentId));
         commit(data);
+        if (plugin.getCrossServerSync() != null) {
+            plugin.getCrossServerSync().publishBan(punishment, screen);
+        }
         plugin.getAlertManager().announce("broadcast-ban", ph);
         runHookCommands("punishment.commands.on-tempban", player.getName(), type, hours, punishmentId);
         try {

@@ -37,6 +37,19 @@ public class PersistentStore {
 
     public record DetectionEvidence(long at, String check, double vl, String detail) {}
 
+    public record PlayerPunishmentState(
+            UUID playerId,
+            String playerName,
+            List<Long> strikes,
+            int banCount,
+            List<String> history
+    ) {
+        public PlayerPunishmentState {
+            strikes = List.copyOf(strikes);
+            history = List.copyOf(history);
+        }
+    }
+
     public record PunishmentRecord(
             String id,
             UUID playerId,
@@ -189,6 +202,52 @@ public class PersistentStore {
         }
     }
 
+    public PlayerPunishmentState getPunishmentState(UUID uuid) {
+        synchronized (lock) {
+            return new PlayerPunishmentState(
+                    uuid,
+                    yaml.getString(base(uuid) + ".name", uuid.toString()),
+                    yaml.getLongList(base(uuid) + ".strikes"),
+                    yaml.getInt(base(uuid) + ".ban-count", 0),
+                    yaml.getStringList(base(uuid) + ".history"));
+        }
+    }
+
+    public List<PlayerPunishmentState> listPunishmentStates() {
+        synchronized (lock) {
+            ConfigurationSection players = yaml.getConfigurationSection("players");
+            if (players == null) return List.of();
+            List<PlayerPunishmentState> states = new ArrayList<>();
+            for (String key : players.getKeys(false)) {
+                try {
+                    states.add(getPunishmentState(UUID.fromString(key)));
+                } catch (IllegalArgumentException invalid) {
+                    logger.warning("忽略 data.yml 中无效的玩家 UUID: " + key);
+                }
+            }
+            return List.copyOf(states);
+        }
+    }
+
+    /** Applies an authoritative cross-server state without touching local whitelist data. */
+    public void applyPunishmentState(PlayerPunishmentState state) {
+        synchronized (lock) {
+            String path = base(state.playerId());
+            if (yaml.getString(path + ".name", state.playerId().toString())
+                            .equals(state.playerName())
+                    && yaml.getLongList(path + ".strikes").equals(state.strikes())
+                    && yaml.getInt(path + ".ban-count", 0) == Math.max(0, state.banCount())
+                    && yaml.getStringList(path + ".history").equals(state.history())) {
+                return;
+            }
+            yaml.set(path + ".name", state.playerName());
+            yaml.set(path + ".strikes", state.strikes());
+            yaml.set(path + ".ban-count", Math.max(0, state.banCount()));
+            yaml.set(path + ".history", state.history());
+            markDirty();
+        }
+    }
+
     // ---- 反作弊白名单 ----
 
     public boolean isWhitelisted(UUID uuid) {
@@ -299,6 +358,19 @@ public class PersistentStore {
             yaml.set(path + ".detections", punishment.detections().stream()
                     .map(PersistentStore::detectionMap).toList());
             markDirty();
+        }
+    }
+
+    /** Imports a cross-server record once. Returns false when it already exists. */
+    public boolean importPunishment(PunishmentRecord punishment) {
+        synchronized (lock) {
+            String id = canonicalPunishmentId(punishment.id());
+            if (id == null || !id.equals(punishment.id())) {
+                throw new IllegalArgumentException("处罚 ID 必须是规范的小写 UUID");
+            }
+            if (yaml.contains("punishments." + id)) return false;
+            addPunishment(punishment);
+            return true;
         }
     }
 

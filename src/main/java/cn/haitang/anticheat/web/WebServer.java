@@ -3,11 +3,13 @@ package cn.haitang.anticheat.web;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.CheckType;
 import cn.haitang.anticheat.data.PersistentStore;
+import cn.haitang.anticheat.violation.PunishmentExecutor;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import io.papermc.paper.ban.BanListType;
+import org.bukkit.BanEntry;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.ban.ProfileBanList;
@@ -307,6 +309,10 @@ public final class WebServer {
         plugin.getStore().addHistory(record.playerId(),
                 (approved ? "[申诉通过] 网页管理员解封" : "[申诉驳回] 网页管理员")
                         + (note.isEmpty() ? "" : "（" + note + "）"));
+        if (plugin.getCrossServerSync() != null) {
+            if (approved) plugin.getCrossServerSync().publishUnban(record.playerId(), false);
+            else plugin.getCrossServerSync().publishState(record.playerId());
+        }
         plugin.getStore().saveAsync();
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -320,7 +326,8 @@ public final class WebServer {
     private void unban(UUID playerId, String playerName) {
         OfflinePlayer target = Bukkit.getOfflinePlayer(playerId);
         ProfileBanList banList = Bukkit.getBanList(BanListType.PROFILE);
-        if (banList.isBanned(target.getPlayerProfile())) {
+        BanEntry<?> entry = banList.getBanEntry(target.getPlayerProfile());
+        if (entry != null && PunishmentExecutor.BAN_SOURCE.equals(entry.getSource())) {
             banList.pardon(target.getPlayerProfile());
         }
         plugin.getStore().clearStrikes(playerId);

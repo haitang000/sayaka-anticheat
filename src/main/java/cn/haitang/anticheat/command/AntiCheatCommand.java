@@ -6,7 +6,9 @@ import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.data.PersistentStore;
+import cn.haitang.anticheat.violation.PunishmentExecutor;
 import io.papermc.paper.ban.BanListType;
+import org.bukkit.BanEntry;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.ban.ProfileBanList;
@@ -217,6 +219,9 @@ public class AntiCheatCommand implements TabExecutor {
         plugin.getDataManager().get(target).resetAllVl();
         if (args.length >= 3 && args[2].equalsIgnoreCase("all")) {
             plugin.getStore().resetPlayer(target.getUniqueId());
+            if (plugin.getCrossServerSync() != null) {
+                plugin.getCrossServerSync().publishState(target.getUniqueId());
+            }
         }
         sender.sendMessage(plugin.getMessages().prefixed("reset-done",
                 Map.of("player", target.getName())));
@@ -288,17 +293,25 @@ public class AntiCheatCommand implements TabExecutor {
         if (target == null) return;
         String name = target.getName() != null ? target.getName() : args[1];
         ProfileBanList banList = Bukkit.getBanList(BanListType.PROFILE);
-        if (!banList.isBanned(target.getPlayerProfile())) {
+        BanEntry<?> localBan = banList.getBanEntry(target.getPlayerProfile());
+        boolean sayakaBanned = localBan != null
+                && PunishmentExecutor.BAN_SOURCE.equals(localBan.getSource());
+        boolean networkBanned = plugin.getCrossServerSync() != null
+                && plugin.getCrossServerSync().isActive(target.getUniqueId());
+        if (!sayakaBanned && !networkBanned) {
             sender.sendMessage(plugin.getMessages().prefixed("not-banned", Map.of("player", name)));
             return;
         }
 
-        banList.pardon(target.getPlayerProfile());
+        if (sayakaBanned) banList.pardon(target.getPlayerProfile());
         plugin.getStore().clearStrikes(target.getUniqueId());
         boolean reset = args.length >= 3 && args[2].equalsIgnoreCase("reset");
         if (reset) plugin.getStore().resetBanCount(target.getUniqueId());
         plugin.getStore().addHistory(target.getUniqueId(), "[解封] 管理员 " + sender.getName()
                 + (reset ? "（已重置封禁次数）" : ""));
+        if (plugin.getCrossServerSync() != null) {
+            plugin.getCrossServerSync().publishUnban(target.getUniqueId(), reset);
+        }
         plugin.getStore().saveAsync();
 
         Player online = target.getPlayer();
