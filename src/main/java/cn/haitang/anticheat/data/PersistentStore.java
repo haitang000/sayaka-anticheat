@@ -14,12 +14,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.security.SecureRandom;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -87,6 +89,9 @@ public class PersistentStore {
     public enum AppealSubmitResult { OK, PUNISHMENT_NOT_FOUND, ALREADY_RESOLVED }
 
     private static final SimpleDateFormat TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+    private static final String PUNISHMENT_ID_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+    private static final int PUNISHMENT_ID_LENGTH = 10;
+    private static final SecureRandom PUNISHMENT_ID_RANDOM = new SecureRandom();
 
     /** 提交异步保存任务；返回 false 表示执行器拒绝（队列满或已关闭）。 */
     @FunctionalInterface
@@ -328,7 +333,12 @@ public class PersistentStore {
         synchronized (lock) {
             String id;
             do {
-                id = UUID.randomUUID().toString();
+                StringBuilder compact = new StringBuilder(PUNISHMENT_ID_LENGTH);
+                for (int i = 0; i < PUNISHMENT_ID_LENGTH; i++) {
+                    compact.append(PUNISHMENT_ID_ALPHABET.charAt(
+                            PUNISHMENT_ID_RANDOM.nextInt(PUNISHMENT_ID_ALPHABET.length())));
+                }
+                id = compact.substring(0, 5) + "-" + compact.substring(5);
             } while (yaml.contains("punishments." + id));
             return id;
         }
@@ -338,7 +348,7 @@ public class PersistentStore {
         synchronized (lock) {
             String id = canonicalPunishmentId(punishment.id());
             if (id == null || !id.equals(punishment.id())) {
-                throw new IllegalArgumentException("处罚 ID 必须是规范的小写 UUID");
+                throw new IllegalArgumentException("处罚 ID 格式无效或不是规范格式");
             }
             String path = "punishments." + id;
             if (yaml.contains(path)) {
@@ -366,7 +376,7 @@ public class PersistentStore {
         synchronized (lock) {
             String id = canonicalPunishmentId(punishment.id());
             if (id == null || !id.equals(punishment.id())) {
-                throw new IllegalArgumentException("处罚 ID 必须是规范的小写 UUID");
+                throw new IllegalArgumentException("处罚 ID 格式无效或不是规范格式");
             }
             if (yaml.contains("punishments." + id)) return false;
             addPunishment(punishment);
@@ -541,8 +551,15 @@ public class PersistentStore {
 
     private static String canonicalPunishmentId(String id) {
         if (id == null) return null;
+        String value = id.trim();
+        String compact = value.replace("-", "").toUpperCase(Locale.ROOT);
+        if (compact.length() == PUNISHMENT_ID_LENGTH
+                && compact.chars().allMatch(character ->
+                        PUNISHMENT_ID_ALPHABET.indexOf(character) >= 0)) {
+            return compact.substring(0, 5) + "-" + compact.substring(5);
+        }
         try {
-            return UUID.fromString(id.trim()).toString();
+            return UUID.fromString(value).toString();
         } catch (IllegalArgumentException invalid) {
             return null;
         }

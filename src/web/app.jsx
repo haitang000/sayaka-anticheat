@@ -107,7 +107,7 @@ function AppealView() {
           被反作弊系统封禁时，封禁界面上会显示一串“处罚 ID”。在下方输入该 ID 即可查看封禁详情并提交申诉。
         </Paragraph>
         <Space.Compact style={{ width: '100%' }}>
-          <Input placeholder="粘贴处罚 ID，例如 3f9c1a2e-…" value={id}
+          <Input placeholder="输入处罚 ID，例如 7K3DM-Q9W2X" value={id}
             onChange={(e) => setId(e.target.value)} onPressEnter={lookup} allowClear />
           <Button type="primary" onClick={lookup} loading={loading}>查询</Button>
         </Space.Compact>

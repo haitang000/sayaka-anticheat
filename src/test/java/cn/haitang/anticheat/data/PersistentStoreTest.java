@@ -110,6 +110,7 @@ class PersistentStoreTest {
         PersistentStore store = newStore();
         UUID playerId = UUID.randomUUID();
         String punishmentId = store.newPunishmentId();
+        assertTrue(punishmentId.matches("[2-9A-HJKMNP-TV-Z]{5}-[2-9A-HJKMNP-TV-Z]{5}"));
         long bannedAt = 1_700_000_000_000L;
         PersistentStore.PunishmentRecord punishment = new PersistentStore.PunishmentRecord(
                 punishmentId, playerId, "Cheater", bannedAt, bannedAt + 6 * 3600_000L,
@@ -122,7 +123,7 @@ class PersistentStoreTest {
         assertTrue(store.saveNow());
 
         PersistentStore.PunishmentRecord restored = newStore()
-                .getPunishment(punishmentId.toUpperCase());
+                .getPunishment(punishmentId.toLowerCase().replace("-", ""));
         assertEquals(punishmentId, restored.id());
         assertEquals(playerId, restored.playerId());
         assertEquals("Cheater", restored.playerName());
@@ -163,6 +164,19 @@ class PersistentStoreTest {
         assertTrue(store.importPunishment(punishment));
         assertFalse(store.importPunishment(punishment));
         assertEquals(1, store.listPunishments().size());
+    }
+
+    @Test
+    void legacyUuidPunishmentIdsRemainQueryableCaseInsensitively() {
+        PersistentStore store = newStore();
+        String legacyId = UUID.randomUUID().toString();
+        PersistentStore.PunishmentRecord punishment = new PersistentStore.PunishmentRecord(
+                legacyId, UUID.randomUUID(), "Cheater", 10L, 20L,
+                "flight", 20.0, 1, 1, List.of(), List.of());
+
+        store.addPunishment(punishment);
+
+        assertEquals(legacyId, store.getPunishment(legacyId.toUpperCase()).id());
     }
 
     @Test
