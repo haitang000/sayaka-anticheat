@@ -92,13 +92,10 @@ class BundledConfigTest {
     }
 
     @Test
-    void warnedKickMultipliersTightenTheThresholdWithoutZeroingIt() {
+    void warnedKickMultiplierTightensTheThresholdWithoutZeroingIt() {
         double warn1 = config.getDouble("punishment.warned-kick-multipliers.warn-1");
-        double warn2 = config.getDouble("punishment.warned-kick-multipliers.warn-2");
 
         assertTrue(warn1 > 0 && warn1 <= 1, "warn-1 乘数应在 (0,1]");
-        assertTrue(warn2 > 0 && warn2 <= 1, "warn-2 乘数应在 (0,1]");
-        assertTrue(warn2 <= warn1, "警告阶段越深阈值应越低");
     }
 
     @Test

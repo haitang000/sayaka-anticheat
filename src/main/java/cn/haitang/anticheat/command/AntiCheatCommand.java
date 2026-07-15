@@ -131,9 +131,14 @@ public class AntiCheatCommand implements TabExecutor {
                     .effectiveEnforcement(target, e.getKey());
             double kickThreshold = plugin.getViolationManager()
                     .punishmentThreshold(target, e.getKey());
-            String action = Double.isFinite(kickThreshold)
-                    ? String.format("%s, kick@%.1f", enforcement.name(), kickThreshold)
-                    : enforcement.name() + ", no kick";
+            String action;
+            if (plugin.getViolationManager().nextViolationPunishes(target, e.getKey())) {
+                action = enforcement.name() + ", kick@next flag";
+            } else {
+                action = Double.isFinite(kickThreshold)
+                        ? String.format("%s, kick@%.1f", enforcement.name(), kickThreshold)
+                        : enforcement.name() + ", no kick";
+            }
             sender.sendMessage(String.format("  §7- %s§7: VL §c%.1f §8[%s]",
                     e.getKey().display(), e.getValue(), action));
         }

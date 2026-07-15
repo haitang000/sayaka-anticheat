@@ -92,7 +92,6 @@ public final class ConfigSnapshot {
         }
 
         boundedExclusiveZero(config, errors, "punishment.warned-kick-multipliers.warn-1", 1.0);
-        boundedExclusiveZero(config, errors, "punishment.warned-kick-multipliers.warn-2", 1.0);
         positiveInt(config, errors, "punishment.strikes.window-hours");
         positiveInt(config, errors, "punishment.strikes.to-tempban");
 

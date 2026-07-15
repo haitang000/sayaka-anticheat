@@ -23,12 +23,13 @@
 单项 VL ≥ 5    ①  ⚠️ 警告（标题 + 聊天 + 音效）
 单项 VL ≥ 8    ②  🛑 拦截（回弹传送 / 取消命中 / 恢复挖掘）
 单项 VL ≥ 12   ③  📢 最后通牒
-单项 VL ≥ 动态阈值  ④  👢 enforcement=punish 的检测踢出并记 strike
-单项 VL ≥ 100       ⑤  👢 enforcement=mitigate 的检测触发兜底踢出（可配置）
-24h 内 3 次 strike → ⑥  🔨 临时封禁，时长递增：1h → 6h → 24h → 72h
+最后警告后再次违规  ④  👢 立即踢出并记 strike
+单项 VL ≥ 动态阈值      👢 enforcement=punish 的检测可提前踢出
+单项 VL ≥ 100           👢 enforcement=mitigate 的检测可提前兜底踢出（可配置）
+24h 内 3 次 strike → ⑤  🔨 临时封禁，时长递增：1h → 6h → 24h → 72h
 ```
 
-每项检测可配置 `enforcement: alert|mitigate|punish`。`mitigate` 在单项 VL 达到 `punishment.mitigate-kick-vl` 时会兜底踢出，避免持续作弊时 VL 无限累积；聊天、点击节奏、自动图腾等 `alert` 弱启发式证据仍不会产生 strike。基岩版默认使用 `settings.bedrock-profile: conservative`，只记录警报而不拦截或处罚。
+每项检测可配置 `enforcement: alert|mitigate|punish`。成功发出最后警告后，同一检测再次上报有效违规会立即处罚；`punish` 可按动态 VL 阈值提前处罚，`mitigate` 可在单项 VL 达到 `punishment.mitigate-kick-vl` 时提前兜底处罚。聊天、点击节奏、自动图腾等 `alert` 弱启发式证据仍不会产生 strike。基岩版默认使用 `settings.bedrock-profile: conservative`，只记录警报而不拦截或处罚。
 
 管理员（`anticheat.alerts`）全程收到实时警报；踢出/封禁默认全服公告。
 
