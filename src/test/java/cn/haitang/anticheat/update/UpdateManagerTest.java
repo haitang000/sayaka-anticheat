@@ -2,17 +2,25 @@ package cn.haitang.anticheat.update;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -78,6 +86,32 @@ class UpdateManagerTest {
 
         UpdateManager.validateArtifact(matching, release);
         assertThrows(IOException.class, () -> UpdateManager.validateArtifact(wrongVersion, release));
+    }
+
+    @Test
+    void neverReloadsEntireBukkitServerAfterStagingUpdate() throws Exception {
+        AtomicBoolean invokesBukkitReload = new AtomicBoolean();
+        try (InputStream bytecode = UpdateManager.class.getResourceAsStream("UpdateManager.class")) {
+            assertNotNull(bytecode);
+            new ClassReader(bytecode).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String descriptor,
+                                                 String signature, String[] exceptions) {
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override
+                        public void visitMethodInsn(int opcode, String owner, String name,
+                                                    String descriptor, boolean isInterface) {
+                            if ("org/bukkit/Bukkit".equals(owner) && "reload".equals(name)) {
+                                invokesBukkitReload.set(true);
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        }
+
+        assertFalse(invokesBukkitReload.get(),
+                "staged plugin updates must wait for a full restart instead of reloading packet plugins");
     }
 
     private UpdateManager.Release release(String tag) {

@@ -38,7 +38,7 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
-/** Checks GitHub releases, including prereleases, and stages verified updates for Bukkit hot reload. */
+/** Checks GitHub releases, including prereleases, and stages verified updates for the next server restart. */
 public final class UpdateManager {
 
     private static final String REPOSITORY = "haitang000/sayaka-anticheat";
@@ -113,7 +113,7 @@ public final class UpdateManager {
                 }
                 stage(release);
                 Release installed = release;
-                Bukkit.getScheduler().runTask(plugin, () -> beginHotReload(sender, installed));
+                Bukkit.getScheduler().runTask(plugin, () -> finishStaging(sender, installed));
                 staged = true;
             } catch (Exception error) {
                 plugin.getLogger().warning("Update failed: " + error.getMessage());
@@ -320,31 +320,26 @@ public final class UpdateManager {
             if (version.equals(lastAnnouncedVersion)) return;
             lastAnnouncedVersion = version;
             plugin.getLogger().warning("A new release is available: " + currentVersion() + " -> " + version
-                    + ". Run /sac update to install it with hot reload.");
+                    + ". Run /sac update to stage it for the next server restart.");
             for (Player player : Bukkit.getOnlinePlayers()) notifyIfAvailable(player);
         });
     }
 
-    private void beginHotReload(CommandSender sender, Release release) {
-        if (shuttingDown) return;
-        Map<String, String> values = placeholders(release);
-        sender.sendMessage(plugin.getMessages().prefixed("update-ready", values));
-        plugin.getLogger().warning("Release " + release.version()
-                + " is verified and staged; starting Bukkit hot reload in 3 seconds.");
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            if (player.hasPermission("anticheat.admin") && player != sender) {
-                player.sendMessage(plugin.getMessages().prefixed("update-ready", values));
+    private void finishStaging(CommandSender sender, Release release) {
+        try {
+            if (shuttingDown) return;
+            Map<String, String> values = placeholders(release);
+            sender.sendMessage(plugin.getMessages().prefixed("update-ready", values));
+            plugin.getLogger().warning("Release " + release.version()
+                    + " is verified and staged; restart the server to apply it.");
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                if (player.hasPermission("anticheat.admin") && player != sender) {
+                    player.sendMessage(plugin.getMessages().prefixed("update-ready", values));
+                }
             }
+        } finally {
+            installing.set(false);
         }
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            try {
-                Bukkit.reload();
-            } catch (Throwable error) {
-                plugin.getLogger().severe("Hot reload failed: " + error.getMessage());
-            } finally {
-                installing.set(false);
-            }
-        }, 60L);
     }
 
     private void sendSync(CommandSender sender, String key, Map<String, String> placeholders) {

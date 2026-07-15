@@ -90,7 +90,7 @@ settings:
     completions-per-tick: 256
 
 # ---------------- 数据包引擎 ----------------
-# 内置 PacketEvents（已打包进插件，无需安装任何前置插件）。
+# PacketEvents 是必需的外置前置插件，必须单独安装并通过完整重启加载。
 # 启用后 Timer/Rotation 改用协议层原始数据：以包的真实到达时间测速、
 # 在非法数据进入服务端之前直接丢弃，并启用 BadPackets 崩服包防护。
 # 关闭或初始化失败时自动回退到 Bukkit 事件级检测（/sac reload 即时生效）
@@ -680,7 +680,7 @@ messages:
   update-current: "&a当前已是最新版本 &f%version%&a。"
   update-busy: "&e已有更新检查或安装任务正在进行。"
   update-download-start: "&7正在检查并下载最新版本..."
-  update-ready: "&a版本 &f%latest% &a已校验，服务器将在 3 秒后热重载。"
+  update-ready: "&a版本 &f%latest% &a已校验并暂存；请完整重启服务器以应用更新。"
   update-failed: "&c更新失败：%error%"
   update-check-failed: "&c检查更新失败：%error%"
   reset-done: "&a已清空 &f%player% &a的违规数据。"
