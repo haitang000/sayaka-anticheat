@@ -1,6 +1,7 @@
 package cn.haitang.anticheat.violation;
 
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.EnforcementMode;
 import cn.haitang.anticheat.data.PlayerData;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.Test;
@@ -41,6 +42,20 @@ class ViolationManagerTest {
 
         assertEquals(20.0, ViolationManager.effectiveKickVl(config, 1), 0.0001);
         assertEquals(0.0, ViolationManager.effectiveKickVl(config, 2), 0.0001);
+    }
+
+    @Test
+    void enforcementModesSelectTheirOwnPunishmentThreshold() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("punishment.kick-vl", 20.0);
+        config.set("punishment.mitigate-kick-vl", 100.0);
+
+        assertEquals(15.0, ViolationManager.punishmentThreshold(
+                config, EnforcementMode.PUNISH, 2), 0.0001);
+        assertEquals(100.0, ViolationManager.punishmentThreshold(
+                config, EnforcementMode.MITIGATE, 2), 0.0001);
+        assertEquals(Double.POSITIVE_INFINITY, ViolationManager.punishmentThreshold(
+                config, EnforcementMode.ALERT, 2));
     }
 
     @Test

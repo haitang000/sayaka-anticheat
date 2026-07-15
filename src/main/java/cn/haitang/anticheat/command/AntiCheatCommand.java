@@ -4,6 +4,7 @@ import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.alert.AlertManager;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.EnforcementMode;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.data.PersistentStore;
 import cn.haitang.anticheat.violation.PunishmentExecutor;
@@ -126,7 +127,15 @@ public class AntiCheatCommand implements TabExecutor {
         for (Map.Entry<CheckType, Double> e : data.getAllVl().entrySet()) {
             if (e.getValue() <= 0) continue;
             any = true;
-            sender.sendMessage(String.format("  §7- %s§7: VL §c%.1f", e.getKey().display(), e.getValue()));
+            EnforcementMode enforcement = plugin.getViolationManager()
+                    .effectiveEnforcement(target, e.getKey());
+            double kickThreshold = plugin.getViolationManager()
+                    .punishmentThreshold(target, e.getKey());
+            String action = Double.isFinite(kickThreshold)
+                    ? String.format("%s, kick@%.1f", enforcement.name(), kickThreshold)
+                    : enforcement.name() + ", no kick";
+            sender.sendMessage(String.format("  §7- %s§7: VL §c%.1f §8[%s]",
+                    e.getKey().display(), e.getValue(), action));
         }
         if (!any) sender.sendMessage("  §a当前无任何违规值。");
         sender.sendMessage(String.format("  §7综合 VL: §c%.1f", data.getTotalVl()));

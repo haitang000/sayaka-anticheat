@@ -77,13 +77,18 @@ public final class ConfigSnapshot {
         positive(config, errors, "punishment.mitigate-vl");
         positive(config, errors, "punishment.warn-2-vl");
         positive(config, errors, "punishment.kick-vl");
+        positive(config, errors, "punishment.mitigate-kick-vl");
 
         double warn1 = config.getDouble("punishment.warn-1-vl");
         double mitigate = config.getDouble("punishment.mitigate-vl");
         double warn2 = config.getDouble("punishment.warn-2-vl");
         double kick = config.getDouble("punishment.kick-vl");
+        double mitigateKick = config.getDouble("punishment.mitigate-kick-vl");
         if (!(warn1 < mitigate && mitigate < warn2 && warn2 < kick)) {
             errors.add("punishment thresholds must satisfy warn-1 < mitigate < warn-2 < kick");
+        }
+        if (mitigateKick < kick) {
+            errors.add("punishment.mitigate-kick-vl must be at least punishment.kick-vl");
         }
 
         boundedExclusiveZero(config, errors, "punishment.warned-kick-multipliers.warn-1", 1.0);

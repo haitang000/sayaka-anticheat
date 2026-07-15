@@ -111,6 +111,9 @@ punishment:
   mitigate-vl: 8
   # 未被警告玩家的基础踢出阈值；实际阈值会按当前警告阶段动态降低
   kick-vl: 20
+  # enforcement=mitigate 的检测通常只拦截；但单项 VL 达到该极高值时也会踢出，避免无限累积。
+  # enforcement=alert 以及 conservative 基岩配置仍永远不会处罚
+  mitigate-kick-vl: 100
   # 已警告玩家的踢出阈值系数（限制在 0.0-1.0，配置重载后立即生效）
   # 默认 kick-vl 为 20 时，首次警告后为 18，最后警告后为 15
   warned-kick-multipliers:
