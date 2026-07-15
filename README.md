@@ -51,7 +51,7 @@
 ./mvnw package   # 需要 JDK 17+；无需预装 Maven
 ```
 
-产物在 `target/Sayaka-AntiCheat-2.1.0-beta.1.jar`。PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
+产物在 `target/Sayaka-AntiCheat-2.1.0-beta.2.jar`。PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 
 ## 命令与权限
 
