@@ -84,6 +84,7 @@ public class PlayerData {
     private final Deque<Long> multiHits = new ArrayDeque<>();
     private final Deque<Long> clicks = new ArrayDeque<>();
     private long cpsSustainStart;
+    private long lastCpsFlagAt;
     private long lastRoboticEvalAt;
     private int lastSwingTick = -1;
     private long lastTotemPopAt;
@@ -478,6 +479,9 @@ public class PlayerData {
 
     public long getCpsSustainStart() { return cpsSustainStart; }
     public void setCpsSustainStart(long v) { this.cpsSustainStart = v; }
+
+    public long getLastCpsFlagAt() { return lastCpsFlagAt; }
+    public void setLastCpsFlagAt(long v) { this.lastCpsFlagAt = v; }
 
     public long getLastRoboticEvalAt() { return lastRoboticEvalAt; }
     public void setLastRoboticEvalAt(long v) { this.lastRoboticEvalAt = v; }

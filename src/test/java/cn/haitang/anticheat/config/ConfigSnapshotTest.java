@@ -64,4 +64,12 @@ class ConfigSnapshotTest {
         config.set("decay.per-check.reach", -0.1);
         assertTrue(ConfigSnapshot.validate(config).size() >= 2);
     }
+
+    @Test
+    void rejectsInvalidAutoClickerThresholds() {
+        config.set("checks.auto-clicker.hard-max-cps", 20);
+        config.set("checks.auto-clicker.cycle-min-similarity", 1.1);
+        config.set("checks.auto-clicker.cycle-max-length", 1);
+        assertTrue(ConfigSnapshot.validate(config).size() >= 3);
+    }
 }

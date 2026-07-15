@@ -18,12 +18,13 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 连点器检测，三条判定线：
- * 1. CPS 超标：滚动 1 秒窗口内点击数持续超过上限（顶尖手动蝶点≈20，默认 22）
+ * 连点器检测，四条判定线：
+ * 1. CPS 超标：滚动 1 秒窗口内点击数持续超过上限，极端 CPS 直接上报
  * 2. 机械化节奏：点击间隔的标准差低到人手不可能达到（人手抖动≈10-30ms，
  *    机器点击可以稳定在 1ms 内）
  * 3. 低离散重复节奏：抓带少量随机抖动的宏。只有在低标准差、低变异系数、
  *    且大部分间隔落入同一时间桶时才累积 buffer。
+ * 4. 短周期节奏：识别在多个固定间隔间循环、但整体标准差较高的随机化宏。
  * 点击来源 = 直接近战攻击 + 左键挥空；挖掘产生的持续挥臂不计入，避免误判。
  */
 public class AutoClickerCheck extends Check {
@@ -71,12 +72,23 @@ public class AutoClickerCheck extends Check {
             if (now - t <= 1000) cps++;
         }
 
-        int maxCps = cfgI("max-cps", 22);
+        int hardMaxCps = cfgI("hard-max-cps", 28);
+        if (cps >= hardMaxCps) {
+            if (now - data.getLastCpsFlagAt() >= 1000) {
+                data.setLastCpsFlagAt(now);
+                data.setCpsSustainStart(now);
+                flag(player, 2.0, cps + " CPS（极端频率）");
+            }
+            return;
+        }
+
+        int maxCps = cfgI("max-cps", 21);
         if (cps >= maxCps) {
             if (data.getCpsSustainStart() == 0) {
                 data.setCpsSustainStart(now);
-            } else if (now - data.getCpsSustainStart() >= cfgI("sustain-ms", 1500)) {
+            } else if (now - data.getCpsSustainStart() >= cfgI("sustain-ms", 1000)) {
                 data.setCpsSustainStart(now); // 持续超标则每个周期重复计违规
+                data.setLastCpsFlagAt(now);
                 flag(player, 1.5, cps + " CPS");
             }
         } else if (cps < maxCps - 4) {
@@ -86,14 +98,17 @@ public class AutoClickerCheck extends Check {
 
     private void checkRobotic(Player player, PlayerData data, long now, Deque<Long> clicks) {
         if (clicks.size() < 30) return;
-        if (now - data.getLastRoboticEvalAt() < 3000) return;
+        if (now - data.getLastRoboticEvalAt() < cfgI("analysis-interval-ms", 2000)) return;
         data.setLastRoboticEvalAt(now);
 
         List<Long> times = new ArrayList<>(clicks);
         double bucketMs = cfgD("pattern-bucket-ms", 5.0);
+        double cycleToleranceMs = cfgD("cycle-tolerance-ms", 2.0);
+        int maxCycleLength = cfgI("cycle-max-length", 6);
         UUID playerId = player.getUniqueId();
         plugin.getAnalysisExecutor().submit(
-                () -> ClickPatternAnalyzer.analyze(times, bucketMs),
+                () -> ClickPatternAnalyzer.analyze(
+                        times, bucketMs, cycleToleranceMs, maxCycleLength),
                 stats -> applyRoboticResult(playerId, data, now, stats));
     }
 
@@ -130,20 +145,30 @@ public class AutoClickerCheck extends Check {
         double maxStddev = cfgD("pattern-stddev-ms", 4.5);
         double maxCv = cfgD("pattern-max-cv", 0.055);
         double minDominantRatio = cfgD("pattern-dominant-ratio", 0.78);
-        if (stats.stddev() <= maxStddev
+        boolean lowDispersionPattern = stats.stddev() <= maxStddev
                 && stats.coefficientOfVariation() <= maxCv
-                && stats.dominantBucketRatio() >= minDominantRatio) {
-            double stabilityScore = 1.0
+                && stats.dominantBucketRatio() >= minDominantRatio;
+
+        double minCycleSimilarity = cfgD("cycle-min-similarity", 0.90);
+        boolean repeatedCycle = stats.cycleLength() >= 2
+                && stats.cycleSimilarity() >= minCycleSimilarity;
+        if (lowDispersionPattern || repeatedCycle) {
+            double distributionScore = lowDispersionPattern ? 1.0
                     + Math.max(0.0, stats.dominantBucketRatio() - minDominantRatio) * 2.0
-                    + Math.max(0.0, (maxStddev - stats.stddev()) / maxStddev);
+                    + Math.max(0.0, (maxStddev - stats.stddev()) / maxStddev) : 0.0;
+            double cycleScore = repeatedCycle ? 1.0
+                    + (stats.cycleSimilarity() - minCycleSimilarity)
+                    / Math.max(0.01, 1.0 - minCycleSimilarity) : 0.0;
+            double stabilityScore = Math.max(distributionScore, cycleScore);
             double buffered = data.buffer(type(), stabilityScore);
             if (buffered >= cfgD("buffer-to-flag", 2.5)) {
                 clicks.clear();
                 data.resetBuffer(type());
                 flag(player, 1.25, String.format(
-                        "重复节奏 σ=%.2fms cv=%.3f bucket=%.0f%% @%.0fms",
+                        "重复节奏 σ=%.2fms cv=%.3f bucket=%.0f%% cycle=%d/%.0f%% @%.0fms",
                         stats.stddev(), stats.coefficientOfVariation(),
-                        stats.dominantBucketRatio() * 100.0, stats.mean()));
+                        stats.dominantBucketRatio() * 100.0, stats.cycleLength(),
+                        stats.cycleSimilarity() * 100.0, stats.mean()));
             }
         } else {
             data.buffer(type(), -0.35);

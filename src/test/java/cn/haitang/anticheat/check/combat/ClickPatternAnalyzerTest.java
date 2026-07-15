@@ -26,20 +26,53 @@ class ClickPatternAnalyzerTest {
 
     @Test
     void reportsVariationForHumanLikeIntervals() {
-        List<Long> clicks = new ArrayList<>();
-        long at = 0;
-        clicks.add(at);
-        int[] gaps = {43, 71, 58, 96, 52, 83, 64, 47};
-        for (int i = 0; i < 32; i++) {
-            at += gaps[i % gaps.length];
-            clicks.add(at);
-        }
+        int[] gaps = {
+                43, 71, 58, 96, 52, 83, 64, 47, 89, 55,
+                102, 68, 45, 77, 61, 94, 50, 86, 73, 41,
+                99, 57, 80, 66, 48, 91, 62, 75, 53, 87,
+                69, 44, 82, 59, 97, 46, 74, 65, 88, 51
+        };
 
-        ClickPatternAnalyzer.TimingStats stats = ClickPatternAnalyzer.analyze(clicks, 5.0);
+        ClickPatternAnalyzer.TimingStats stats = ClickPatternAnalyzer.analyze(
+                clicksWithGaps(gaps), 5.0);
 
         assertNotNull(stats);
         assertTrue(stats.stddev() > 10.0);
         assertTrue(stats.dominantBucketRatio() < 0.5);
+        assertTrue(stats.cycleSimilarity() < 0.9);
+    }
+
+    @Test
+    void detectsShortRepeatingCycleThatDistributionCheckWouldMiss() {
+        int[] cycle = {46, 63, 51, 72};
+        int[] gaps = new int[40];
+        for (int i = 0; i < gaps.length; i++) gaps[i] = cycle[i % cycle.length];
+
+        ClickPatternAnalyzer.TimingStats stats = ClickPatternAnalyzer.analyze(
+                clicksWithGaps(gaps), 5.0, 2.0, 6);
+
+        assertNotNull(stats);
+        assertTrue(stats.stddev() > 4.5);
+        assertTrue(stats.dominantBucketRatio() < 0.78);
+        assertEquals(4, stats.cycleLength());
+        assertEquals(1.0, stats.cycleSimilarity(), 0.0001);
+    }
+
+    @Test
+    void detectsRepeatingCycleWithSmallPerCycleJitter() {
+        int[] cycle = {46, 63, 51, 72};
+        int[] jitter = {-1, 0, 1, 0};
+        int[] gaps = new int[40];
+        for (int i = 0; i < gaps.length; i++) {
+            gaps[i] = cycle[i % cycle.length] + jitter[(i / cycle.length) % jitter.length];
+        }
+
+        ClickPatternAnalyzer.TimingStats stats = ClickPatternAnalyzer.analyze(
+                clicksWithGaps(gaps), 5.0, 2.0, 6);
+
+        assertNotNull(stats);
+        assertEquals(4, stats.cycleLength());
+        assertTrue(stats.cycleSimilarity() >= 0.9);
     }
 
     @Test
@@ -57,6 +90,17 @@ class ClickPatternAnalyzerTest {
         long at = 0;
         clicks.add(at);
         for (int i = 0; i < intervalCount; i++) {
+            at += gap;
+            clicks.add(at);
+        }
+        return clicks;
+    }
+
+    private static List<Long> clicksWithGaps(int[] gaps) {
+        List<Long> clicks = new ArrayList<>();
+        long at = 0;
+        clicks.add(at);
+        for (int gap : gaps) {
             at += gap;
             clicks.add(at);
         }

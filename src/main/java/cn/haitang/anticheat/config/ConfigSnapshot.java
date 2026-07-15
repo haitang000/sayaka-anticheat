@@ -158,6 +158,22 @@ public final class ConfigSnapshot {
             }
         }
 
+        positiveInt(config, errors, "checks.auto-clicker.max-cps");
+        positiveInt(config, errors, "checks.auto-clicker.hard-max-cps");
+        positiveInt(config, errors, "checks.auto-clicker.sustain-ms");
+        positiveInt(config, errors, "checks.auto-clicker.analysis-interval-ms");
+        positiveInt(config, errors, "checks.auto-clicker.cycle-max-length");
+        positive(config, errors, "checks.auto-clicker.cycle-tolerance-ms");
+        boundedExclusiveZero(config, errors,
+                "checks.auto-clicker.cycle-min-similarity", 1.0);
+        if (config.getInt("checks.auto-clicker.hard-max-cps")
+                <= config.getInt("checks.auto-clicker.max-cps")) {
+            errors.add("checks.auto-clicker.hard-max-cps must be greater than max-cps");
+        }
+        if (config.getInt("checks.auto-clicker.cycle-max-length") < 2) {
+            errors.add("checks.auto-clicker.cycle-max-length must be at least 2");
+        }
+
         for (String path : List.of(
                 "checks.speed.max-bps", "checks.speed.buffer-to-flag",
                 "checks.flight.max-jump", "checks.flight.buffer-to-flag",
@@ -171,7 +187,7 @@ public final class ConfigSnapshot {
                 "checks.liquid-walk.buffer-to-flag",
                 "checks.reach.base-reach", "checks.reach.buffer-to-flag",
                 "checks.kill-aura.buffer-to-flag",
-                "checks.auto-clicker.max-cps", "checks.auto-clicker.buffer-to-flag",
+                "checks.auto-clicker.buffer-to-flag",
                 "checks.no-swing.buffer-to-flag", "checks.criticals.buffer-to-flag",
                 "checks.velocity.min-kb-velocity", "checks.velocity.min-displacement",
                 "checks.velocity.min-response-ratio", "checks.velocity.buffer-to-flag",
