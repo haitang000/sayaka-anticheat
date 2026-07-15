@@ -24,6 +24,8 @@ class WebPanelAssetsTest {
         assertTrue(javascript.contains("ReactDOM.createRoot"));
         assertTrue(javascript.contains("admin-login"));
         assertTrue(javascript.contains("/api/admin/login/exchange"));
+        assertTrue(javascript.contains("hashchange"));
+        assertTrue(javascript.contains("history.replaceState"));
     }
 
     private static String resource(String path) throws IOException {

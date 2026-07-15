@@ -11,11 +11,13 @@ const { Title, Text, Paragraph } = Typography;
 const fmt = (ts) => (ts ? dayjs(ts).format('YYYY-MM-DD HH:mm') : '—');
 const TOKEN_KEY = 'sayaka-admin-token';
 
-function takeLoginTicket() {
+function readLoginTicket() {
   const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
-  const ticket = new URLSearchParams(hash).get('admin-login');
-  if (ticket) window.history.replaceState(null, '', window.location.pathname + window.location.search);
-  return ticket;
+  return new URLSearchParams(hash).get('admin-login');
+}
+
+function clearLoginTicketFromUrl() {
+  window.history.replaceState(null, '', window.location.pathname + window.location.search);
 }
 
 async function api(path, { method = 'GET', body, token } = {}) {
@@ -341,9 +343,23 @@ function AdminView({ loginTicket, clearLoginTicket }) {
 
 // ---------------- 应用根 ----------------
 function App() {
-  const [loginTicket, setLoginTicket] = useState(takeLoginTicket);
+  const [loginTicket, setLoginTicket] = useState(readLoginTicket);
   const [view, setView] = useState(loginTicket ? 'admin' : 'appeal');
   const [dark, setDark] = useState(() => window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  useEffect(() => {
+    if (loginTicket) clearLoginTicketFromUrl();
+  }, [loginTicket]);
+  useEffect(() => {
+    const acceptLoginTicket = () => {
+      const ticket = readLoginTicket();
+      if (!ticket) return;
+      setLoginTicket(ticket);
+      setView('admin');
+      clearLoginTicketFromUrl();
+    };
+    window.addEventListener('hashchange', acceptLoginTicket);
+    return () => window.removeEventListener('hashchange', acceptLoginTicket);
+  }, []);
   useEffect(() => {
     if (!window.matchMedia) return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
