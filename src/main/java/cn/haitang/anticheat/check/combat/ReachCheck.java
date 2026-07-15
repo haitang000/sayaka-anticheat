@@ -48,7 +48,7 @@ public class ReachCheck extends Check {
                 return;
             }
         }
-        Location eye = attackEye(attacker, attack);
+        Location eye = CombatAttackContext.attackEye(attacker, attack);
         BoundingBox victimBox = victim instanceof Player victimPlayer && attack.packetBacked()
                 ? plugin.getEntityPositionHistory().boxAt(victimPlayer, attack)
                 : victim.getBoundingBox();
@@ -109,16 +109,6 @@ public class ReachCheck extends Check {
         double dy = eye.getY() - cy;
         double dz = eye.getZ() - cz;
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }
-
-    private Location attackEye(Player attacker, CombatAttackContext.Attack attack) {
-        Location current = attacker.getLocation();
-        double delta = Math.pow(current.getX() - attack.x(), 2)
-                + Math.pow(current.getY() - attack.y(), 2)
-                + Math.pow(current.getZ() - attack.z(), 2);
-        if (!attack.packetBacked() || delta > 16.0) return attacker.getEyeLocation();
-        return new Location(attacker.getWorld(), attack.x(), attack.y() + attacker.getEyeHeight(),
-                attack.z(), attack.yaw(), attack.pitch());
     }
 
     private double interactionRange(Player player) {

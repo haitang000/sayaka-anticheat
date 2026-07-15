@@ -73,7 +73,7 @@ public class AimCheck extends Check {
     private void checkAngle(EntityDamageByEntityEvent event, Player attacker,
                             LivingEntity victim, PlayerData data,
                             CombatAttackContext.Attack attack) {
-        Location eye = attackLocation(attacker, attack);
+        Location eye = CombatAttackContext.attackEye(attacker, attack);
         BoundingBox box = victim instanceof Player victimPlayer && attack.packetBacked()
                 ? plugin.getEntityPositionHistory().boxAt(victimPlayer, attack)
                 : victim.getBoundingBox();
@@ -140,18 +140,6 @@ public class AimCheck extends Check {
                                        UUID target, UUID lastTarget) {
         return tickGap >= 0 && tickGap <= maxTickGap
                 && lastTarget != null && !target.equals(lastTarget);
-    }
-
-    private static Location attackLocation(Player attacker, CombatAttackContext.Attack attack) {
-        Location current = attacker.getLocation();
-        double dx = current.getX() - attack.x();
-        double dy = current.getY() - attack.y();
-        double dz = current.getZ() - attack.z();
-        if (!attack.packetBacked() || dx * dx + dy * dy + dz * dz > 16.0) {
-            return attacker.getEyeLocation();
-        }
-        return new Location(attacker.getWorld(), attack.x(),
-                attack.y() + attacker.getEyeHeight(), attack.z(), attack.yaw(), attack.pitch());
     }
 
     private static double clamp(double v, double min, double max) {

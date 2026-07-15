@@ -93,6 +93,19 @@ public final class CombatAttackContext implements Listener {
         return Optional.ofNullable(bound.get(event));
     }
 
+    /** 攻击包时刻的眼睛位置与视角；数据缺失或与当前位置差距过大时回退事件时刻状态 */
+    static Location attackEye(Player attacker, Attack attack) {
+        Location current = attacker.getLocation();
+        double dx = current.getX() - attack.x();
+        double dy = current.getY() - attack.y();
+        double dz = current.getZ() - attack.z();
+        if (!attack.packetBacked() || dx * dx + dy * dy + dz * dz > 16.0) {
+            return attacker.getEyeLocation();
+        }
+        return new Location(attacker.getWorld(), attack.x(),
+                attack.y() + attacker.getEyeHeight(), attack.z(), attack.yaw(), attack.pitch());
+    }
+
     static Attack consume(Deque<Attack> queue, UUID targetId, int tick) {
         if (queue == null) return null;
         while (!queue.isEmpty() && queue.peekFirst().serverTick() < tick - 1) queue.removeFirst();
