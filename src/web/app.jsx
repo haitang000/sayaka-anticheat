@@ -20,6 +20,10 @@ function clearLoginTicketFromUrl() {
   window.history.replaceState(null, '', window.location.pathname + window.location.search);
 }
 
+function isAdminPath() {
+  return /\/admin\/?$/.test(window.location.pathname);
+}
+
 async function api(path, { method = 'GET', body, token } = {}) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
@@ -344,7 +348,7 @@ function AdminView({ loginTicket, clearLoginTicket }) {
 // ---------------- 应用根 ----------------
 function App() {
   const [loginTicket, setLoginTicket] = useState(readLoginTicket);
-  const [view, setView] = useState(loginTicket ? 'admin' : 'appeal');
+  const [view, setView] = useState(loginTicket || isAdminPath() ? 'admin' : 'appeal');
   const [dark, setDark] = useState(() => window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
   useEffect(() => {
     if (loginTicket) clearLoginTicketFromUrl();

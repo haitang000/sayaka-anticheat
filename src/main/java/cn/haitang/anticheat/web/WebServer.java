@@ -97,6 +97,7 @@ public final class WebServer {
             plugin.getLogger().warning("Web 面板资源不完整，管理面板不可用；Web 服务未启动。");
             return null;
         }
+        html = versionAppJavascript(html, javascript);
 
         HttpServer server;
         try {
@@ -159,6 +160,7 @@ public final class WebServer {
         // 单页应用：所有非 API 路径都返回同一份 index.html
         byte[] body = indexHtml.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.sendResponseHeaders(200, body.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
@@ -172,6 +174,7 @@ public final class WebServer {
         }
         byte[] body = appJavascript.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/javascript; charset=utf-8");
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.sendResponseHeaders(200, body.length);
         try (OutputStream out = exchange.getResponseBody()) {
@@ -639,9 +642,19 @@ public final class WebServer {
         return "http://" + displayHost(bind) + ":" + port + "/";
     }
 
+    static String versionAppJavascript(String html, String javascript) {
+        String version = UUID.nameUUIDFromBytes(javascript.getBytes(StandardCharsets.UTF_8)).toString();
+        return html.replace("src=\"/app.js\"", "src=\"/app.js?v=" + version + "\"");
+    }
+
+    static String formatOneTimeLoginUrl(String panelUrl, String ticket) {
+        String base = panelUrl.endsWith("/") ? panelUrl : panelUrl + "/";
+        return base + "admin#admin-login=" + ticket;
+    }
+
     /** 创建一个两分钟内有效、只能兑换一次的管理员直达链接。 */
     public String createOneTimeLoginUrl() {
-        return displayUrl() + "#admin-login=" + loginTokens.issue();
+        return formatOneTimeLoginUrl(displayUrl(), loginTokens.issue());
     }
 
     /** 固定窗口限流：每个来源在窗口内最多 {@code limit} 次。 */

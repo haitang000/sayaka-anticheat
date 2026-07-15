@@ -26,6 +26,7 @@ class WebPanelAssetsTest {
         assertTrue(javascript.contains("/api/admin/login/exchange"));
         assertTrue(javascript.contains("hashchange"));
         assertTrue(javascript.contains("history.replaceState"));
+        assertTrue(javascript.contains("window.location.pathname"));
     }
 
     private static String resource(String path) throws IOException {
