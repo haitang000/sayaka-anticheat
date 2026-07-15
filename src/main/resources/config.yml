@@ -363,30 +363,30 @@ checks:
     enabled: true
     enforcement: alert
     # 允许的最大 CPS（顶尖手动蝶点约 20）；达到该值并持续一段时间才上报
-    max-cps: 21
+    max-cps: 20
     # 极端点击频率无需等待持续窗口，但同一玩家每秒最多上报一次
-    hard-max-cps: 28
+    hard-max-cps: 25
     # 忽略同一服务端瞬间产生的重复点击事件，避免插件/事件双记
     dedupe-ms: 8
     # CPS 持续超标多少毫秒才判违规
-    sustain-ms: 1000
+    sustain-ms: 700
     # 时间序列分析间隔；每次仍要求至少 30 次连续点击
     analysis-interval-ms: 2000
     # 机械化检测：点击间隔标准差低于该毫秒数视为机器点击（人手≈10-30ms）
-    robotic-stddev-ms: 1.2
+    robotic-stddev-ms: 1.6
     # 对带微抖宏的组合判定：低离散 + 大量间隔落入同一时间桶时累积 buffer
     pattern-min-mean-ms: 40.0
-    pattern-max-mean-ms: 125.0
-    pattern-stddev-ms: 4.5
-    pattern-max-cv: 0.055
+    pattern-max-mean-ms: 150.0
+    pattern-stddev-ms: 5.5
+    pattern-max-cv: 0.07
     pattern-bucket-ms: 5.0
-    pattern-dominant-ratio: 0.78
+    pattern-dominant-ratio: 0.72
     # 识别在 2～6 个固定间隔间循环的随机化宏；相邻周期误差不超过 2ms，
-    # 且至少 90% 的对应间隔相似时才累积证据
+    # 且至少 85% 的对应间隔相似时才累积证据
     cycle-max-length: 6
     cycle-tolerance-ms: 2.0
-    cycle-min-similarity: 0.90
-    buffer-to-flag: 2.5
+    cycle-min-similarity: 0.85
+    buffer-to-flag: 2.0
 
   # 无挥臂攻击（NoSwing：攻击不带挥臂动画包）
   no-swing:
