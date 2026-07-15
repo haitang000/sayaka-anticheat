@@ -1,0 +1,660 @@
+config-version: 2
+
+# ---------------- 自动更新 ----------------
+updates:
+  # 后台检查 GitHub 的最新稳定 Release；发现新版本时通知控制台和在线管理员
+  enabled: true
+  # 最低按 5 分钟执行，默认每 30 分钟检查一次
+  check-interval-minutes: 30
+
+# ---------------- Velocity 群组服 ----------------
+# 单服保持 enabled: false，继续使用 plugins/SayakaAntiCheat/data.yml。
+# 群组服的每个 Paper 后端都连接同一个 MariaDB，但 server-id 必须唯一。
+# network 段的修改需要完整重启 Paper，/sac reload 不会切换存储后端。
+network:
+  enabled: false
+  server-id: "lobby"
+  storage: "mariadb"
+  database:
+    jdbc-url: "jdbc:mariadb://127.0.0.1:3306/sayaka"
+    username: "sayaka"
+    password: "change-me"
+
+# Paper 端永远不监听 HTTP 端口；该键仅用于明确部署职责并兼容旧配置。
+# 统一面板由 Sayaka-AntiCheat-Velocity 启动。
+web:
+  enabled: false
+
+# ============================================================
+#  Sayaka AntiCheat 反作弊配置
+#
+#  核心概念：VL（Violation Level，违规值）
+#  · 每次检测未通过，按该检测的权重累加 VL
+#  · VL 随时间衰减（decay.vl-per-second）
+#  · 每个检测项独立达到处罚阈值时触发递进式处理；综合 VL 只用于管理界面：
+#      警告① → 警告② → 拦截/回弹 → 踢出 → 临时封禁（时长递增）
+# ============================================================
+
+settings:
+  # 调试模式：控制台输出每次检测的详细数据
+  debug: false
+  # 在这些世界中不启用检测
+  disabled-worlds: []
+  # OP 是否自动豁免（拥有 anticheat.bypass 权限的玩家始终豁免）
+  exempt-ops: false
+  # 玩家进服后的宽限秒数（避免登录瞬移/区块加载误判）
+  join-grace-seconds: 5
+  # normal = 与 Java 玩家相同；conservative = 只警报不处罚；exempt = 完全豁免
+  bedrock-profile: conservative
+  packet-analysis:
+    queue-capacity: 4096
+    completions-per-tick: 512
+    history-per-player: 256
+  # 纯计算检测使用独立的有界线程池；Bukkit 世界/实体访问仍保留在主线程
+  parallel-analysis:
+    # 0 = 自动使用 min(8, CPU 核心数 - 1)，至少保留一个核心给服务端主线程
+    # 修改线程数需要重启服务器
+    threads: 0
+    # 高峰期最多等待的分析任务数；队列满时宁可漏判，也不阻塞服务器 tick
+    queue-capacity: 1024
+    # 每 tick 最多应用多少个后台分析结果，防止回调尖峰
+    completions-per-tick: 256
+
+# ---------------- 数据包引擎 ----------------
+# 内置 PacketEvents（已打包进插件，无需安装任何前置插件）。
+# 启用后 Timer/Rotation 改用协议层原始数据：以包的真实到达时间测速、
+# 在非法数据进入服务端之前直接丢弃，并启用 BadPackets 崩服包防护。
+# 关闭或初始化失败时自动回退到 Bukkit 事件级检测（/sac reload 即时生效）
+packet-engine:
+  enabled: true
+
+decay:
+  # 每秒衰减的 VL（表现良好即可逐渐"洗白"）。
+  # 缓冲值机制已吸收偶发抖动，真被记 VL 的多为有效证据，衰减不宜过快
+  vl-per-second: 0.2
+  # 保护期：某检测项最近一次违规后的 N 秒内该项 VL 暂停衰减，
+  # 持续作弊时证据不会边累积边被稀释
+  hold-seconds: 6
+  # 按检测项覆盖衰减速率（键与 checks 段一致，未列出的用全局速率）。
+  # 战斗类检测一次违规需要先攒多次异常命中，证据稀疏，衰减应远慢于移动类
+  per-check:
+    kill-aura: 0.1
+    # 其他战斗检测误报后洗白慢的代价更高，按需再加，例如:
+    # reach: 0.15
+
+# ---------------- 递进式惩罚阶梯 ----------------
+punishment:
+  # 任一检测项的单项 VL 达到该值：第一次警告（标题 + 聊天 + 音效）
+  warn-1-vl: 5
+  # 同一检测项的单项 VL 达到该值：最后通牒警告
+  warn-2-vl: 12
+  # 单项检测 VL 达到该值：开始"拦截"——移动类回弹、战斗类取消命中、挖掘类恢复方块
+  mitigate-vl: 8
+  # 未被警告玩家的基础踢出阈值；实际阈值会按当前警告阶段动态降低
+  kick-vl: 20
+  # 已警告玩家的踢出阈值系数（限制在 0.0-1.0，配置重载后立即生效）
+  # 默认 kick-vl 为 20 时，首次警告后为 18，最后警告后为 15
+  warned-kick-multipliers:
+    warn-1: 0.90
+    warn-2: 0.75
+  strikes:
+    # strike 统计窗口（小时）
+    window-hours: 24
+    # 窗口内累计多少次 strike 升级为临时封禁
+    to-tempban: 3
+  # 临时封禁时长（小时），按封禁次数递增；超出列表按最后一项执行
+  tempban-hours: [1, 6, 24, 72]
+  # 踢出/封禁时是否全服公告（对旁观者也是威慑）
+  announce: true
+  # 惩罚时额外执行的控制台命令，占位符: %player% %check% %hours% %punishment-id%
+  commands:
+    on-kick: []
+    #  例: - "eco take %player% 100"
+    on-tempban: []
+    #  例: - "lp user %player% parent add suspect"
+
+# ---------------- 各项检测 ----------------
+checks:
+  # 水平移动速度（Speed/BunnyHop 类客户端）
+  # 插件通过移速属性 / setWalkSpeed 给的合法加速会自动按比例放大上限，
+  # 服务端赋速（跳板/钩爪/技能位移）按强度自动延长宽限，无需额外配置
+  speed:
+    enabled: true
+    enforcement: mitigate
+    # 基准最大水平速度 m/s。疾跑跳跃≈7.13 m/s，此值已留出余量
+    max-bps: 9.2
+    # 每级速度药水效果增加的容差比例
+    speed-effect-bonus: 0.25
+    # 近期踩过冰面时的速度倍率容差
+    ice-multiplier: 2.2
+    # 灵魂疾行（灵魂沙/土）容差倍率
+    soul-speed-multiplier: 1.6
+    # 缓冲值达到多少才判违规（抗网络抖动）
+    buffer-to-flag: 3.0
+    # VL 达到 mitigate-vl 后是否回弹传送
+    setback: true
+
+  # 飞行 / 空中悬浮（Fly 类客户端）
+  flight:
+    enabled: true
+    enforcement: mitigate
+    # 一次跳跃允许的最大上升高度（原版≈1.25）
+    max-jump: 1.35
+    # 每级跳跃提升效果增加的高度
+    jump-boost-bonus: 0.7
+    # 悬浮判定：竖直速度绝对值低于该值视为"悬停"
+    hover-max-dy: 0.06
+    # 连续滞空多少个移动包后开始悬浮判定
+    hover-air-ticks: 8
+    # 静止悬浮仅作为辅助警报，低于该 TPS 时不采样
+    static-hover-min-tps: 18.0
+    buffer-to-flag: 2.0
+    setback: true
+
+  # 异常缓降（Glide：未使用鞘翅/缓降效果时持续以过慢速度下落）
+  glide:
+    enabled: true
+    enforcement: mitigate
+    # 至少滞空多少个移动包后才检查，避开跳跃顶点的正常低速阶段
+    min-air-ticks: 10
+    # 每包下降量处于该区间时视为可疑；原版无效果自由落体会很快超过 0.18
+    min-descent-per-move: 0.02
+    max-descent-per-move: 0.18
+    # 距离下方碰撞体小于该值时不检查，避开落地与复杂方块碰撞
+    ground-clearance: 2.5
+    # 需要约 6 个连续可疑移动样本才上报
+    buffer-to-flag: 6.0
+    setback: true
+    # Geyser 转换后的基岩版垂直物理可能不同，默认不参与此项检测
+    exclude-bedrock: true
+
+  # 落地欺骗（NoFall：客户端谎报"在地面"）
+  ground-spoof:
+    enabled: true
+    enforcement: mitigate
+    buffer-to-flag: 5.0
+
+  # 移动包速率（Timer 加速器）。
+  # 数据包引擎工作时按包的真实到达时间测速，可覆盖任意倍速（含静止 Timer）
+  timer:
+    enabled: true
+    enforcement: punish
+    # 3 秒窗口平均每秒移动包上限（原版恒定 20/秒）。
+    # 有基岩互通(Geyser)或代理转发玩家频繁误报时可调高
+    max-packets-per-second: 24
+    # 仅事件级回退路径使用：同批集中处理的积压包只计一次（抗服务端卡顿尖峰）
+    min-gap-ms: 25
+    # TPS 低于该值时暂停 Timer 判定并清空窗口；设为 0 可关闭此保护
+    min-tps: 18.0
+    buffer-to-flag: 2.0
+
+  # 快速攀爬（FastLadder）
+  fast-ladder:
+    enabled: true
+    enforcement: mitigate
+    # 单个移动包允许的最大上爬高度（原版恒定≈0.118，贴梯跳跃已豁免）
+    max-climb-per-move: 0.29
+    buffer-to-flag: 4.0
+    setback: true
+
+  # 异常跨越方块（Step：无需跳跃直接走上完整方块）
+  # 跳跃提升、服务端赋速、击退、液体、攀爬与载具场景会自动豁免
+  step:
+    enabled: true
+    enforcement: mitigate
+    # 原版自动跨越上限为 0.6 格；0.70 为网络与特殊碰撞形状预留余量
+    max-height-per-move: 0.70
+    # 必须同时产生水平位移，排除活塞等纯竖直推动
+    min-horizontal-per-move: 0.03
+    buffer-to-flag: 2.5
+    setback: true
+
+  # 非法视角（俯仰角超出 ±90°，原版客户端不可能发出，直接判定并纠正）。
+  # 数据包引擎工作时非法视角包在进入服务端之前即被丢弃
+  # 液面行走（Jesus/WaterWalk）：在无碰撞体的水面或岩浆面持续水平移动
+  # 要求玩家整个脚部碰撞箱都位于液面上方，岸边、睡莲、游泳与气泡柱会自动排除
+  liquid-walk:
+    enabled: true
+    # 新检测默认先只警报；观察服务器环境后可改为 mitigate 启用回弹
+    enforcement: alert
+    # 忽略静止与极小位置抖动，只采样实际水平移动
+    min-horizontal-per-move: 0.025
+    # 原版在液面会下沉/上浮；仅连续近乎零竖直变化才累积证据
+    max-vertical-per-move: 0.025
+    buffer-to-flag: 8.0
+    setback: true
+
+  # 非法视角（俯仰角超出 ±90°，原版客户端不可能发出，直接判定并纠正）
+  rotation:
+    enabled: true
+    enforcement: punish
+
+  # 非法数据包（需要数据包引擎）：NaN/Infinity/远超世界边界的坐标，
+  # 多为崩服包或异常区块加载攻击，直接丢弃并按权重记 VL
+  bad-packets:
+    enabled: true
+    enforcement: punish
+    flag-weight: 5.0
+
+  # 攻击距离（Reach）
+  reach:
+    enabled: true
+    enforcement: punish
+    # 基准攻击距离（到受害者碰撞箱表面），原版上限 3.0
+    base-reach: 3.05
+    # 延迟补偿：每 1000ms 延迟增加的容差（按比例折算）
+    ping-compensation: 2.0
+    # 参与补偿计算的延迟上限 ms（防止刷高延迟绕过）
+    max-ping-ms: 180
+    # 双方移动带来的表观距离补偿倍率；最终补偿会被 max-movement-compensation 限制
+    movement-compensation-multiplier: 0.45
+    # 冲刺状态额外容差
+    sprint-compensation: 0.05
+    # 移动补偿上限，避免高速/异常移动扩大超距窗口
+    max-movement-compensation: 0.25
+    # 使用历史碰撞箱后保留的固定浮点/插值余量
+    history-tolerance: 0.10
+    # 超出 (动态阈值 + cancel-margin) 的命中直接取消
+    cancel-margin: 0.2
+    cancel-hits: true
+    buffer-to-flag: 2.5
+
+  # 攻击射线（Hitbox：准星未穿过目标碰撞箱 / 隔墙攻击）
+  hitbox:
+    enabled: true
+    enforcement: mitigate
+    # 极近身时碰撞箱与视角变化很剧烈，不参与射线判定
+    min-distance: 0.8
+    max-ray-distance: 6.0
+    ray-distance-margin: 1.0
+    # 基础碰撞箱扩张，以及网络和双方移动产生的额外容差
+    horizontal-tolerance: 0.12
+    vertical-tolerance: 0.12
+    ping-tolerance-per-ms: 0.00045
+    max-ping-ms: 180
+    movement-tolerance-multiplier: 0.35
+    max-movement-tolerance: 0.10
+    max-horizontal-tolerance: 0.30
+    teleport-grace-ms: 750
+    # 连续脱靶才上报；方块阻挡是更强证据，每次累积更快且立即取消命中
+    miss-buffer-increment: 1.0
+    blocked-buffer-increment: 2.0
+    buffer-decay: 0.5
+    buffer-to-flag: 2.5
+    block-margin: 0.05
+    cancel-missed-hits: true
+    cancel-blocked-hits: true
+    # Geyser 可能改写交互射线，默认只严格验证 Java 版玩家
+    exclude-bedrock: true
+
+  # 杀戮光环（KillAura：视角外攻击 / 多目标 / 吸附回正 / 容器攻击 / 攻击突发 / 假人探针）
+  kill-aura:
+    enabled: true
+    enforcement: mitigate
+    # 攻击方向与目标方向的最大夹角（度）
+    max-angle: 50.0
+    # 距离小于该值不做角度判定（近身混战角度天然大）
+    min-distance: 1.25
+    # 合法朝向每次攻击只缓慢消退角度 buffer，防止间歇式 Aura 轻易洗掉证据
+    angle-buffer-decay: 0.25
+    # 在多少游戏刻内切换并命中不同目标，计作一次快速多目标证据
+    multi-target-max-tick-gap: 2
+    # 快速多目标证据的滚动统计窗口（毫秒）
+    multi-target-window-ms: 3000
+    # 窗口内出现多少次快速目标切换判违规（横扫攻击已排除）
+    multi-hits-to-flag: 3
+    cancel-hits: true
+    buffer-to-flag: 2.5
+    snapback:
+      # 检测攻击前快速吸附目标、攻击后短时间精确返回原视角的自动回正轨迹
+      enabled: true
+      exclude-bedrock: true
+      min-distance: 1.5
+      max-target-angle: 8.0
+      acquisition-window-ticks: 3
+      return-window-ticks: 3
+      min-snap-angle: 25.0
+      max-return-angle: 4.0
+      min-return-ratio: 0.70
+      buffer-increment: 1.0
+      buffer-decay: 0.35
+      # 连续出现 3 次完整吸附回正轨迹才上报，普通偶发甩枪不会直接违规
+      buffer-to-flag: 3.0
+      flag-weight: 2.0
+    inventory:
+      # 原版客户端打开服务端容器界面后无法继续攻击世界实体
+      enabled: true
+      exclude-bedrock: true
+      grace-ms: 250
+      buffer-increment: 1.0
+      buffer-decay: 0.5
+      buffer-to-flag: 2.0
+      flag-weight: 2.5
+      cancel-hits: true
+    burst:
+      # 网络边界可能把两次正常点击并入同一 tick；第 3 次起才视为攻击包突发
+      enabled: true
+      exclude-bedrock: true
+      max-attacks-per-tick: 2
+      flag-weight: 2.5
+      cancel-excess-hits: true
+    tracking:
+      # 仅分析玩家目标相对方位持续变化时的命中，静止刷怪和原地目标不会进入样本
+      enabled: true
+      exclude-bedrock: true
+      min-distance: 1.6
+      min-target-angle-change: 0.6
+      window-ms: 5000
+      sample-size: 8
+      # 需要两个独立的 8 次命中窗口都呈现近乎零误差、零抖动才上报
+      max-mean-error: 0.8
+      max-stddev: 0.22
+      max-range: 0.75
+      buffer-increment: 1.0
+      buffer-decay: 1.0
+      buffer-to-flag: 2.0
+      flag-weight: 2.0
+    probe:
+      # 玩家产生真实近战攻击后，仅向该玩家发送短时虚拟实体包；不会创建世界实体
+      enabled: true
+      # 基岩版实体交互模型与 Java 版不同，默认不启用主动探针
+      exclude-bedrock: true
+      entity-count: 3
+      radius: 2.7
+      duration-ticks: 80
+      cooldown-ticks: 200
+      update-interval-ticks: 2
+      # 假人避开玩家准星正前方，并在安全弧内缓慢往复环绕
+      front-safe-angle: 70.0
+      orbit-speed-degrees-per-tick: 4.0
+      orbit-sweep-degrees: 12.0
+      # 命中只生成管理员辅助警报，不增加 VL，也不会单独触发处罚
+      hits-to-flag: 2
+      distinct-targets-to-flag: 2
+      hit-debounce-ms: 120
+      flag-weight: 3.0
+      # 限制同时存在的探针会话，避免大型服务器战斗高峰产生过多实体
+      max-active-sessions: 20
+
+  # 连点器（AutoClicker）
+  auto-clicker:
+    enabled: true
+    enforcement: alert
+    # 允许的最大 CPS（顶尖手动蝶点约 20）；达到该值并持续一段时间才上报
+    max-cps: 21
+    # 极端点击频率无需等待持续窗口，但同一玩家每秒最多上报一次
+    hard-max-cps: 28
+    # 忽略同一服务端瞬间产生的重复点击事件，避免插件/事件双记
+    dedupe-ms: 8
+    # CPS 持续超标多少毫秒才判违规
+    sustain-ms: 1000
+    # 时间序列分析间隔；每次仍要求至少 30 次连续点击
+    analysis-interval-ms: 2000
+    # 机械化检测：点击间隔标准差低于该毫秒数视为机器点击（人手≈10-30ms）
+    robotic-stddev-ms: 1.2
+    # 对带微抖宏的组合判定：低离散 + 大量间隔落入同一时间桶时累积 buffer
+    pattern-min-mean-ms: 40.0
+    pattern-max-mean-ms: 125.0
+    pattern-stddev-ms: 4.5
+    pattern-max-cv: 0.055
+    pattern-bucket-ms: 5.0
+    pattern-dominant-ratio: 0.78
+    # 识别在 2～6 个固定间隔间循环的随机化宏；相邻周期误差不超过 2ms，
+    # 且至少 90% 的对应间隔相似时才累积证据
+    cycle-max-length: 6
+    cycle-tolerance-ms: 2.0
+    cycle-min-similarity: 0.90
+    buffer-to-flag: 2.5
+
+  # 无挥臂攻击（NoSwing：攻击不带挥臂动画包）
+  no-swing:
+    enabled: true
+    enforcement: punish
+    cancel-hits: true
+    buffer-to-flag: 2.0
+
+  # 虚假暴击（Criticals：站在地面打出跳跃暴击）
+  criticals:
+    enabled: true
+    enforcement: mitigate
+    cancel-hits: true
+    buffer-to-flag: 2.0
+
+  # 拒绝击退（AntiKnockback）。只在击退速度真正下发给客户端时才测量：
+  # 决斗/区域保护等插件取消或削弱击退的场景不会误判；
+  # 贴墙/液体/攀爬/格挡/无敌帧连击等场景也全部自动跳过。
+  # 若服务器有自定义高击退抗性装备，请调低阈值或关闭本项
+  velocity:
+    enabled: true
+    enforcement: punish
+    # 下发的击退速度低于该值不测量（视为插件已削弱击退）
+    min-kb-velocity: 0.25
+    # 受击 4 刻后的最小位移（米），正常吃击退至少 0.3 左右
+    min-displacement: 0.05
+    # 还必须沿服务端下发的速度方向完成至少这一比例；检测会校正受击前的主动移动趋势
+    min-response-ratio: 0.15
+    buffer-to-flag: 3.0
+
+  # 自动图腾（AutoTotem：图腾破碎后瞬间补装）
+  auto-totem:
+    enabled: true
+    enforcement: alert
+    # 图腾生效到副手补装的最短人类反应毫秒数（作弊通常 0~50ms）
+    min-react-ms: 75
+    buffer-to-flag: 2.0
+
+  # 开容器移动（InventoryMove：打开箱子等界面时照常走动）
+  inventory-move:
+    enabled: true
+    enforcement: alert
+    # Ping 达到该值时暂停检测，避免延迟包在容器打开后集中到达造成误判；0 = 不按延迟豁免
+    max-ping-ms: 200
+    # 打开界面或退出高延迟状态后的宽限毫秒（吸收惯性滑行与途中到达的延迟包）
+    grace-ms: 500
+    # 1.5 秒滚动窗口内累计位移超过该值（米）计一次异常
+    max-distance: 2.0
+    buffer-to-flag: 6.0
+
+  # 使用物品移速异常（NoSlow：吃喝/拉弓/举盾时仍高速移动）
+  no-slow:
+    enabled: true
+    enforcement: mitigate
+    # 使用核心物品期间允许的最大水平速度 m/s；默认只累计 VL，不回弹/取消使用
+    max-using-bps: 3.2
+    # 开始使用物品后的宽限毫秒（吸收使用前冲刺惯性）
+    grace-ms: 300
+    # 至少统计多长时间的移动样本才判定
+    min-sample-ms: 500
+    # 至少持续使用多少 tick 才开始检测
+    min-use-ticks: 4
+    # 每级速度药水效果增加的容差比例
+    speed-effect-bonus: 0.25
+    buffer-to-flag: 3.0
+
+  # 快速使用物品（FastUse）：进食、喝药/牛奶提前完成
+  fast-use:
+    enabled: true
+    enforcement: mitigate
+    # 原版普通食物和饮品耗时 1600ms；为网络与 tick 抖动预留 200ms
+    default-min-ms: 1400
+    # 海带原版耗时 800ms
+    fast-food-min-ms: 700
+    buffer-to-flag: 2.0
+    # 达到单项拦截 VL 后，是否取消这次物品消耗
+    cancel: true
+    # Geyser 的使用物品时序可能被协议转换合并，默认不检测基岩版玩家
+    exclude-bedrock: true
+
+  # 弓蓄力异常（FastBow）：短时间内射出接近满蓄力的箭
+  fast-bow:
+    enabled: true
+    enforcement: mitigate
+    # 只判断达到该力度的射击，低蓄力快速点射属于正常玩法
+    minimum-force: 0.95
+    # 原版满弓需要约 1000ms，预留 150ms tick/事件时序余量
+    full-charge-min-ms: 850
+    buffer-to-flag: 2.0
+    cancel: true
+    exclude-bedrock: true
+
+  # 容器搬运过快（ChestStealer）：只分析真实方块容器，不分析插件 GUI
+  chest-stealer:
+    enabled: true
+    enforcement: mitigate
+    window-ms: 1000
+    # 窗口内允许的最大取物动作数；连续两个超限窗口才上报
+    max-actions-per-window: 12
+    buffer-to-flag: 2.0
+    cancel: true
+    exclude-bedrock: true
+
+  # 快速挖掘（FastBreak/Nuker）
+  fast-break:
+    enabled: true
+    enforcement: mitigate
+    # 实际挖掘耗时低于理论耗时的多少倍判违规（0.6 = 快 40% 以上）
+    lenience: 0.6
+    # 违规时是否取消该方块破坏
+    cancel: true
+    # 无挖掘起始包直接破坏的检测（Nuker）。
+    # 注意：McMMO 连锁挖掘等插件可能误报，默认关闭
+    nuker-detect: false
+
+  # 非法搭路（Scaffold/Tower/FastPlace）
+  # 建筑法杖等插件同一瞬间批量放置的方块只计一次，不会误判
+  scaffold:
+    enabled: true
+    enforcement: mitigate
+    # 在脚下延伸搭路时的最小俯视角：几何上正常垫块必须低头 45°+，
+    # 平视垫块是 Scaffold 挂的典型特征。取 35 留出余量
+    min-pitch: 35.0
+    # 每秒最大放置数（原版按住右键 5/秒，快速点击也远低于此）
+    max-place-per-second: 14
+    # 空中垂直垫块（搭塔）每秒上限（原版跳跃节奏极限≈1.7/秒）
+    tower-max-per-second: 2.6
+    # 违规时是否取消放置
+    cancel: true
+    buffer-to-flag: 3.0
+
+  # 聊天刷屏（AntiSpam）：同时检测短时间高频消息和重复内容。
+  # 聊天不受进服宽限、创造模式影响；可用 anticheat.antispam.bypass 单独豁免。
+  anti-spam:
+    enabled: true
+    enforcement: alert
+    # 该窗口内最多允许发送的消息数；默认第 6 条开始拦截
+    flood-window-ms: 4000
+    max-messages: 5
+    # 大小写、空格和标点归一化后，窗口内第几次重复开始拦截
+    duplicate-window-ms: 15000
+    max-duplicates: 3
+    # 太短的常用回复（如“ok”）不参与重复内容检测，但仍参与频率检测
+    min-duplicate-length: 4
+    # 限制 VL/警报频率；冷却期间仍会拦截刷屏消息
+    flag-cooldown-ms: 1000
+    flood-weight: 1.0
+    duplicate-weight: 1.5
+    cancel: true
+
+  # 聊天广告（AntiAds）：检测 IPv4、域名、Discord 邀请和常见 dot 绕过。
+  # 可用 anticheat.antiads.bypass 单独豁免。
+  anti-ads:
+    enabled: true
+    enforcement: alert
+    cancel: true
+    flag-weight: 3.0
+    # 本服官网、论坛、服务器地址等应加入白名单；子域名会自动继承
+    allowed-hosts: []
+    # 只有这些顶级域名会被视为广告，减少普通文本误判
+    blocked-tlds:
+      - com
+      - net
+      - org
+      - cn
+      - gg
+      - io
+      - me
+      - cc
+      - xyz
+      - top
+      - club
+      - online
+      - site
+      - fun
+      - vip
+      - win
+      - pro
+      - link
+
+# ---------------- 文本 ----------------
+# 颜色代码用 & ，占位符视上下文可用:
+# %player% %check% %vl% %ping% %detail% %strikes% %max-strikes% %hours% %time% %punishment-id%
+messages:
+  prefix: "&8[&cSayaka AntiCheat&8]&7 "
+
+  # —— 给违规玩家的警告 ——
+  warn-1-title: "&e⚠ 行为异常警告"
+  warn-1-subtitle: "&7系统检测到异常行为"
+  warn-1-chat:
+    - "&8&m                                        "
+    - "&e⚠ &f检测到你的行为异常"
+    - "&7若你未使用任何作弊手段，请忽略本提示；"
+    - "&7继续触发将受到 &c踢出 / 封禁 &7处理。"
+    - "&8&m                                        "
+  warn-2-title: "&c⚠ 最后警告"
+  warn-2-subtitle: "&7异常行为持续触发"
+  warn-2-chat:
+    - "&8&m                                        "
+    - "&c⚠ 最后警告：异常行为仍在持续触发！"
+    - "&7再犯将被 &c立即踢出&7，多次踢出将 &4临时封禁&7。"
+    - "&8&m                                        "
+
+  # —— 踢出 / 封禁界面 ——
+  kick-screen: |-
+    &c⚠ 你已被反作弊系统移出服务器
+
+    &7原因: &f%check%
+    &7近 24 小时违规次数: &c%strikes%&7/%max-strikes%
+    &7累计 %max-strikes% 次将被临时封禁
+
+    &8若认为是误判，请联系管理员
+  ban-screen: |-
+    &4⛔ 你已被反作弊系统临时封禁
+
+    &7原因: &f%check% &7(多次违规)
+    &7封禁时长: &c%hours% 小时
+    &7解封时间: &f%time%
+    &7处罚 ID: &f%punishment-id%
+
+    &8若认为是误判，请联系管理员
+  broadcast-kick: "&c玩家 &f%player% &c因 &f%check% &c被反作弊系统踢出"
+  broadcast-ban: "&4玩家 &f%player% &4因多次违规被临时封禁 &c%hours% 小时"
+
+  # —— 给管理员的警报（anticheat.alerts 权限）——
+  alert: "&8[&cSAC&8] &e%player% &7未通过 &f%check% &7VL &c%vl% &8(%detail%, %ping%ms)"
+
+  # —— 命令 ——
+  no-permission: "&c你没有权限执行此操作。"
+  player-not-found: "&c找不到玩家 &f%player%&c。"
+  reloaded: "&a配置已重载。"
+  update-available: "&e发现新版本 &f%latest% &7（当前 %current%）。使用 &f/sac update &7更新。"
+  update-checking: "&7正在检查 GitHub Release..."
+  update-current: "&a当前已是最新版本 &f%version%&a。"
+  update-busy: "&e已有更新检查或安装任务正在进行。"
+  update-download-start: "&7正在检查并下载最新版本..."
+  update-ready: "&a版本 &f%latest% &a已校验，服务器将在 3 秒后热重载。"
+  update-failed: "&c更新失败：%error%"
+  update-check-failed: "&c检查更新失败：%error%"
+  reset-done: "&a已清空 &f%player% &a的违规数据。"
+  whitelist-added: "&a已将 &f%player% &a加入反作弊白名单。"
+  whitelist-removed: "&a已将 &f%player% &a移出反作弊白名单。"
+  whitelist-already-added: "&e%player% 已在反作弊白名单中。"
+  whitelist-not-found: "&c玩家 &f%player% &c不在反作弊白名单中。"
+  whitelist-empty: "&7反作弊白名单为空。"
+  invalid-player-name: "&c无效的玩家名 &f%player%&c。"
+  not-banned: "&e玩家 &f%player% &e当前未被封禁。"
+  unbanned: "&a已解除 &f%player% &a的封禁，并清空近期 strike。"
+  unbanned-reset: "&a已解除 &f%player% &a的封禁，并重置封禁次数阶梯。"
+  alerts-on: "&a已开启违规警报。"
+  alerts-off: "&7已关闭违规警报。"
+  anti-spam-blocked: "&c消息发送过快或内容重复，请稍后再试。"
+  anti-ads-blocked: "&c消息包含未获准的服务器地址、域名或邀请链接。"

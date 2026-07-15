@@ -1,0 +1,17 @@
+server-id = "velocity"
+
+[database]
+jdbc-url = "jdbc:mariadb://127.0.0.1:3306/sayaka"
+username = "sayaka"
+# Environment placeholders are expanded at startup.
+password = "${SAYAKA_DATABASE_PASSWORD}"
+
+[web]
+enabled = true
+bind = "127.0.0.1"
+port = 8080
+admin-token = "${SAYAKA_ADMIN_TOKEN}"
+threads = 4
+
+[cache]
+ban-seconds = 5

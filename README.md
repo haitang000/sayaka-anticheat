@@ -7,7 +7,7 @@
 [![Issues](https://img.shields.io/github/issues/haitang000/sayaka-anticheat)](https://github.com/haitang000/sayaka-anticheat/issues)
 [![Last commit](https://img.shields.io/github/last-commit/haitang000/sayaka-anticheat)](https://github.com/haitang000/sayaka-anticheat/commits/main)
 
-适用于 **Paper / Purpur 1.20.4+** 的 PVP / 生存服反作弊插件。2.0 使用 PacketEvents 数据包时间线验证攻击、移动时钟、挥臂、击退和延迟回放，不再把 Bukkit 合成事件当作客户端证据。
+适用于 **Paper / Purpur 1.20.4+** 的 PVP / 生存服反作弊插件，并提供可选的 **Velocity 3.4+** 群组服组件。2.0 使用 PacketEvents 数据包时间线验证攻击、移动时钟、挥臂、击退和延迟回放，不再把 Bukkit 合成事件当作客户端证据。
 
 ## 设计理念
 
@@ -51,7 +51,24 @@
 ./mvnw package   # 需要 JDK 17+；无需预装 Maven
 ```
 
-产物在 `target/Sayaka-AntiCheat-2.1.0-beta.2.jar`。PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
+构建会生成两个可部署产物：
+
+- `paper/target/Sayaka-AntiCheat-Paper-2.1.0-beta.2.jar`：放入每个 Paper/Purpur 后端的 `plugins/`。
+- `velocity/target/Sayaka-AntiCheat-Velocity-2.1.0-beta.2.jar`：仅放入 Velocity 的 `plugins/`。
+
+PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
+
+## Velocity 群组服
+
+群组模式使用 MariaDB/MySQL 共享 strike、白名单、处罚、封禁和申诉。只有 Velocity 组件启动 HTTP 面板，因此同机多个后端不会争用 8080。
+
+1. 创建数据库和账号，并确保所有 Paper 后端与 Velocity 都能连接。
+2. 在每个 Paper 的 `plugins/SayakaAntiCheat/config.yml` 中设置 `network.enabled: true`，使用同一数据库连接，并为每个后端设置唯一的 `network.server-id`；保持 `web.enabled: false`，随后完整重启 Paper。
+3. 启动 Velocity 一次以生成 `plugins/sayaka-anticheat/config.toml`，配置同一数据库。通过环境变量 `SAYAKA_DATABASE_PASSWORD` 和 `SAYAKA_ADMIN_TOKEN` 提供密码与管理令牌。
+4. 面板默认只监听 `127.0.0.1:8080`。使用 Nginx/Caddy 将 HTTPS 域名反向代理到该地址，公网只开放 443。
+5. 用防火墙限制后端 Minecraft 端口只能由 Velocity 访问，并启用 Velocity modern forwarding，防止玩家绕过代理和全局封禁。
+
+数据库不可用时，Paper 继续检测和回弹，新临时封禁降级为普通踢出；Velocity 对缓存中的有效封禁继续拦截，未缓存玩家放行。数据库恢复后无需重启。
 
 ## 命令与权限
 
