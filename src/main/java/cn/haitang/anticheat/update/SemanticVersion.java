@@ -5,23 +5,29 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Minimal SemVer 2.0 parser used to decide whether a release is newer. */
+/** Release version parser used to decide whether a three- or four-part version is newer. */
 final class SemanticVersion implements Comparable<SemanticVersion> {
 
     private static final Pattern PATTERN = Pattern.compile(
             "^[vV]?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)"
+                    + "(?:\\.(0|[1-9]\\d*))?"
                     + "(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?"
                     + "(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
 
     private final int major;
     private final int minor;
     private final int patch;
+    private final int revision;
+    private final boolean hasRevision;
     private final List<String> prerelease;
 
-    private SemanticVersion(int major, int minor, int patch, List<String> prerelease) {
+    private SemanticVersion(int major, int minor, int patch, int revision,
+                            boolean hasRevision, List<String> prerelease) {
         this.major = major;
         this.minor = minor;
         this.patch = patch;
+        this.revision = revision;
+        this.hasRevision = hasRevision;
         this.prerelease = prerelease;
     }
 
@@ -30,11 +36,14 @@ final class SemanticVersion implements Comparable<SemanticVersion> {
         Matcher matcher = PATTERN.matcher(value.trim());
         if (!matcher.matches()) return Optional.empty();
         try {
-            String suffix = matcher.group(4);
+            String revision = matcher.group(4);
+            String suffix = matcher.group(5);
             return Optional.of(new SemanticVersion(
                     Integer.parseInt(matcher.group(1)),
                     Integer.parseInt(matcher.group(2)),
                     Integer.parseInt(matcher.group(3)),
+                    revision == null ? 0 : Integer.parseInt(revision),
+                    revision != null,
                     suffix == null ? List.of() : List.of(suffix.split("\\."))));
         } catch (NumberFormatException ignored) {
             return Optional.empty();
@@ -48,6 +57,8 @@ final class SemanticVersion implements Comparable<SemanticVersion> {
         result = Integer.compare(minor, other.minor);
         if (result != 0) return result;
         result = Integer.compare(patch, other.patch);
+        if (result != 0) return result;
+        result = Integer.compare(revision, other.revision);
         if (result != 0) return result;
 
         if (prerelease.isEmpty()) return other.prerelease.isEmpty() ? 0 : 1;
@@ -81,7 +92,8 @@ final class SemanticVersion implements Comparable<SemanticVersion> {
 
     @Override
     public String toString() {
-        String base = major + "." + minor + "." + patch;
+        String base = major + "." + minor + "." + patch
+                + (hasRevision ? "." + revision : "");
         return prerelease.isEmpty() ? base : base + "-" + String.join(".", prerelease);
     }
 }

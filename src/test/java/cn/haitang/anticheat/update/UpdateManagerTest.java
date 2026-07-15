@@ -24,13 +24,13 @@ class UpdateManagerTest {
     @Test
     void buildsArtifactUrlFromLatestReleaseRedirect() {
         UpdateManager.Release release = UpdateManager.releaseFromLatestUri(
-                URI.create("https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0"))
+                URI.create("https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0.1"))
                 .orElseThrow();
 
-        assertEquals("2.1.0", release.version().toString());
-        assertEquals("v2.1.0", release.tag());
+        assertEquals("2.1.0.1", release.version().toString());
+        assertEquals("v2.1.0.1", release.tag());
         assertEquals("https://github.com/haitang000/sayaka-anticheat/releases/download/"
-                + "v2.1.0/Sayaka-AntiCheat-2.1.0.jar", release.download().toString());
+                + "v2.1.0.1/Sayaka-AntiCheat-2.1.0.1.jar", release.download().toString());
     }
 
     @Test
@@ -63,9 +63,9 @@ class UpdateManagerTest {
 
     @Test
     void validatesArtifactIdentityAndVersion() throws Exception {
-        UpdateManager.Release release = release("v2.1.0");
-        Path matching = createArtifact("2.1.0");
-        Path wrongVersion = createArtifact("2.0.9");
+        UpdateManager.Release release = release("v2.1.0.1");
+        Path matching = createArtifact("2.1.0.1");
+        Path wrongVersion = createArtifact("2.1.0");
 
         UpdateManager.validateArtifact(matching, release);
         assertThrows(IOException.class, () -> UpdateManager.validateArtifact(wrongVersion, release));
