@@ -23,6 +23,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -187,22 +190,36 @@ public final class UpdateManager {
             NodeList entries = factory.newDocumentBuilder().parse(feed)
                     .getElementsByTagNameNS("http://www.w3.org/2005/Atom", "entry");
             Release latest = null;
+            Instant latestPublishedAt = null;
             for (int entryIndex = 0; entryIndex < entries.getLength(); entryIndex++) {
                 Element entry = (Element) entries.item(entryIndex);
+                Optional<Instant> publishedAt = releasePublishedAt(entry);
+                if (publishedAt.isEmpty()) continue;
                 NodeList links = entry.getElementsByTagNameNS("http://www.w3.org/2005/Atom", "link");
                 for (int linkIndex = 0; linkIndex < links.getLength(); linkIndex++) {
                     Element link = (Element) links.item(linkIndex);
                     if (!"alternate".equals(link.getAttribute("rel"))) continue;
                     Optional<Release> candidate = releaseFromLatestUri(URI.create(link.getAttribute("href")));
                     if (candidate.isPresent()
-                            && (latest == null || candidate.get().version().compareTo(latest.version()) > 0)) {
+                            && (latestPublishedAt == null || publishedAt.get().isAfter(latestPublishedAt))) {
                         latest = candidate.get();
+                        latestPublishedAt = publishedAt.get();
                     }
                 }
             }
             return Optional.ofNullable(latest);
         } catch (ParserConfigurationException | SAXException | IllegalArgumentException error) {
             throw new IOException("invalid GitHub release feed", error);
+        }
+    }
+
+    private static Optional<Instant> releasePublishedAt(Element entry) {
+        NodeList timestamps = entry.getElementsByTagNameNS("http://www.w3.org/2005/Atom", "updated");
+        if (timestamps.getLength() == 0) return Optional.empty();
+        try {
+            return Optional.of(OffsetDateTime.parse(timestamps.item(0).getTextContent().trim()).toInstant());
+        } catch (DateTimeParseException ignored) {
+            return Optional.empty();
         }
     }
 

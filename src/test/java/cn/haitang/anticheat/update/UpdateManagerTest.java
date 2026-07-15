@@ -42,23 +42,32 @@ class UpdateManagerTest {
     }
 
     @Test
-    void findsHighestVersionIncludingPrereleasesInReleaseFeed() throws Exception {
+    void findsMostRecentlyPublishedReleaseRegardlessOfVersionOrder() throws Exception {
         String feed = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <feed xmlns="http://www.w3.org/2005/Atom">
-                  <entry><link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0-beta.2"/></entry>
-                  <entry><link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0-beta.3"/></entry>
-                  <entry><link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.0.0"/></entry>
+                  <entry>
+                    <updated>2026-07-15T08:19:34Z</updated>
+                    <link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0.2"/>
+                  </entry>
+                  <entry>
+                    <updated>2026-07-15T09:19:40Z</updated>
+                    <link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0.2-beta.1"/>
+                  </entry>
+                  <entry>
+                    <updated>2026-07-15T07:51:58Z</updated>
+                    <link rel="alternate" href="https://github.com/haitang000/sayaka-anticheat/releases/tag/v9.0.0"/>
+                  </entry>
                 </feed>
                 """;
 
         UpdateManager.Release release = UpdateManager.latestReleaseFromFeed(
                 new ByteArrayInputStream(feed.getBytes(StandardCharsets.UTF_8))).orElseThrow();
 
-        assertEquals("2.1.0-beta.3", release.version().toString());
-        assertEquals("v2.1.0-beta.3", release.tag());
+        assertEquals("2.1.0.2-beta.1", release.version().toString());
+        assertEquals("v2.1.0.2-beta.1", release.tag());
         assertEquals("https://github.com/haitang000/sayaka-anticheat/releases/download/"
-                + "v2.1.0-beta.3/Sayaka-AntiCheat-2.1.0-beta.3.jar", release.download().toString());
+                + "v2.1.0.2-beta.1/Sayaka-AntiCheat-2.1.0.2-beta.1.jar", release.download().toString());
     }
 
     @Test
