@@ -32,4 +32,26 @@ final class AimPatternAnalyzer {
         if (delta < -180.0) delta += 360.0;
         return delta;
     }
+
+    /** 视角 (yaw, pitch) 对应的单位方向向量，与 Bukkit Location#getDirection 一致。 */
+    static double[] directionFromRotation(double yaw, double pitch) {
+        double yawRad = Math.toRadians(yaw);
+        double pitchRad = Math.toRadians(pitch);
+        double xz = Math.cos(pitchRad);
+        return new double[] {-xz * Math.sin(yawRad), -Math.sin(pitchRad), xz * Math.cos(yawRad)};
+    }
+
+    /** 视角方向与目标向量的夹角（度）；目标向量长度为零时返回 NaN。 */
+    static double viewAngleToTarget(double yaw, double pitch, double dx, double dy, double dz) {
+        double length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (length < 1.0e-9) return Double.NaN;
+        double[] view = directionFromRotation(yaw, pitch);
+        double dot = (view[0] * dx + view[1] * dy + view[2] * dz) / length;
+        return Math.toDegrees(Math.acos(Math.max(-1.0, Math.min(1.0, dot))));
+    }
+
+    /** 攻击者到目标的水平方位角（度），用于判断目标相对方位是否在变化。 */
+    static double horizontalBearing(double dx, double dz) {
+        return Math.toDegrees(Math.atan2(-dx, dz));
+    }
 }

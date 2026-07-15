@@ -10,8 +10,10 @@ import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import com.github.retrooper.packetevents.event.PacketSendEvent;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
+import com.github.retrooper.packetevents.protocol.player.DiggingAction;
 import com.github.retrooper.packetevents.util.Vector3d;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientAnimation;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerDigging;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientAttack;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientInteractEntity;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientKeepAlive;
@@ -107,6 +109,28 @@ public final class PacketTimeline {
         Timeline timeline = timelines.get(playerId);
         return timeline != null && timeline.hasSwingNear(
                 attackSequence, attackNanos, precedingSwingSequence);
+    }
+
+    /**
+     * 最近 windowNanos 内的战斗挥臂包数（挖掘挥臂已在协议层隔离）。
+     * 到达时间在 Netty 线程记录，不受服务端 tick 批处理影响，
+     * 是唯一能测出真实高 CPS 的数据源。
+     */
+    public int clickPacketsWithin(UUID playerId, long windowNanos) {
+        Timeline timeline = timelines.get(playerId);
+        return timeline == null ? 0 : timeline.clickPacketsWithin(windowNanos, System.nanoTime());
+    }
+
+    /** 最近的战斗挥臂包到达时间（纳秒，从旧到新），供点击节奏分析使用。 */
+    public long[] recentClickNanos(UUID playerId, int maxCount) {
+        Timeline timeline = timelines.get(playerId);
+        return timeline == null ? new long[0] : timeline.recentClickNanos(maxCount);
+    }
+
+    /** 上报违规后清空点击历史，避免同一批证据在下个分析周期重复计违规。 */
+    public void clearClicks(UUID playerId) {
+        Timeline timeline = timelines.get(playerId);
+        if (timeline != null) timeline.clearClicks();
     }
 
     public boolean wasImpulseSent(UUID playerId, long armedAtNanos, Vector expected) {
@@ -219,6 +243,7 @@ public final class PacketTimeline {
             if (type == PacketType.Play.Client.INTERACT_ENTITY) {
                 WrapperPlayClientInteractEntity interact = new WrapperPlayClientInteractEntity(event);
                 if (interact.getAction() == WrapperPlayClientInteractEntity.InteractAction.ATTACK) {
+                    timeline.miningState(false);
                     if (rawAttackConsumer.test(playerId, interact.getEntityId())) {
                         event.setCancelled(true);
                         return;
@@ -228,6 +253,7 @@ public final class PacketTimeline {
                 return;
             }
             if (type == PacketType.Play.Client.ATTACK) {
+                timeline.miningState(false);
                 int entityId = new WrapperPlayClientAttack(event).getEntityId();
                 if (rawAttackConsumer.test(playerId, entityId)) {
                     event.setCancelled(true);
@@ -249,10 +275,21 @@ public final class PacketTimeline {
                 timeline.resetTimer();
                 return;
             }
-            if (type == PacketType.Play.Client.PLAYER_DIGGING) timeline.add(seq, now, SampleType.DIG);
-            else if (type == PacketType.Play.Client.USE_ITEM) timeline.add(seq, now, SampleType.USE_ITEM);
-            else if (type == PacketType.Play.Client.PLAYER_BLOCK_PLACEMENT) timeline.add(seq, now, SampleType.PLACE);
-            else if (type == PacketType.Play.Client.CLICK_WINDOW) timeline.add(seq, now, SampleType.INVENTORY);
+            if (type == PacketType.Play.Client.PLAYER_DIGGING) {
+                DiggingAction action = new WrapperPlayClientPlayerDigging(event).getAction();
+                if (action == DiggingAction.START_DIGGING) timeline.miningState(true);
+                else if (action == DiggingAction.FINISHED_DIGGING
+                        || action == DiggingAction.CANCELLED_DIGGING) timeline.miningState(false);
+                timeline.add(seq, now, SampleType.DIG);
+            } else if (type == PacketType.Play.Client.USE_ITEM) {
+                timeline.miningState(false);
+                timeline.add(seq, now, SampleType.USE_ITEM);
+            } else if (type == PacketType.Play.Client.PLAYER_BLOCK_PLACEMENT) {
+                timeline.miningState(false);
+                timeline.add(seq, now, SampleType.PLACE);
+            } else if (type == PacketType.Play.Client.CLICK_WINDOW) {
+                timeline.add(seq, now, SampleType.INVENTORY);
+            }
         }
 
         @Override
@@ -279,10 +316,15 @@ public final class PacketTimeline {
     }
 
     private final class Timeline {
+        private static final int CLICK_HISTORY = 48;
+
         private final Deque<Sample> samples = new ArrayDeque<>();
         private final Deque<AttackPacket> attacks = new ArrayDeque<>();
         private final Deque<Long> swings = new ArrayDeque<>();
         private final Deque<Long> swingTimes = new ArrayDeque<>();
+        /** 非挖掘挥臂的到达纳秒；挖掘期间的自动挥臂由 miningActive 隔离 */
+        private final Deque<Long> clickNanos = new ArrayDeque<>();
+        private boolean miningActive;
         private final Deque<Impulse> impulses = new ArrayDeque<>();
         private final Map<Long, Long> keepAliveSent = new LinkedHashMap<>();
         private final Map<Integer, Transaction> transactions = new LinkedHashMap<>();
@@ -327,7 +369,43 @@ public final class PacketTimeline {
                 swings.removeFirst();
                 swingTimes.removeFirst();
             }
+            if (!miningActive) {
+                clickNanos.addLast(now);
+                while (clickNanos.size() > CLICK_HISTORY) clickNanos.removeFirst();
+            }
             addLocked(seq, now, SampleType.SWING);
+        }
+
+        /**
+         * 挖掘状态：开始挖掘置位；结束/取消挖掘、攻击、用物品、放方块复位。
+         * 瞬间破坏只有开始包没有结束包，靠后续战斗动作解除卡死，
+         * 卡死期间只会漏采样，不会把挖掘挥臂误当点击。
+         */
+        synchronized void miningState(boolean active) {
+            miningActive = active;
+        }
+
+        synchronized int clickPacketsWithin(long windowNanos, long now) {
+            int count = 0;
+            for (var iterator = clickNanos.descendingIterator(); iterator.hasNext(); ) {
+                if (now - iterator.next() > windowNanos) break;
+                count++;
+            }
+            return count;
+        }
+
+        synchronized long[] recentClickNanos(int maxCount) {
+            int size = Math.min(maxCount, clickNanos.size());
+            long[] result = new long[size];
+            int index = size;
+            for (var iterator = clickNanos.descendingIterator(); iterator.hasNext() && index > 0; ) {
+                result[--index] = iterator.next();
+            }
+            return result;
+        }
+
+        synchronized void clearClicks() {
+            clickNanos.clear();
         }
 
         synchronized void attack(long seq, long now, int entityId) {

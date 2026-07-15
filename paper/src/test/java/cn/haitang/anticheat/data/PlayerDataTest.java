@@ -130,4 +130,47 @@ class PlayerDataTest {
         assertTrue(tallLaunch > shortLaunch);
         assertTrue(tallLaunch <= 15_000L);
     }
+
+    @Test
+    void rotationHistoryAnswersViewAtOrBeforeTick() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+        data.addRotation(100, 10.0f, 5.0f);
+        data.addRotation(102, 40.0f, 8.0f);
+        data.addRotation(102, 45.0f, 9.0f); // 同 tick 覆盖
+
+        assertEquals(10.0f, data.rotationAtOrBefore(101).yaw());
+        assertEquals(45.0f, data.rotationAtOrBefore(102).yaw());
+        assertEquals(45.0f, data.rotationAtOrBefore(200).yaw());
+        assertTrue(data.rotationAtOrBefore(99) == null);
+
+        data.addRotation(130, 50.0f, 0.0f); // 距 100 超过 16 tick，最老样本被裁剪
+        assertTrue(data.rotationAtOrBefore(101) == null);
+    }
+
+    @Test
+    void namedBuffersAreIsolatedFromCheckBuffers() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+
+        data.buffer(CheckType.KILL_AURA, 2.0);
+        assertEquals(1.0, data.buffer("kill-aura.snapback", 1.0), 0.0001);
+        assertEquals(2.5, data.buffer(CheckType.KILL_AURA, 0.5), 0.0001);
+
+        data.resetBuffer("kill-aura.snapback");
+        assertEquals(1.0, data.buffer("kill-aura.snapback", 1.0), 0.0001);
+        assertEquals(0.0, data.buffer("kill-aura.snapback", -5.0), 0.0001);
+    }
+
+    @Test
+    void burstCountingRestartsEveryTickAndFlagsOnce() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+
+        assertEquals(1, data.countAttackInTick(50));
+        assertEquals(2, data.countAttackInTick(50));
+        assertEquals(3, data.countAttackInTick(50));
+        assertEquals(1, data.countAttackInTick(51));
+
+        assertTrue(data.markBurstFlagged(51));
+        assertFalse(data.markBurstFlagged(51));
+        assertTrue(data.markBurstFlagged(52));
+    }
 }

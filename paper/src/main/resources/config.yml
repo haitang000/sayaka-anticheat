@@ -376,7 +376,9 @@ checks:
       # 限制同时存在的探针会话，避免大型服务器战斗高峰产生过多实体
       max-active-sessions: 20
 
-  # 连点器（AutoClicker）
+  # 连点器（AutoClicker）。包引擎工作时 CPS 与节奏分析都以协议层挥臂包的
+  # 真实到达时间为准：服务端按 tick 批处理事件，同刻点击的事件时间戳几乎相同，
+  # 只看事件时间会把任意高的 CPS 封顶在 ~20，毫秒级节奏分析也会失真
   auto-clicker:
     enabled: true
     enforcement: alert
@@ -384,7 +386,8 @@ checks:
     max-cps: 21
     # 极端点击频率无需等待持续窗口，但同一玩家每秒最多上报一次
     hard-max-cps: 28
-    # 忽略同一服务端瞬间产生的重复点击事件，避免插件/事件双记
+    # 仅事件级回退路径使用：忽略同一服务端瞬间的重复点击事件，避免插件/事件双记。
+    # 包引擎工作时以协议层挥臂计数为真实上限，无需去重
     dedupe-ms: 8
     # CPS 持续超标多少毫秒才判违规
     sustain-ms: 1000
@@ -405,6 +408,23 @@ checks:
     cycle-tolerance-ms: 2.0
     cycle-min-similarity: 0.90
     buffer-to-flag: 2.5
+    randomized:
+      # 完美随机化宏：人手点击间隔天然右偏（偶发长间隔）且相邻间隔相关
+      # （节奏快慢有惯性与反馈校正），独立采样的随机宏两个特征都趋近于零。
+      # 三个条件同时满足才积累证据，需要连续多个分析窗口命中才上报
+      enabled: true
+      # 变异系数处于该区间才参与判定：更低的窗口由机械/模式判定线负责，
+      # 更高的离散度是典型人手
+      min-cv: 0.06
+      max-cv: 0.30
+      # 间隔分布的偏度绝对值上限（人手连续快速点击通常明显右偏）
+      max-abs-skewness: 0.35
+      # 相邻间隔一阶自相关的绝对值上限（人手节奏漂移/交替显著非零）
+      max-abs-autocorrelation: 0.15
+      buffer-increment: 1.0
+      buffer-decay: 0.35
+      buffer-to-flag: 2.5
+      flag-weight: 1.0
 
   # 无挥臂攻击（NoSwing：攻击不带挥臂动画包）
   no-swing:

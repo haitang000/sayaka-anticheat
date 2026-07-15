@@ -57,6 +57,9 @@ public class MovementTracker implements Listener {
         data.setLastDeltaY(dy);
         data.consumeImpulse(new org.bukkit.util.Vector(dx, dy, dz));
 
+        // 视角历史供 KillAura 吸附回正检测：纯转头包同样采样
+        data.addRotation(org.bukkit.Bukkit.getCurrentTick(), to.getYaw(), to.getPitch());
+
         // 仅转动视角不算位移：不刷新 lastMoveAt，否则悬浮者环顾四周即可绕过静止悬浮扫描
         boolean rotationOnly = distXZ < 1e-7 && Math.abs(dy) < 1e-7;
         if (rotationOnly) return;

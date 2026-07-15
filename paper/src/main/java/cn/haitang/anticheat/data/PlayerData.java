@@ -99,6 +99,31 @@ public class PlayerData {
     private long lastTotemPopAt;
     private long kbPendingAt;
 
+    /**
+     * 视角历史采样：每个产生移动/转头事件的 tick 记录一次最终视角。
+     * 玩家静止不转头时客户端不发包，也就没有新样本——此时视角保持不变，
+     * {@link #rotationAtOrBefore} 取"该刻或更早的最近样本"语义仍然正确。
+     */
+    public record RotationSample(int tick, float yaw, float pitch) {}
+
+    private static final int ROTATION_HISTORY_TICKS = 16;
+
+    private final Deque<RotationSample> rotationHistory = new ArrayDeque<>();
+
+    /** 追踪误差采样：一次命中的时间戳 + 攻击视角与目标中心的角度误差（度）。 */
+    public record TrackSample(long at, double error) {}
+
+    private final Deque<TrackSample> trackSamples = new ArrayDeque<>();
+    private double lastTrackBearing = Double.NaN;
+
+    // 同一服务端 tick 内绑定到真实攻击包的命中计数（KillAura burst）
+    private int attackBurstTick = -1;
+    private int attackBurstCount;
+    private int attackBurstFlaggedTick = -1;
+
+    /** 子判定线专用缓冲：与 {@link #buffer(CheckType, double)} 隔离，避免互相稀释。 */
+    private final Map<String, Double> namedBuffers = new java.util.HashMap<>();
+
     // ---- 容器状态（InventoryMove） ----
     private boolean containerOpen;
     private long containerOpenAt;
@@ -219,6 +244,17 @@ public class PlayerData {
         buffer.remove(type);
     }
 
+    /** 命名子缓冲：同一检测项内多条独立判定线各自积累证据，互不稀释。 */
+    public double buffer(String key, double delta) {
+        double v = Math.max(0, namedBuffers.getOrDefault(key, 0.0) + delta);
+        if (v == 0) namedBuffers.remove(key); else namedBuffers.put(key, v);
+        return v;
+    }
+
+    public void resetBuffer(String key) {
+        namedBuffers.remove(key);
+    }
+
     public int getPunishmentWarnStage(CheckType type) {
         return punishmentWarnStages.getOrDefault(type, 0);
     }
@@ -315,6 +351,7 @@ public class PlayerData {
         this.airStartY = current == null ? 0 : current.getY();
         this.speedWindow.clear();
         this.moveTimes.clear();
+        this.rotationHistory.clear();
         clearImpulse();
         clearServerLaunch();
     }
@@ -504,6 +541,56 @@ public class PlayerData {
 
     public long getKbPendingAt() { return kbPendingAt; }
     public void setKbPendingAt(long at) { this.kbPendingAt = at; }
+
+    /** 记录该 tick 的最终视角；同一 tick 重复采样只保留最后一次。 */
+    public void addRotation(int tick, float yaw, float pitch) {
+        RotationSample last = rotationHistory.peekLast();
+        if (last != null && last.tick() == tick) rotationHistory.removeLast();
+        rotationHistory.addLast(new RotationSample(tick, yaw, pitch));
+        while (!rotationHistory.isEmpty()
+                && tick - rotationHistory.peekFirst().tick() > ROTATION_HISTORY_TICKS) {
+            rotationHistory.removeFirst();
+        }
+    }
+
+    /** 该刻或更早的最近一次视角采样；历史为空返回 {@code null}。 */
+    public RotationSample rotationAtOrBefore(int tick) {
+        RotationSample best = null;
+        for (RotationSample sample : rotationHistory) {
+            if (sample.tick() <= tick) best = sample;
+            else break;
+        }
+        return best;
+    }
+
+    public void clearRotationHistory() {
+        rotationHistory.clear();
+    }
+
+    public Deque<TrackSample> getTrackSamples() { return trackSamples; }
+
+    public double getLastTrackBearing() { return lastTrackBearing; }
+    public void setLastTrackBearing(double bearing) { this.lastTrackBearing = bearing; }
+
+    /**
+     * 累计同一服务端 tick 内绑定真实攻击包的命中次数。
+     *
+     * @return 本次命中是该 tick 内的第几次（从 1 开始）
+     */
+    public int countAttackInTick(int tick) {
+        if (attackBurstTick != tick) {
+            attackBurstTick = tick;
+            attackBurstCount = 0;
+        }
+        return ++attackBurstCount;
+    }
+
+    /** burst 每 tick 只上报一次：首次返回 true，同 tick 再次调用返回 false。 */
+    public boolean markBurstFlagged(int tick) {
+        if (attackBurstFlaggedTick == tick) return false;
+        attackBurstFlaggedTick = tick;
+        return true;
+    }
 
     // ---- 容器 / 放置 / 移动包 ----
 
