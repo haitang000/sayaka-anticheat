@@ -56,17 +56,20 @@ public final class WebServer {
     private final String adminToken;
     private final boolean tokenGenerated;
     private final String indexHtml;
+    private final String appJavascript;
     private final String bind;
     private final RateLimiter appealLimiter = new RateLimiter(20, 60_000L);
 
     private WebServer(AntiCheatPlugin plugin, HttpServer server, ThreadPoolExecutor executor,
-                      String adminToken, boolean tokenGenerated, String indexHtml, String bind) {
+                      String adminToken, boolean tokenGenerated, String indexHtml,
+                      String appJavascript, String bind) {
         this.plugin = plugin;
         this.server = server;
         this.executor = executor;
         this.adminToken = adminToken;
         this.tokenGenerated = tokenGenerated;
         this.indexHtml = indexHtml;
+        this.appJavascript = appJavascript;
         this.bind = bind;
     }
 
@@ -86,8 +89,9 @@ public final class WebServer {
         String token = generated ? UUID.randomUUID().toString().replace("-", "") : configured.trim();
 
         String html = loadIndexHtml(plugin);
-        if (html == null) {
-            plugin.getLogger().warning("未找到打包的 web/index.html，管理面板不可用；Web 服务未启动。");
+        String javascript = loadWebResource(plugin, "web/app.js");
+        if (html == null || javascript == null) {
+            plugin.getLogger().warning("Web 面板资源不完整，管理面板不可用；Web 服务未启动。");
             return null;
         }
 
@@ -107,7 +111,7 @@ public final class WebServer {
         executor.allowCoreThreadTimeOut(true);
         server.setExecutor(executor);
 
-        WebServer web = new WebServer(plugin, server, executor, token, generated, html, bind);
+        WebServer web = new WebServer(plugin, server, executor, token, generated, html, javascript, bind);
         web.registerRoutes();
         server.start();
 
@@ -125,6 +129,7 @@ public final class WebServer {
         server.createContext("/api/admin/punishments", wrap(requireAdmin(this::handlePunishments)));
         server.createContext("/api/admin/appeals", wrap(requireAdmin(this::handleAppeals)));
         server.createContext("/api/admin/appeals/resolve", wrap(requireAdmin(this::handleResolve)));
+        server.createContext("/app.js", wrap(this::handleAppJavascript));
         server.createContext("/", wrap(this::handleStatic));
     }
 
@@ -147,6 +152,20 @@ public final class WebServer {
         // 单页应用：所有非 API 路径都返回同一份 index.html
         byte[] body = indexHtml.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+        exchange.sendResponseHeaders(200, body.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(body);
+        }
+    }
+
+    private void handleAppJavascript(HttpExchange exchange) throws IOException {
+        if (!"GET".equals(exchange.getRequestMethod())) {
+            sendText(exchange, 405, "Method Not Allowed");
+            return;
+        }
+        byte[] body = appJavascript.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/javascript; charset=utf-8");
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.sendResponseHeaders(200, body.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
@@ -561,11 +580,15 @@ public final class WebServer {
     }
 
     private static String loadIndexHtml(AntiCheatPlugin plugin) {
-        try (InputStream stream = plugin.getResource("web/index.html")) {
+        return loadWebResource(plugin, "web/index.html");
+    }
+
+    private static String loadWebResource(AntiCheatPlugin plugin, String path) {
+        try (InputStream stream = plugin.getResource(path)) {
             if (stream == null) return null;
             return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException error) {
-            plugin.getLogger().warning("读取 web/index.html 失败: " + error.getMessage());
+            plugin.getLogger().warning("读取 " + path + " 失败: " + error.getMessage());
             return null;
         }
     }

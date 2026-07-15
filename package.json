@@ -1,0 +1,10 @@
+{
+  "name": "sayaka-anti-cheat-web",
+  "private": true,
+  "scripts": {
+    "build:web": "esbuild src/web/app.jsx --bundle --format=iife --platform=browser --target=es2018 --charset=utf8 --legal-comments=none --banner:js=\"// Generated from src/web/app.jsx by npm run build:web.\" --outfile=src/main/resources/web/app.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
+}
