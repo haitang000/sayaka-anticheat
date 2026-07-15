@@ -81,19 +81,11 @@ public final class UpdateManager {
     }
 
     public void check(CommandSender sender) {
-        if (!plugin.config().getBoolean("updates.enabled", true)) {
-            sender.sendMessage(plugin.getMessages().prefixed("update-disabled", null));
-            return;
-        }
         sender.sendMessage(plugin.getMessages().prefixed("update-checking", null));
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> runCheck(sender, true));
     }
 
     public void install(CommandSender sender) {
-        if (!plugin.config().getBoolean("updates.enabled", true)) {
-            sender.sendMessage(plugin.getMessages().prefixed("update-disabled", null));
-            return;
-        }
         if (!installing.compareAndSet(false, true)) {
             sender.sendMessage(plugin.getMessages().prefixed("update-busy", null));
             return;

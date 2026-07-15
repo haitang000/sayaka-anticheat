@@ -67,7 +67,7 @@
 | `/sac reload` | 重载配置 | `anticheat.admin` |
 | `/sac update [check]` | 安装 GitHub 最新 Release 并热重载；`check` 仅检查 | `anticheat.admin` |
 
-插件默认每 30 分钟检查一次 GitHub 的最新稳定 Release。发现更高版本后，控制台与在线管理员会收到提示；执行 `/sac update` 后会下载并校验 JAR，再通过 Bukkit 更新目录进行一次服务器级热重载，整个过程无需重启 JVM。可在 `updates` 配置段关闭检查或调整间隔。
+插件默认每 30 分钟检查一次 GitHub 的最新稳定 Release。发现更高版本后，控制台与在线管理员会收到提示；执行 `/sac update` 后会下载并校验 JAR，再通过 Bukkit 更新目录进行一次服务器级热重载，整个过程无需重启 JVM。可在 `updates` 配置段关闭或调整后台检查；关闭后台检查不影响手动使用 `/sac update` 或 `/sac update check`。
 
 `anticheat.bypass` 完全绕过检测（默认无人持有）；`anticheat.antispam.bypass` / `anticheat.antiads.bypass` 仅绕过对应聊天检测。以上权限默认均不给 OP 之外的人。
 
