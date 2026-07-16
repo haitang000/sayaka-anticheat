@@ -23,15 +23,14 @@ class UpdateManagerTest {
     Path temporaryDirectory;
 
     @Test
-    void buildsArtifactUrlFromLatestReleaseRedirect() {
+    void parsesReleaseFromFeedPageWithoutGuessingArtifactUrl() {
         UpdateManager.Release release = UpdateManager.releaseFromLatestUri(
                 URI.create("https://github.com/haitang000/sayaka-anticheat/releases/tag/v2.1.0"))
                 .orElseThrow();
 
         assertEquals("2.1.0", release.version().toString());
         assertEquals("v2.1.0", release.tag());
-        assertEquals("https://github.com/haitang000/sayaka-anticheat/releases/download/"
-                + "v2.1.0/Sayaka-AntiCheat-Paper-2.1.0.jar", release.download().toString());
+        assertTrue(release.download().isEmpty());
     }
 
     @Test
@@ -62,9 +61,44 @@ class UpdateManagerTest {
                 new ByteArrayInputStream(feed.getBytes(StandardCharsets.UTF_8))).orElseThrow();
 
         assertEquals("2.1.0.2-beta.1", release.version().toString());
+        assertTrue(release.download().isEmpty());
+    }
+
+    @Test
+    void selectsArtifactMatchingTheCurrentServerPlatform() throws Exception {
+        UpdateManager.Release candidate = release("v2.1.0.3-beta.3");
+        String json = releaseJson(
+                "Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar",
+                "Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar");
+
+        UpdateManager.Release paper = UpdateManager.releaseWithPlatformAsset(candidate,
+                input(json), UpdateManager.ServerPlatform.PAPER);
+        UpdateManager.Release velocity = UpdateManager.releaseWithPlatformAsset(candidate,
+                input(json), UpdateManager.ServerPlatform.VELOCITY);
+
         assertEquals("https://github.com/haitang000/sayaka-anticheat/releases/download/"
-                + "v2.1.0.2-beta.1/Sayaka-AntiCheat-Paper-2.1.0.2-beta.1.jar",
-                release.download().toString());
+                + "v2.1.0.3-beta.3/Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar",
+                paper.download().orElseThrow().toString());
+        assertEquals("https://github.com/haitang000/sayaka-anticheat/releases/download/"
+                + "v2.1.0.3-beta.3/Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar",
+                velocity.download().orElseThrow().toString());
+    }
+
+    @Test
+    void rejectsMissingOrUntrustedPlatformArtifact() {
+        UpdateManager.Release candidate = release("v2.1.0.3-beta.3");
+        String missingPaper = releaseJson("Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar");
+        String untrustedPaper = """
+                {"tag_name":"v2.1.0.3-beta.3","assets":[{
+                  "name":"Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar",
+                  "browser_download_url":"https://example.com/Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar"
+                }]}
+                """;
+
+        assertThrows(IOException.class, () -> UpdateManager.releaseWithPlatformAsset(candidate,
+                input(missingPaper), UpdateManager.ServerPlatform.PAPER));
+        assertThrows(IOException.class, () -> UpdateManager.releaseWithPlatformAsset(candidate,
+                input(untrustedPaper), UpdateManager.ServerPlatform.PAPER));
     }
 
     @Test
@@ -104,6 +138,22 @@ class UpdateManagerTest {
     private UpdateManager.Release release(String tag) {
         return UpdateManager.releaseFromLatestUri(URI.create(
                 "https://github.com/haitang000/sayaka-anticheat/releases/tag/" + tag)).orElseThrow();
+    }
+
+    private ByteArrayInputStream input(String value) {
+        return new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String releaseJson(String... artifactNames) {
+        StringBuilder assets = new StringBuilder();
+        for (String artifactName : artifactNames) {
+            if (!assets.isEmpty()) assets.append(',');
+            assets.append("{\"name\":\"").append(artifactName)
+                    .append("\",\"browser_download_url\":\"https://github.com/haitang000/")
+                    .append("sayaka-anticheat/releases/download/v2.1.0.3-beta.3/")
+                    .append(artifactName).append("\"}");
+        }
+        return "{\"tag_name\":\"v2.1.0.3-beta.3\",\"assets\":[" + assets + "]}";
     }
 
     private Path createArtifact(String version) throws IOException {

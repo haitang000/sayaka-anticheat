@@ -1,6 +1,7 @@
 package cn.haitang.anticheat.update;
 
 import cn.haitang.anticheat.AntiCheatPlugin;
+import cn.haitang.anticheat.shared.Json;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -44,12 +45,29 @@ public final class UpdateManager {
 
     private static final String REPOSITORY = "haitang000/sayaka-anticheat";
     private static final URI RELEASE_FEED = URI.create("https://github.com/" + REPOSITORY + "/releases.atom");
+    private static final String RELEASE_API = "https://api.github.com/repos/" + REPOSITORY + "/releases/tags/";
+    private static final ServerPlatform SERVER_PLATFORM = ServerPlatform.PAPER;
     private static final long MAX_ARTIFACT_BYTES = 64L * 1024L * 1024L;
     private static final long MAX_DESCRIPTOR_BYTES = 128L * 1024L;
     private static final int MAX_FEED_BYTES = 2 * 1024 * 1024;
     private static final long MIN_CHECK_INTERVAL_TICKS = 5L * 60L * 20L;
 
-    record Release(SemanticVersion version, String tag, URI page, URI download) {
+    record Release(SemanticVersion version, String tag, URI page, Optional<URI> download) {
+    }
+
+    enum ServerPlatform {
+        PAPER("Paper"),
+        VELOCITY("Velocity");
+
+        private final String artifactName;
+
+        ServerPlatform(String artifactName) {
+            this.artifactName = artifactName;
+        }
+
+        String artifactFileName(SemanticVersion version) {
+            return "Sayaka-AntiCheat-" + artifactName + "-" + version + ".jar";
+        }
     }
 
     private final AntiCheatPlugin plugin;
@@ -179,7 +197,8 @@ public final class UpdateManager {
             latest = latestReleaseFromFeed(new ByteArrayInputStream(feed));
         }
         if (latest.isEmpty()) throw new IOException("GitHub release feed contained no valid releases");
-        return latest.get().version().compareTo(current) > 0 ? latest : Optional.empty();
+        if (latest.get().version().compareTo(current) <= 0) return Optional.empty();
+        return Optional.of(resolveReleaseAsset(latest.get()));
     }
 
     static Optional<Release> latestReleaseFromFeed(InputStream feed) throws IOException {
@@ -243,10 +262,73 @@ public final class UpdateManager {
         String tag = URLDecoder.decode(rawTag.replace("+", "%2B"), StandardCharsets.UTF_8);
         Optional<SemanticVersion> parsed = SemanticVersion.parse(tag);
         if (parsed.isEmpty()) return Optional.empty();
-        String artifact = "Sayaka-AntiCheat-Paper-" + parsed.get() + ".jar";
-        URI download = URI.create("https://github.com/" + REPOSITORY + "/releases/download/"
-                + encodePathSegment(tag) + "/" + encodePathSegment(artifact));
-        return Optional.of(new Release(parsed.get(), tag, page, download));
+        return Optional.of(new Release(parsed.get(), tag, page, Optional.empty()));
+    }
+
+    private Release resolveReleaseAsset(Release release) throws IOException, InterruptedException {
+        URI endpoint = URI.create(RELEASE_API + encodePathSegment(release.tag()));
+        HttpRequest request = HttpRequest.newBuilder(endpoint)
+                .timeout(Duration.ofSeconds(15))
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("User-Agent", "Sayaka-AntiCheat/" + currentVersion())
+                .header("Cache-Control", "no-cache")
+                .GET()
+                .build();
+        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        if (response.statusCode() != 200) {
+            response.body().close();
+            throw new IOException("GitHub release API returned HTTP " + response.statusCode());
+        }
+        try (InputStream body = response.body()) {
+            return releaseWithPlatformAsset(release, body, SERVER_PLATFORM);
+        }
+    }
+
+    static Release releaseWithPlatformAsset(Release release, InputStream response,
+                                            ServerPlatform platform) throws IOException {
+        byte[] json = response.readNBytes(MAX_FEED_BYTES + 1);
+        if (json.length > MAX_FEED_BYTES) throw new IOException("GitHub release response is too large");
+
+        Map<String, Object> document;
+        try {
+            document = Json.parseObject(new String(json, StandardCharsets.UTF_8));
+        } catch (IllegalArgumentException error) {
+            throw new IOException("invalid GitHub release response", error);
+        }
+        if (!release.tag().equals(document.get("tag_name"))) {
+            throw new IOException("GitHub release response tag does not match " + release.tag());
+        }
+
+        String expectedName = platform.artifactFileName(release.version());
+        Object assetsValue = document.get("assets");
+        if (assetsValue instanceof Iterable<?> assets) {
+            for (Object assetValue : assets) {
+                if (!(assetValue instanceof Map<?, ?> asset) || !expectedName.equals(asset.get("name"))) continue;
+                Object downloadValue = asset.get("browser_download_url");
+                if (!(downloadValue instanceof String downloadText)) continue;
+                URI download;
+                try {
+                    download = URI.create(downloadText);
+                } catch (IllegalArgumentException error) {
+                    throw new IOException("invalid GitHub release asset URL", error);
+                }
+                if (!validAssetUri(download, release, expectedName)) {
+                    throw new IOException("GitHub release asset URL was outside the expected release");
+                }
+                return new Release(release.version(), release.tag(), release.page(), Optional.of(download));
+            }
+        }
+        throw new IOException("release has no " + platform.artifactName + " artifact for " + release.version());
+    }
+
+    private static boolean validAssetUri(URI download, Release release, String assetName) {
+        if (!"https".equalsIgnoreCase(download.getScheme()) || !"github.com".equalsIgnoreCase(download.getHost())) {
+            return false;
+        }
+        String expectedPath = "/" + REPOSITORY + "/releases/download/"
+                + encodePathSegment(release.tag()) + "/" + encodePathSegment(assetName);
+        return expectedPath.equals(download.getRawPath());
     }
 
     private Path stage(Release release) throws IOException, InterruptedException {
@@ -266,7 +348,9 @@ public final class UpdateManager {
     }
 
     private void download(Release release, Path destination) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder(release.download())
+        URI download = release.download()
+                .orElseThrow(() -> new IOException("release artifact URL was not resolved"));
+        HttpRequest request = HttpRequest.newBuilder(download)
                 .timeout(Duration.ofSeconds(60))
                 .header("User-Agent", "Sayaka-AntiCheat/" + currentVersion())
                 .GET()
@@ -433,7 +517,7 @@ public final class UpdateManager {
     }
 
     private static String artifactFileName(Release release) {
-        return "Sayaka-AntiCheat-Paper-" + release.version() + ".jar";
+        return SERVER_PLATFORM.artifactFileName(release.version());
     }
 
     private static String stripJarExtension(String fileName) {

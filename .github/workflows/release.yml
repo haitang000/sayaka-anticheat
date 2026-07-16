@@ -38,11 +38,16 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          artifacts=(paper/target/Sayaka-AntiCheat-Paper-*.jar velocity/target/Sayaka-AntiCheat-Velocity-*.jar)
-          if (( ${#artifacts[@]} != 2 )); then
-            echo "Expected exactly two release JARs, found ${#artifacts[@]}" >&2
+          paper_artifacts=(paper/target/Sayaka-AntiCheat-Paper-*.jar)
+          velocity_artifacts=(velocity/target/Sayaka-AntiCheat-Velocity-*.jar)
+          if (( ${#paper_artifacts[@]} != 1 || ${#velocity_artifacts[@]} != 1 )); then
+            echo "Expected exactly one Paper and one Velocity JAR" >&2
             exit 1
           fi
+          paper_artifact=${paper_artifacts[0]}
+          legacy_artifact=${paper_artifact/-Paper/}
+          cp "$paper_artifact" "$legacy_artifact"
+          artifacts=("$paper_artifact" "${velocity_artifacts[0]}" "$legacy_artifact")
           printf '%s\n' "${artifacts[@]}" > release-artifacts.txt
 
       - name: Upload artifact to GitHub Release
