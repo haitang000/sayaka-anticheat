@@ -1,9 +1,10 @@
 name: SayakaAntiCheat
 prefix: Sayaka AntiCheat
-version: '2.1.0-beta.2'
+version: '2.1.0.3-beta.3'
 main: cn.haitang.anticheat.AntiCheatPlugin
 api-version: '1.20'
 depend: [packetevents]
+softdepend: [PlugManX]
 author: haitang
 description: 轻量级服务端反作弊：行为检测 + 递进式警告与惩罚
 

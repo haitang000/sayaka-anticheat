@@ -92,11 +92,10 @@ punishment:
   mitigate-vl: 8
   # 未被警告玩家的基础踢出阈值；实际阈值会按当前警告阶段动态降低
   kick-vl: 20
-  # 已警告玩家的踢出阈值系数（限制在 0.0-1.0，配置重载后立即生效）
-  # 默认 kick-vl 为 20 时，首次警告后为 18，最后警告后为 15
+  mitigate-kick-vl: 100
+  # 首次警告后的踢出阈值系数（限制在 0.0-1.0，配置重载后立即生效）
   warned-kick-multipliers:
     warn-1: 0.90
-    warn-2: 0.75
   strikes:
     # strike 统计窗口（小时）
     window-hours: 24
@@ -266,21 +265,23 @@ checks:
     # 极近身时碰撞箱与视角变化很剧烈，不参与射线判定
     min-distance: 0.8
     max-ray-distance: 6.0
-    ray-distance-margin: 1.0
+    ray-distance-margin: 1.5
+    interpolation-window-ticks: 3
     # 基础碰撞箱扩张，以及网络和双方移动产生的额外容差
-    horizontal-tolerance: 0.12
-    vertical-tolerance: 0.12
+    horizontal-tolerance: 0.18
+    vertical-tolerance: 0.15
     ping-tolerance-per-ms: 0.00045
     max-ping-ms: 180
     movement-tolerance-multiplier: 0.35
-    max-movement-tolerance: 0.10
-    max-horizontal-tolerance: 0.30
+    max-movement-tolerance: 0.25
+    max-horizontal-tolerance: 0.45
     teleport-grace-ms: 750
+    velocity-grace-ms: 750
     # 连续脱靶才上报；方块阻挡是更强证据，每次累积更快且立即取消命中
     miss-buffer-increment: 1.0
     blocked-buffer-increment: 2.0
-    buffer-decay: 0.5
-    buffer-to-flag: 2.5
+    buffer-decay: 1.0
+    buffer-to-flag: 4.0
     block-margin: 0.05
     cancel-missed-hits: true
     cancel-blocked-hits: true
@@ -660,8 +661,9 @@ messages:
   update-checking: "&7正在检查 GitHub Release..."
   update-current: "&a当前已是最新版本 &f%version%&a。"
   update-busy: "&e已有更新检查或安装任务正在进行。"
+  update-reloader-missing: "&c安装更新需要已启用的 PlugManX；你仍可使用 /sac update check 检查版本。"
   update-download-start: "&7正在检查并下载最新版本..."
-  update-ready: "&a版本 &f%latest% &a已校验，服务器将在 3 秒后热重载。"
+  update-ready: "&a版本 &f%latest% &a已校验，本插件将在 3 秒后热重载。"
   update-failed: "&c更新失败：%error%"
   update-check-failed: "&c检查更新失败：%error%"
   reset-done: "&a已清空 &f%player% &a的违规数据。"

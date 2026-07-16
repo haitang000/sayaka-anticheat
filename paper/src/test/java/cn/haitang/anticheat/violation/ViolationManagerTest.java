@@ -1,6 +1,7 @@
 package cn.haitang.anticheat.violation;
 
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.EnforcementMode;
 import cn.haitang.anticheat.data.PlayerData;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.Test;
@@ -20,7 +21,6 @@ class ViolationManagerTest {
 
         assertEquals(20.0, ViolationManager.effectiveKickVl(config, 0), 0.0001);
         assertEquals(18.0, ViolationManager.effectiveKickVl(config, 1), 0.0001);
-        assertEquals(15.0, ViolationManager.effectiveKickVl(config, 2), 0.0001);
     }
 
     @Test
@@ -30,17 +30,46 @@ class ViolationManagerTest {
 
         assertEquals(40.0, ViolationManager.effectiveKickVl(config, 0), 0.0001);
         assertEquals(36.0, ViolationManager.effectiveKickVl(config, 1), 0.0001);
-        assertEquals(30.0, ViolationManager.effectiveKickVl(config, 2), 0.0001);
     }
 
     @Test
-    void warningMultipliersAreClampedToTheSupportedRange() {
+    void warningMultiplierIsClampedToTheSupportedRange() {
         YamlConfiguration config = new YamlConfiguration();
         config.set("punishment.warned-kick-multipliers.warn-1", 1.5);
-        config.set("punishment.warned-kick-multipliers.warn-2", -0.5);
 
         assertEquals(20.0, ViolationManager.effectiveKickVl(config, 1), 0.0001);
-        assertEquals(0.0, ViolationManager.effectiveKickVl(config, 2), 0.0001);
+    }
+
+    @Test
+    void enforcementModesSelectTheirOwnPunishmentThreshold() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("punishment.kick-vl", 20.0);
+        config.set("punishment.mitigate-kick-vl", 100.0);
+
+        assertEquals(18.0, ViolationManager.punishmentThreshold(
+                config, EnforcementMode.PUNISH, 1), 0.0001);
+        assertEquals(100.0, ViolationManager.punishmentThreshold(
+                config, EnforcementMode.MITIGATE, 2), 0.0001);
+        assertEquals(Double.POSITIVE_INFINITY, ViolationManager.punishmentThreshold(
+                config, EnforcementMode.ALERT, 2));
+    }
+
+    @Test
+    void nextViolationAfterFinalWarningPunishesImmediately() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("punishment.kick-vl", 20.0);
+        config.set("punishment.mitigate-kick-vl", 100.0);
+
+        assertFalse(ViolationManager.shouldPunish(
+                config, EnforcementMode.PUNISH, 1, 12.0));
+        assertFalse(ViolationManager.shouldPunish(
+                config, EnforcementMode.MITIGATE, 1, 12.0));
+        assertTrue(ViolationManager.shouldPunish(
+                config, EnforcementMode.PUNISH, 2, 12.1));
+        assertTrue(ViolationManager.shouldPunish(
+                config, EnforcementMode.MITIGATE, 2, 12.1));
+        assertFalse(ViolationManager.shouldPunish(
+                config, EnforcementMode.ALERT, 2, 200.0));
     }
 
     @Test

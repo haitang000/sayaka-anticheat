@@ -77,6 +77,7 @@ public final class ConfigSnapshot {
         positive(config, errors, "punishment.mitigate-vl");
         positive(config, errors, "punishment.warn-2-vl");
         positive(config, errors, "punishment.kick-vl");
+        positive(config, errors, "punishment.mitigate-kick-vl");
 
         double warn1 = config.getDouble("punishment.warn-1-vl");
         double mitigate = config.getDouble("punishment.mitigate-vl");
@@ -87,7 +88,6 @@ public final class ConfigSnapshot {
         }
 
         boundedExclusiveZero(config, errors, "punishment.warned-kick-multipliers.warn-1", 1.0);
-        boundedExclusiveZero(config, errors, "punishment.warned-kick-multipliers.warn-2", 1.0);
         positiveInt(config, errors, "punishment.strikes.window-hours");
         positiveInt(config, errors, "punishment.strikes.to-tempban");
 

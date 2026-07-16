@@ -53,8 +53,8 @@
 
 构建会生成两个可部署产物：
 
-- `paper/target/Sayaka-AntiCheat-Paper-2.1.0-beta.2.jar`：放入每个 Paper/Purpur 后端的 `plugins/`。
-- `velocity/target/Sayaka-AntiCheat-Velocity-2.1.0-beta.2.jar`：仅放入 Velocity 的 `plugins/`。
+- `paper/target/Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar`：放入每个 Paper/Purpur 后端的 `plugins/`。
+- `velocity/target/Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar`：仅放入 Velocity 的 `plugins/`。
 
 PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 
@@ -84,9 +84,9 @@ PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 | `/sac unban <玩家> [reset]` | 解封并清空 strike | `anticheat.unban` |
 | `/sac alerts` | 开关个人实时警报 | `anticheat.alerts` |
 | `/sac reload` | 重载配置 | `anticheat.admin` |
-| `/sac update [check]` | 安装 GitHub 最新 Release 并热重载；`check` 仅检查 | `anticheat.admin` |
+| `/sac update [check]` | 安装 GitHub 最新 Release 并仅热重载本插件；`check` 仅检查 | `anticheat.admin` |
 
-插件默认每 30 分钟检查一次 GitHub 的最新稳定 Release。发现更高版本后，控制台与在线管理员会收到提示；执行 `/sac update` 后会下载并校验 JAR，再通过 Bukkit 更新目录进行一次服务器级热重载，整个过程无需重启 JVM。可在 `updates` 配置段关闭或调整后台检查；关闭后台检查不影响手动使用 `/sac update` 或 `/sac update check`。
+插件默认每 30 分钟检查一次 GitHub Release（包括预览版）。发现更高版本后，控制台与在线管理员会收到提示；执行 `/sac update` 后会下载并校验 Paper JAR，再通过 PlugManX 仅卸载、替换并重新加载 SayakaAntiCheat。热更新失败时会自动恢复旧 JAR；未安装 PlugManX 时仍可使用 `/sac update check` 检查版本，但不会执行安装。可在 `updates` 配置段关闭或调整后台检查。
 
 `anticheat.bypass` 完全绕过检测（默认无人持有）；`anticheat.antispam.bypass` / `anticheat.antiads.bypass` 仅绕过对应聊天检测。以上权限默认均不给 OP 之外的人。
 

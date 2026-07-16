@@ -57,15 +57,14 @@ public class ViolationManager {
 
         plugin.getAlertManager().staffAlert(player, type, vl, detail);
 
-        EnforcementMode enforcement = enforcement(player, type);
+        EnforcementMode enforcement = effectiveEnforcement(player, type);
         if (enforcement == EnforcementMode.ALERT) return;
 
         int warningStage = data.getPunishmentWarnStage(type);
-        double kickVl = effectiveKickVl(plugin.config(), warningStage);
         double warn2Vl = plugin.config().getDouble("punishment.warn-2-vl", 12);
         double warn1Vl = plugin.config().getDouble("punishment.warn-1-vl", 5);
 
-        if (vl >= kickVl && enforcement.allowsPunishment()) {
+        if (shouldPunish(plugin.config(), enforcement, warningStage, vl)) {
             plugin.getPunishmentExecutor().kickOrBan(player, type, vl);
         } else if (vl >= warn2Vl && warningStage < 2) {
             if (plugin.getAlertManager().warnPlayer(player, type, 2)) {
@@ -86,13 +85,11 @@ public class ViolationManager {
         plugin.getAlertManager().staffAlert(player, type, data.getVl(type), detail);
     }
 
-    /** 根据本次上报前已有的警告阶段计算踢出阈值。 */
+    /** 根据本次上报前是否已有首次警告计算提前踢出阈值。 */
     static double effectiveKickVl(Configuration config, int warningStage) {
         double base = config.getDouble("punishment.kick-vl", 20.0);
         double multiplier = 1.0;
-        if (warningStage >= 2) {
-            multiplier = config.getDouble("punishment.warned-kick-multipliers.warn-2", 0.75);
-        } else if (warningStage >= 1) {
+        if (warningStage >= 1) {
             multiplier = config.getDouble("punishment.warned-kick-multipliers.warn-1", 0.90);
         }
         return base * Math.max(0.0, Math.min(1.0, multiplier));
@@ -101,23 +98,65 @@ public class ViolationManager {
     static double effectiveKickVl(ConfigSnapshot config, int warningStage) {
         double base = config.getDouble("punishment.kick-vl", 20.0);
         double multiplier = 1.0;
-        if (warningStage >= 2) {
-            multiplier = config.getDouble("punishment.warned-kick-multipliers.warn-2", 0.75);
-        } else if (warningStage >= 1) {
+        if (warningStage >= 1) {
             multiplier = config.getDouble("punishment.warned-kick-multipliers.warn-1", 0.90);
         }
         return base * Math.max(0.01, Math.min(1.0, multiplier));
     }
 
+    static double punishmentThreshold(Configuration config, EnforcementMode enforcement,
+                                      int warningStage) {
+        return switch (enforcement) {
+            case PUNISH -> effectiveKickVl(config, warningStage);
+            case MITIGATE -> config.getDouble("punishment.mitigate-kick-vl", 100.0);
+            case ALERT -> Double.POSITIVE_INFINITY;
+        };
+    }
+
+    static double punishmentThreshold(ConfigSnapshot config, EnforcementMode enforcement,
+                                      int warningStage) {
+        return switch (enforcement) {
+            case PUNISH -> effectiveKickVl(config, warningStage);
+            case MITIGATE -> config.getDouble("punishment.mitigate-kick-vl", 100.0);
+            case ALERT -> Double.POSITIVE_INFINITY;
+        };
+    }
+
+    static boolean shouldPunish(Configuration config, EnforcementMode enforcement,
+                                int warningStage, double vl) {
+        return enforcement != EnforcementMode.ALERT
+                && (warningStage >= 2
+                || vl >= punishmentThreshold(config, enforcement, warningStage));
+    }
+
+    static boolean shouldPunish(ConfigSnapshot config, EnforcementMode enforcement,
+                                int warningStage, double vl) {
+        return enforcement != EnforcementMode.ALERT
+                && (warningStage >= 2
+                || vl >= punishmentThreshold(config, enforcement, warningStage));
+    }
+
+    public double punishmentThreshold(Player player, CheckType type) {
+        PlayerData data = plugin.getDataManager().get(player);
+        return punishmentThreshold(plugin.config(), effectiveEnforcement(player, type),
+                data.getPunishmentWarnStage(type));
+    }
+
+    public boolean nextViolationPunishes(Player player, CheckType type) {
+        PlayerData data = plugin.getDataManager().get(player);
+        return effectiveEnforcement(player, type) != EnforcementMode.ALERT
+                && data.getPunishmentWarnStage(type) >= 2;
+    }
+
     /** 当前检测项 VL 是否已达拦截阈值（避免其他检测导致错误回弹/取消事件）。 */
     public boolean shouldMitigate(Player player, CheckType type) {
         if (plugin.getStore().isWhitelisted(player.getUniqueId())) return false;
-        if (!enforcement(player, type).allowsMitigation()) return false;
+        if (!effectiveEnforcement(player, type).allowsMitigation()) return false;
         double mitigateVl = plugin.config().getDouble("punishment.mitigate-vl", 8);
         return plugin.getDataManager().get(player).getVl(type) >= mitigateVl;
     }
 
-    private EnforcementMode enforcement(Player player, CheckType type) {
+    public EnforcementMode effectiveEnforcement(Player player, CheckType type) {
         EnforcementMode configured = plugin.config().enforcement(type);
         PlayerData data = plugin.getDataManager().get(player);
         if (data.isBedrock()

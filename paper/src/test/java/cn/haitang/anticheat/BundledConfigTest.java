@@ -82,21 +82,20 @@ class BundledConfigTest {
         double mitigate = config.getDouble("punishment.mitigate-vl");
         double warn2 = config.getDouble("punishment.warn-2-vl");
         double kick = config.getDouble("punishment.kick-vl");
+        double mitigateKick = config.getDouble("punishment.mitigate-kick-vl");
 
         assertTrue(warn1 > 0, "warn-1-vl 必须为正");
         assertTrue(mitigate > warn1, "拦截阈值应高于首次警告");
         assertTrue(warn2 > mitigate, "最后通牒应高于拦截阈值");
         assertTrue(kick > warn2, "踢出阈值应高于最后通牒");
+        assertTrue(mitigateKick >= kick, "仅拦截检测的兜底踢出阈值不应低于普通踢出阈值");
     }
 
     @Test
-    void warnedKickMultipliersTightenTheThresholdWithoutZeroingIt() {
+    void warnedKickMultiplierTightensTheThresholdWithoutZeroingIt() {
         double warn1 = config.getDouble("punishment.warned-kick-multipliers.warn-1");
-        double warn2 = config.getDouble("punishment.warned-kick-multipliers.warn-2");
 
         assertTrue(warn1 > 0 && warn1 <= 1, "warn-1 乘数应在 (0,1]");
-        assertTrue(warn2 > 0 && warn2 <= 1, "warn-2 乘数应在 (0,1]");
-        assertTrue(warn2 <= warn1, "警告阶段越深阈值应越低");
     }
 
     @Test

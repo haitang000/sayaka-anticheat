@@ -22,6 +22,16 @@ class SemanticVersionTest {
         assertTrue(SemanticVersion.parse("release-2.3.4").isEmpty());
     }
 
+    @Test
+    void comparesFourPartReleaseVersions() {
+        SemanticVersion revision = parse("2.1.0.1");
+
+        assertEquals("2.1.0.1", revision.toString());
+        assertTrue(revision.compareTo(parse("2.1.0")) > 0);
+        assertTrue(revision.compareTo(parse("2.1.1")) < 0);
+        assertTrue(revision.compareTo(parse("2.1.0.1-beta.1")) > 0);
+    }
+
     private static SemanticVersion parse(String value) {
         return SemanticVersion.parse(value).orElseThrow();
     }
