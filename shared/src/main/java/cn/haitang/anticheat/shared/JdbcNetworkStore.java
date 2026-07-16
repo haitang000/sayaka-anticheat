@@ -47,6 +47,11 @@ public final class JdbcNetworkStore {
     }
 
     private Connection open() throws SQLException {
+        try {
+            Class.forName("org.mariadb.jdbc.Driver");
+        } catch (ClassNotFoundException error) {
+            throw new SQLException("MariaDB JDBC driver is not available", error);
+        }
         return DriverManager.getConnection(config.jdbcUrl(), config.username(), config.password());
     }
 
