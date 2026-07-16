@@ -53,8 +53,8 @@
 
 构建会生成两个可部署产物：
 
-- `paper/target/Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar`：放入每个 Paper/Purpur 后端的 `plugins/`。
-- `velocity/target/Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar`：仅放入 Velocity 的 `plugins/`。
+- `paper/target/Sayaka-AntiCheat-Paper-2.1.0.3-beta.4.jar`：放入每个 Paper/Purpur 后端的 `plugins/`。
+- `velocity/target/Sayaka-AntiCheat-Velocity-2.1.0.3-beta.4.jar`：仅放入 Velocity 的 `plugins/`。
 
 PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 
