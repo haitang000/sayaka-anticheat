@@ -121,13 +121,13 @@ class UpdateManagerTest {
         Files.writeString(current, "old");
         Files.writeString(staged, "new");
 
-        UpdateManager.replacePluginJar(current, staged, target, backup);
+        IsolatedReload.replaceJar(current, staged, target, backup);
 
         assertFalse(Files.exists(current));
         assertEquals("new", Files.readString(target));
         assertEquals("old", Files.readString(backup));
 
-        UpdateManager.restorePluginJar(current, staged, target, backup);
+        IsolatedReload.restoreJar(current, staged, target, backup);
 
         assertEquals("old", Files.readString(current));
         assertEquals("new", Files.readString(staged));

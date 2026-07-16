@@ -6,7 +6,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
-import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.io.ByteArrayInputStream;
@@ -40,7 +39,7 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
-/** Checks GitHub releases, including prereleases, and hot-reloads verified updates through PlugManX. */
+/** Checks GitHub releases, including prereleases, and hot-reloads verified updates in place without PlugManX. */
 public final class UpdateManager {
 
     private static final String REPOSITORY = "haitang000/sayaka-anticheat";
@@ -51,6 +50,7 @@ public final class UpdateManager {
     private static final long MAX_DESCRIPTOR_BYTES = 128L * 1024L;
     private static final int MAX_FEED_BYTES = 2 * 1024 * 1024;
     private static final long MIN_CHECK_INTERVAL_TICKS = 5L * 60L * 20L;
+    private static final String ERROR_SENTINEL = "@@ERROR@@";
 
     record Release(SemanticVersion version, String tag, URI page, Optional<URI> download) {
     }
@@ -116,7 +116,7 @@ public final class UpdateManager {
     }
 
     public void install(CommandSender sender) {
-        if (!plugManAvailable()) {
+        if (!PluginReloader.isSupported()) {
             sender.sendMessage(plugin.getMessages().prefixed("update-reloader-missing", null));
             return;
         }
@@ -414,10 +414,11 @@ public final class UpdateManager {
 
     private void beginHotReload(CommandSender sender, Release release, Path stagedArtifact) {
         if (shuttingDown) return;
-        if (!plugManAvailable()) {
+        if (!PluginReloader.isSupported()) {
             sender.sendMessage(plugin.getMessages().prefixed("update-reloader-missing", null));
             plugin.getLogger().warning("Release " + release.version()
-                    + " is verified and staged, but PlugManX is not available for an isolated hot reload.");
+                    + " is verified and staged, but this server build does not expose the internals "
+                    + "required for an in-place hot reload.");
             installing.set(false);
             return;
         }
@@ -439,73 +440,35 @@ public final class UpdateManager {
         Path currentArtifact = plugin.getPluginJarFile().toPath().toAbsolutePath();
         Path targetArtifact = currentArtifact.resolveSibling(artifactFileName(release));
         Path backupArtifact = stagedArtifact.resolveSibling(currentArtifact.getFileName() + ".rollback");
-        Map<String, String> values = placeholders(release);
-        boolean unloaded = false;
-        try {
-            if (!Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "plugman unload SayakaAntiCheat")
-                    || Bukkit.getPluginManager().getPlugin("SayakaAntiCheat") != null) {
-                throw new IOException("PlugManX did not unload SayakaAntiCheat");
-            }
-            unloaded = true;
 
-            replacePluginJar(currentArtifact, stagedArtifact, targetArtifact, backupArtifact);
-            String loadTarget = stripJarExtension(targetArtifact.getFileName().toString());
-            if (!Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "plugman load " + loadTarget)) {
-                throw new IOException("PlugManX rejected the load command");
-            }
+        // 全部面向用户的成功/失败文案在卸载前渲染好，交给隔离工人发送——工人运行时本插件的
+        // 类加载器已关闭，无法再安全地做字符串拼接或加载新类。失败文案按占位符切成前后缀。
+        String successMessage = plugin.getMessages().prefixed("update-complete", placeholders(release));
+        String failedTemplate = plugin.getMessages().prefixed("update-failed", Map.of("error", ERROR_SENTINEL));
+        int split = failedTemplate.indexOf(ERROR_SENTINEL);
+        String failedPrefix = split >= 0 ? failedTemplate.substring(0, split) : failedTemplate;
+        String failedSuffix = split >= 0 ? failedTemplate.substring(split + ERROR_SENTINEL.length()) : "";
 
-            Plugin loaded = Bukkit.getPluginManager().getPlugin("SayakaAntiCheat");
-            if (loaded == null || !loaded.isEnabled()
-                    || !release.version().toString().equals(loaded.getDescription().getVersion())) {
-                throw new IOException("updated SayakaAntiCheat did not enable with version " + release.version());
-            }
-            Files.deleteIfExists(backupArtifact);
-            sender.sendMessage(plugin.getMessages().prefixed("update-complete", values));
-        } catch (Exception error) {
-            Bukkit.getLogger().severe("[Sayaka AntiCheat] Isolated hot reload failed: " + safeMessage(error));
-            if (unloaded) {
-                Plugin registered = Bukkit.getPluginManager().getPlugin("SayakaAntiCheat");
-                if (registered != null) {
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "plugman unload SayakaAntiCheat");
-                }
-                restorePluginJar(currentArtifact, stagedArtifact, targetArtifact, backupArtifact);
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(),
-                        "plugman load " + stripJarExtension(currentArtifact.getFileName().toString()));
-            }
-            sender.sendMessage(plugin.getMessages().prefixed(
-                    "update-failed", Map.of("error", safeMessage(error))));
-        } finally {
+        PluginReloader.Result result = PluginReloader.reload("SayakaAntiCheat",
+                currentArtifact.toString(), stagedArtifact.toString(),
+                targetArtifact.toString(), backupArtifact.toString(),
+                release.version().toString(), sender,
+                successMessage, failedPrefix, failedSuffix);
+
+        // UNSUPPORTED 表示工人从未运行，本插件仍完好，可安全地继续操作与提示。
+        // SUCCESS / FAILED 表示工人已执行，本插件的类加载器可能已关闭：不得再做任何可能触发
+        // 新类加载的工作（工人已负责所有提示与回滚），直接返回。
+        if (result.status() == PluginReloader.Status.UNSUPPORTED) {
+            sender.sendMessage(plugin.getMessages().prefixed("update-reloader-missing", null));
+            plugin.getLogger().warning("Release " + release.version()
+                    + " is verified and staged, but this server build does not expose the internals "
+                    + "required for an in-place hot reload.");
             installing.set(false);
         }
     }
 
-    private boolean plugManAvailable() {
-        Plugin plugMan = Bukkit.getPluginManager().getPlugin("PlugManX");
-        if (plugMan == null) plugMan = Bukkit.getPluginManager().getPlugin("PlugMan");
-        return plugMan != null && plugMan.isEnabled() && Bukkit.getPluginCommand("plugman") != null;
-    }
-
-    static void replacePluginJar(Path currentArtifact, Path stagedArtifact,
-                                 Path targetArtifact, Path backupArtifact) throws IOException {
-        Files.deleteIfExists(backupArtifact);
-        moveReplacing(currentArtifact, backupArtifact);
-        try {
-            moveReplacing(stagedArtifact, targetArtifact);
-        } catch (IOException error) {
-            moveReplacing(backupArtifact, currentArtifact);
-            throw error;
-        }
-    }
-
-    static void restorePluginJar(Path currentArtifact, Path stagedArtifact,
-                                 Path targetArtifact, Path backupArtifact) {
-        try {
-            if (Files.exists(targetArtifact)) moveReplacing(targetArtifact, stagedArtifact);
-            if (Files.exists(backupArtifact)) moveReplacing(backupArtifact, currentArtifact);
-        } catch (IOException error) {
-            Bukkit.getLogger().severe("[Sayaka AntiCheat] Failed to restore the previous plugin JAR: "
-                    + safeMessage(error));
-        }
+    private static String artifactFileName(Release release) {
+        return SERVER_PLATFORM.artifactFileName(release.version());
     }
 
     private static void moveReplacing(Path source, Path destination) throws IOException {
@@ -514,14 +477,6 @@ public final class UpdateManager {
         } catch (AtomicMoveNotSupportedException ignored) {
             Files.move(source, destination, StandardCopyOption.REPLACE_EXISTING);
         }
-    }
-
-    private static String artifactFileName(Release release) {
-        return SERVER_PLATFORM.artifactFileName(release.version());
-    }
-
-    private static String stripJarExtension(String fileName) {
-        return fileName.endsWith(".jar") ? fileName.substring(0, fileName.length() - 4) : fileName;
     }
 
     private void sendSync(CommandSender sender, String key, Map<String, String> placeholders) {
