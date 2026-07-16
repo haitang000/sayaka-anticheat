@@ -228,6 +228,42 @@ class DashboardServerTest {
     }
 
     @Test
+    void looksUpAndSubmitsAppealByPlayerName() throws Exception {
+        String database = "dashboard_player_appeal_" + UUID.randomUUID().toString().replace("-", "");
+        DatabaseConfig databaseConfig = new DatabaseConfig(
+                "jdbc:h2:mem:" + database + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
+                "sa", "");
+        JdbcNetworkStore store = new JdbcNetworkStore(databaseConfig);
+        store.initialize();
+        String id = store.prepareEnforcement(
+                request(UUID.randomUUID(), "Appealer", "games"), System.currentTimeMillis()).punishment().id();
+        VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
+        DashboardServer dashboard = DashboardServer.start(store, () -> 0, settings,
+                LoggerFactory.getLogger("dashboard-player-appeal-test"));
+        try {
+            URI root = URI.create("http://127.0.0.1:" + dashboard.port());
+            HttpClient client = HttpClient.newHttpClient();
+            HttpResponse<String> lookup = client.send(HttpRequest.newBuilder(
+                            root.resolve("/api/appeal/lookup?query=appealer")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, lookup.statusCode());
+            Map<?, ?> punishment = (Map<?, ?>) Json.parseObject(lookup.body()).get("punishment");
+            assertEquals(id, punishment.get("id"));
+
+            HttpResponse<String> submit = client.send(HttpRequest.newBuilder(root.resolve("/api/appeal/submit"))
+                            .header("Content-Type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of(
+                                    "id", punishment.get("id"), "reason", "请重新检查这次处罚")))).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, submit.statusCode());
+            assertEquals(NetworkModels.AppealStatus.PENDING, store.getAppeal(id).orElseThrow().status());
+        } finally {
+            dashboard.stop();
+        }
+    }
+
+    @Test
     void requiresCaptchaAndRateLimitsManualTokenLogin() throws Exception {
         String database = "dashboard_auth_" + UUID.randomUUID().toString().replace("-", "");
         DatabaseConfig databaseConfig = new DatabaseConfig(

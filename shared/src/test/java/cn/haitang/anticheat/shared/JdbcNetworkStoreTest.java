@@ -133,6 +133,20 @@ class JdbcNetworkStoreTest {
     }
 
     @Test
+    void findsLatestPunishmentByPlayerNameIgnoringCase() throws Exception {
+        UUID player = UUID.randomUUID();
+        long now = System.currentTimeMillis();
+        String first = store.prepareEnforcement(
+                request(player, "Appealer", "lobby", "speed", 1), now).punishment().id();
+        assertEquals(PardonResult.OK, store.pardonPunishment(first, false, "复查", now + 1));
+        String second = store.prepareEnforcement(
+                request(player, "Appealer", "games", "reach", 1), now + 2).punishment().id();
+
+        assertEquals(second, store.findLatestPunishmentByPlayerName("  appealer  ").orElseThrow().id());
+        assertFalse(store.findLatestPunishmentByPlayerName("unknown").isPresent());
+    }
+
+    @Test
     void filtersAndPagesPunishmentsWithoutPerRowLookups() throws Exception {
         long now = 1_700_000_000_000L;
         UUID firstPlayer = UUID.randomUUID();

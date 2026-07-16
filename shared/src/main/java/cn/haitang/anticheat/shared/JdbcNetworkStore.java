@@ -417,6 +417,18 @@ public final class JdbcNetworkStore {
         }
     }
 
+    public Optional<Punishment> findLatestPunishmentByPlayerName(String playerName) throws SQLException {
+        if (playerName == null || playerName.isBlank()) return Optional.empty();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT * FROM sayaka_punishments WHERE LOWER(player_name)=LOWER(?) "
+                        + "ORDER BY banned_at DESC,punishment_id DESC LIMIT 1")) {
+            statement.setString(1, playerName.trim());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(readPunishment(result)) : Optional.empty();
+            }
+        }
+    }
+
     public List<Punishment> listPunishments() throws SQLException {
         List<Punishment> records = new ArrayList<>();
         try (Connection connection = open(); Statement statement = connection.createStatement();

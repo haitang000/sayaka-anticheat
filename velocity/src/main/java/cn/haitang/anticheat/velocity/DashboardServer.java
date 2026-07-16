@@ -245,14 +245,18 @@ final class DashboardServer {
 
     private void appealLookup(HttpExchange exchange) throws Exception {
         requireMethod(exchange, "GET");
-        String id = queryParam(exchange, "id");
-        if (id == null || id.isBlank()) throw new HttpError(400, "缺少处罚 ID");
-        Punishment punishment = store.getPunishment(id).orElseThrow(
-                () -> new HttpError(404, "未找到该处罚 ID，请核对封禁界面上的编号"));
+        String query = queryParam(exchange, "query");
+        if (query == null || query.isBlank()) query = queryParam(exchange, "id");
+        if (query == null || query.isBlank()) throw new HttpError(400, "缺少处罚 ID 或玩家名称");
+        Punishment punishment = store.getPunishment(query).orElse(null);
+        if (punishment == null) {
+            punishment = store.findLatestPunishmentByPlayerName(query)
+                    .orElseThrow(() -> new HttpError(404, "未找到该处罚 ID 或玩家名称"));
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("punishment", punishmentMap(punishment,
                 store.isPunishmentActive(punishment.id(), System.currentTimeMillis()), false));
-        body.put("appeal", store.getAppeal(id).map(value -> appealMap(value, false)).orElse(null));
+        body.put("appeal", store.getAppeal(punishment.id()).map(value -> appealMap(value, false)).orElse(null));
         sendJson(exchange, 200, body);
     }
 

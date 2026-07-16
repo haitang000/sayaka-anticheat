@@ -164,28 +164,30 @@
 
     function AppealView() {
       const initialId = new URLSearchParams(location.search).get('punishment') || '';
-      const [id, setId] = useState(initialId);
+      const [query, setQuery] = useState(initialId);
       const [loading, setLoading] = useState(false);
       const [result, setResult] = useState(null);
       const [form] = Form.useForm();
 
       const lookup = useCallback(async () => {
-        const value = id.trim();
-        if (!value) { message.warning('请输入处罚 ID'); return; }
+        const value = query.trim();
+        if (!value) { message.warning('请输入处罚 ID 或玩家名称'); return; }
         setLoading(true);
         try {
-          const data = await api('/api/appeal/lookup?id=' + encodeURIComponent(value));
+          const data = await api('/api/appeal/lookup?query=' + encodeURIComponent(value));
           setResult(data);
           form.setFieldsValue({ reason: data.appeal ? data.appeal.reason : '', contact: '' });
         } catch (error) { setResult(null); message.error(error.message); }
         finally { setLoading(false); }
-      }, [id, form]);
+      }, [query, form]);
 
       useEffect(() => { if (initialId) lookup(); }, []);
 
       const submit = async (values) => {
         try {
-          await api('/api/appeal/submit', { method: 'POST', body: { id: id.trim(), ...values } });
+          await api('/api/appeal/submit', {
+            method: 'POST', body: { id: result.punishment.id, ...values }
+          });
           message.success('申诉已提交');
           lookup();
         } catch (error) { message.error(error.message); }
@@ -196,9 +198,10 @@
       return <div style={{ maxWidth: 760, margin: '0 auto' }}>
         <Card>
           <Title level={4} style={{ marginTop: 0 }}>封禁申诉</Title>
-          <Paragraph type="secondary">输入封禁界面中的处罚 ID，查看判定证据和申诉处理状态。</Paragraph>
+          <Paragraph type="secondary">输入处罚 ID 或玩家名称，查看最近一次封禁的判定证据和申诉处理状态。</Paragraph>
           <Space.Compact style={{ width: '100%' }}>
-            <Input placeholder="处罚 ID" value={id} onChange={(event) => setId(event.target.value)}
+            <Input placeholder="处罚 ID 或玩家名称" value={query}
+              onChange={(event) => { setQuery(event.target.value); setResult(null); }}
               onPressEnter={lookup} allowClear />
             <Button type="primary" icon={icon('SearchOutlined')} onClick={lookup} loading={loading}>查询</Button>
           </Space.Compact>
