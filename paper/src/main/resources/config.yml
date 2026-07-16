@@ -208,6 +208,23 @@ checks:
     buffer-to-flag: 2.5
     setback: true
 
+  # 穿墙移动（Phase / NoClip）：玩家中轴扫过实体方块碰撞体内部。
+  # 只采样竖直中轴，贴墙行走天然排除；载具/滑翔/攀爬/蛛网/击退传送宽限期均豁免
+  phase:
+    enabled: true
+    enforcement: mitigate
+    # 忽略静止抖动；超大位移交由传送/速度检测处理
+    min-horizontal-per-move: 0.08
+    max-horizontal-per-move: 10.0
+    # from→to 采样密度（按位移长度自适应，落在此区间内）
+    min-samples: 4
+    max-samples: 40
+    # 单次穿墙的证据增量与累积衰减；buffer-to-flag 约等于连续 2 次即上报
+    buffer-increment: 2.0
+    buffer-decay: 0.5
+    buffer-to-flag: 3.0
+    setback: true
+
   # 非法视角（俯仰角超出 ±90°，原版客户端不可能发出，直接判定并纠正）。
   # 数据包引擎工作时非法视角包在进入服务端之前即被丢弃
   # 液面行走（Jesus/WaterWalk）：在无碰撞体的水面或岩浆面持续水平移动

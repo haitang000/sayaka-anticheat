@@ -19,6 +19,7 @@ import cn.haitang.anticheat.check.movement.FlightCheck;
 import cn.haitang.anticheat.check.movement.GlideCheck;
 import cn.haitang.anticheat.check.movement.GroundSpoofCheck;
 import cn.haitang.anticheat.check.movement.LiquidWalkCheck;
+import cn.haitang.anticheat.check.movement.PhaseCheck;
 import cn.haitang.anticheat.check.movement.RotationCheck;
 import cn.haitang.anticheat.check.movement.SpeedCheck;
 import cn.haitang.anticheat.check.movement.StepCheck;
@@ -141,6 +142,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
         checks.add(new TimerCheck(this));
         checks.add(new FastLadderCheck(this));
         checks.add(new StepCheck(this));
+        checks.add(new PhaseCheck(this));
         checks.add(new LiquidWalkCheck(this));
         RotationCheck rotationCheck = new RotationCheck(this);
         BadPacketsCheck badPacketsCheck = new BadPacketsCheck(this);

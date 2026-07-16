@@ -11,6 +11,7 @@ public enum CheckType {
     TIMER("Timer", "移动包速率异常", "timer", EnforcementMode.PUNISH),
     FAST_LADDER("FastLadder", "攀爬速度异常", "fast-ladder", EnforcementMode.MITIGATE),
     STEP("Step", "异常跨越方块", "step", EnforcementMode.MITIGATE),
+    PHASE("Phase", "穿墙移动", "phase", EnforcementMode.MITIGATE),
     LIQUID_WALK("LiquidWalk", "液面行走", "liquid-walk", EnforcementMode.ALERT),
     ROTATION("Rotation", "非法视角", "rotation", EnforcementMode.PUNISH),
     BAD_PACKETS("BadPackets", "非法数据包", "bad-packets", EnforcementMode.PUNISH),
