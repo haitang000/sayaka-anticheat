@@ -70,6 +70,8 @@ PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 4. 面板默认只监听 `127.0.0.1:8080`。使用 Nginx/Caddy 将 HTTPS 域名反向代理到该地址，公网只开放 443。
 5. 用防火墙限制后端 Minecraft 端口只能由 Velocity 访问，并启用 Velocity modern forwarding，防止玩家绕过代理和全局封禁。
 
+Velocity 可按后端服务器决定是否拦截共享封禁。`[protection]` 的 `default-enabled` 控制未单独列出的服务器，`[protection.servers]` 以 Velocity 服务器名覆盖，例如 `lobby = false`、`survival = true`。关闭后，受到共享封禁的玩家仍可进入该后端；该开关只控制 Velocity 的共享封禁入口防护，不会关闭后端 Paper 上的检测项。旧配置未包含此段时默认全部开启。
+
 数据库不可用时，Paper 继续检测和回弹，新临时封禁降级为普通踢出；Velocity 对缓存中的有效封禁继续拦截，未缓存玩家放行。数据库恢复后无需重启。
 
 ## 命令与权限

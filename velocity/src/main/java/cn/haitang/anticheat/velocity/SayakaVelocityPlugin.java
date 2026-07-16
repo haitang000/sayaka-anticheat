@@ -4,9 +4,7 @@ import cn.haitang.anticheat.shared.JdbcNetworkStore;
 import cn.haitang.anticheat.shared.NetworkModels.ActiveBan;
 import com.google.inject.Inject;
 import com.velocitypowered.api.event.EventTask;
-import com.velocitypowered.api.event.ResultedEvent;
 import com.velocitypowered.api.event.Subscribe;
-import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
@@ -76,15 +74,9 @@ public final class SayakaVelocityPlugin {
     }
 
     @Subscribe
-    public EventTask onLogin(LoginEvent event) {
-        if (store == null) return null;
-        return EventTask.async(() -> lookupBan(event.getPlayer().getUniqueId(), false)
-                .ifPresent(ban -> event.setResult(ResultedEvent.ComponentResult.denied(denial(ban)))));
-    }
-
-    @Subscribe
     public EventTask onServerPreConnect(ServerPreConnectEvent event) {
-        if (store == null) return null;
+        String serverName = event.getOriginalServer().getServerInfo().getName();
+        if (store == null || !settings.protectionEnabledFor(serverName)) return null;
         return EventTask.async(() -> lookupBan(event.getPlayer().getUniqueId(), true).ifPresent(ban -> {
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
             event.getPlayer().disconnect(denial(ban));

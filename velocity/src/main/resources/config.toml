@@ -6,6 +6,15 @@ username = "sayaka"
 # Environment placeholders are expanded at startup.
 password = "${SAYAKA_DATABASE_PASSWORD}"
 
+[protection]
+# Whether servers not listed below enforce shared anti-cheat bans.
+default-enabled = true
+
+[protection.servers]
+# Override individual Velocity server names. Quote names containing dots.
+# lobby = false
+# survival = true
+
 [web]
 enabled = true
 bind = "127.0.0.1"

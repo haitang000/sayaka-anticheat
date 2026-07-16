@@ -3,12 +3,16 @@ package cn.haitang.anticheat.velocity;
 import cn.haitang.anticheat.shared.DatabaseConfig;
 import org.tomlj.Toml;
 import org.tomlj.TomlParseResult;
+import org.tomlj.TomlTable;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 
 record VelocitySettings(
         String serverId,
@@ -19,8 +23,21 @@ record VelocitySettings(
         String webPublicUrl,
         String adminToken,
         int webThreads,
-        long banCacheMillis
+        long banCacheMillis,
+        boolean protectionDefaultEnabled,
+        Map<String, Boolean> serverProtection
 ) {
+    VelocitySettings {
+        serverProtection = Map.copyOf(serverProtection);
+    }
+
+    VelocitySettings(String serverId, DatabaseConfig database, boolean webEnabled, String webBind,
+                     int webPort, String webPublicUrl, String adminToken, int webThreads,
+                     long banCacheMillis) {
+        this(serverId, database, webEnabled, webBind, webPort, webPublicUrl, adminToken, webThreads,
+                banCacheMillis, true, Map.of());
+    }
+
     static VelocitySettings load(Path dataDirectory) throws IOException {
         Files.createDirectories(dataDirectory);
         Path file = dataDirectory.resolve("config.toml");
@@ -35,6 +52,8 @@ record VelocitySettings(
         int port = Math.toIntExact(toml.getLong("web.port", () -> 8080L));
         int threads = Math.toIntExact(toml.getLong("web.threads", () -> 4L));
         long cacheSeconds = toml.getLong("cache.ban-seconds", () -> 5L);
+        boolean protectionDefaultEnabled = toml.getBoolean("protection.default-enabled", () -> true);
+        Map<String, Boolean> serverProtection = loadServerProtection(toml);
         if (port < 1 || port > 65535) throw new IOException("web.port must be between 1 and 65535");
         if (threads < 1) throw new IOException("web.threads must be positive");
         String publicUrl = toml.getString("web.public-url", () -> "").trim();
@@ -51,7 +70,35 @@ record VelocitySettings(
                 publicUrl,
                 secret(toml.getString("web.admin-token", () -> "")),
                 threads,
-                Math.max(1L, cacheSeconds) * 1000L);
+                Math.max(1L, cacheSeconds) * 1000L,
+                protectionDefaultEnabled,
+                serverProtection);
+    }
+
+    boolean protectionEnabledFor(String serverName) {
+        if (serverName == null) return protectionDefaultEnabled;
+        return serverProtection.getOrDefault(serverName.toLowerCase(Locale.ROOT),
+                protectionDefaultEnabled);
+    }
+
+    private static Map<String, Boolean> loadServerProtection(TomlParseResult toml) throws IOException {
+        TomlTable servers = toml.getTable("protection.servers");
+        if (servers == null) return Map.of();
+        Map<String, Boolean> result = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : servers.entrySet()) {
+            String serverName = entry.getKey().trim();
+            if (serverName.isEmpty()) {
+                throw new IOException("protection.servers keys must not be blank");
+            }
+            if (!(entry.getValue() instanceof Boolean enabled)) {
+                throw new IOException("protection.servers." + entry.getKey() + " must be boolean");
+            }
+            String normalized = serverName.toLowerCase(Locale.ROOT);
+            if (result.putIfAbsent(normalized, enabled) != null) {
+                throw new IOException("protection.servers contains duplicate server name: " + serverName);
+            }
+        }
+        return result;
     }
 
     private static void validatePublicUrl(String value) throws IOException {
