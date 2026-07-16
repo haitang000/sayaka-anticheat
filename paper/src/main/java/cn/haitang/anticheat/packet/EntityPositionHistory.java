@@ -42,6 +42,24 @@ public final class EntityPositionHistory {
         return boxWithin(victim, attack, interpolationTicks);
     }
 
+    /**
+     * 攻击的延迟补偿锚点再向前回退 offsetTicks 的目标碰撞箱；
+     * 没有可用的同世界快照时返回 {@code null}，由调用方决定回退策略。
+     */
+    public BoundingBox boxNear(Player victim, CombatAttackContext.Attack attack, int offsetTicks) {
+        Deque<Snapshot> history = histories.get(victim.getUniqueId());
+        if (history == null || history.isEmpty()) return null;
+        int wanted = wantedTick(attack) - offsetTicks;
+        UUID worldId = victim.getWorld().getUID();
+        Snapshot candidate = null;
+        for (Snapshot snapshot : history) {
+            if (!snapshot.worldId().equals(worldId)) continue;
+            if (snapshot.tick() > wanted) break;
+            candidate = snapshot;
+        }
+        return candidate == null ? null : candidate.box().clone();
+    }
+
     private BoundingBox boxWithin(Player victim, CombatAttackContext.Attack attack,
                                   int windowTicks) {
         Deque<Snapshot> history = histories.get(victim.getUniqueId());
@@ -51,6 +69,7 @@ public final class EntityPositionHistory {
         return box == null ? victim.getBoundingBox() : box;
     }
 
+    /** 攻击对应的延迟补偿回溯 tick：优先事务确认刻，缺失时按 RTT 估算。 */
     private int wantedTick(CombatAttackContext.Attack attack) {
         int wantedTick = attack.confirmedServerTick();
         if (wantedTick < attack.serverTick() - 40 || wantedTick > attack.serverTick()) {

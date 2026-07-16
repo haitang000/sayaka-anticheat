@@ -59,4 +59,12 @@ class AimPatternAnalyzerTest {
         assertEquals(90.0, AimPatternAnalyzer.horizontalBearing(-1.0, 0.0), 1.0E-9);
         assertEquals(-90.0, AimPatternAnalyzer.horizontalBearing(1.0, 0.0), 1.0E-9);
     }
+
+    @Test
+    void apparentHalfAngleShrinksWithDistance() {
+        assertEquals(11.31, AimPatternAnalyzer.apparentHalfAngle(2.75, 0.55), 0.01);
+        assertEquals(5.24, AimPatternAnalyzer.apparentHalfAngle(6.0, 0.55), 0.01);
+        // 距离下限防护：极近距离不会产生发散角度
+        assertTrue(AimPatternAnalyzer.apparentHalfAngle(0.0, 0.55) <= 80.0);
+    }
 }

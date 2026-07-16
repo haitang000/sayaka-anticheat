@@ -134,16 +134,16 @@ class PlayerDataTest {
     @Test
     void rotationHistoryAnswersViewAtOrBeforeTick() {
         PlayerData data = new PlayerData(UUID.randomUUID(), "player");
-        data.addRotation(100, 10.0f, 5.0f);
-        data.addRotation(102, 40.0f, 8.0f);
-        data.addRotation(102, 45.0f, 9.0f); // 同 tick 覆盖
+        data.addRotation(100, 10.0f, 5.0f, 1.0, 64.0, 1.0);
+        data.addRotation(102, 40.0f, 8.0f, 1.5, 64.0, 1.0);
+        data.addRotation(102, 45.0f, 9.0f, 2.0, 64.0, 1.5); // 同 tick 覆盖
 
         assertEquals(10.0f, data.rotationAtOrBefore(101).yaw());
         assertEquals(45.0f, data.rotationAtOrBefore(102).yaw());
         assertEquals(45.0f, data.rotationAtOrBefore(200).yaw());
         assertTrue(data.rotationAtOrBefore(99) == null);
 
-        data.addRotation(130, 50.0f, 0.0f); // 距 100 超过 16 tick，最老样本被裁剪
+        data.addRotation(130, 50.0f, 0.0f, 3.0, 64.0, 2.0); // 距 100 超过 16 tick，最老样本被裁剪
         assertTrue(data.rotationAtOrBefore(101) == null);
     }
 

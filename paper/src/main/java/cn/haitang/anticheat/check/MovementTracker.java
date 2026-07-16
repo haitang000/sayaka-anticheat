@@ -41,6 +41,7 @@ public class MovementTracker implements Listener {
             data.resetMovement(to);
             return;
         }
+        data.setInVehicle(player.isInsideVehicle());
         if (player.isInsideVehicle()) {
             // 载具移动物理完全不同，清空状态避免下船瞬间误判
             data.resetMovement(to);
@@ -53,8 +54,9 @@ public class MovementTracker implements Listener {
         double dy = to.getY() - from.getY();
         double distXZ = Math.sqrt(dx * dx + dz * dz);
 
-        // 视角历史供 KillAura 吸附回正检测：纯转头包同样采样
-        data.addRotation(org.bukkit.Bukkit.getCurrentTick(), to.getYaw(), to.getPitch());
+        // 视角历史供 KillAura 吸附回正 / 零反应再瞄准检测：纯转头包同样采样
+        data.addRotation(org.bukkit.Bukkit.getCurrentTick(), to.getYaw(), to.getPitch(),
+                to.getX(), to.getY(), to.getZ());
 
         // 仅转动视角不算位移：不刷新 lastMoveAt，否则悬浮者环顾四周即可绕过静止悬浮扫描
         boolean rotationOnly = !isPositionChange(dx, dy, dz);
@@ -142,6 +144,23 @@ public class MovementTracker implements Listener {
         if (!event.isCancelled()) return;
         PlayerData data = plugin.getDataManager().get(event.getPlayer());
         data.resetMovement(event.getFrom().clone());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onVehicleEnter(org.bukkit.event.vehicle.VehicleEnterEvent event) {
+        if (event.getEntered() instanceof Player player) {
+            plugin.getDataManager().get(player).setInVehicle(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onVehicleExit(org.bukkit.event.vehicle.VehicleExitEvent event) {
+        if (event.getExited() instanceof Player player) {
+            PlayerData data = plugin.getDataManager().get(player);
+            data.setInVehicle(false);
+            // 下载具时客户端视角可能被回正，等同一次服务端视角改写
+            data.touchTeleport();
+        }
     }
 
     public static boolean isPositionChange(double dx, double dy, double dz) {

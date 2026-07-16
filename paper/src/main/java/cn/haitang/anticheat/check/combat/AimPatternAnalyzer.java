@@ -54,4 +54,9 @@ final class AimPatternAnalyzer {
     static double horizontalBearing(double dx, double dz) {
         return Math.toDegrees(Math.atan2(-dx, dz));
     }
+
+    /** 半径为 halfExtent 的目标在 distance 处的视角半径（度）。 */
+    static double apparentHalfAngle(double distance, double halfExtent) {
+        return Math.toDegrees(Math.atan2(halfExtent, Math.max(0.1, distance)));
+    }
 }

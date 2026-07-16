@@ -167,7 +167,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
         checks.add(new AntiSpamCheck(this));
         checks.add(new AntiAdsCheck(this));
 
-        packetBridge = new PacketBridge(this, rotationCheck, badPacketsCheck);
+        packetBridge = new PacketBridge(this, rotationCheck, badPacketsCheck, aimCheck);
         packetBridgeRegistration = PacketEvents.getAPI().getEventManager()
                 .registerListener(packetBridge);
         packetBridge.setEngineRunning(true);

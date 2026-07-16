@@ -381,6 +381,67 @@ checks:
       buffer-decay: 1.0
       buffer-to-flag: 2.0
       flag-weight: 2.0
+    quantum:
+      # 旋转量化：原版客户端的视角增量必为"鼠标计数 × 灵敏度量子"的整数倍
+      # （量子最小 0.0096°），作弊客户端直接写入计算出的实数视角，会产生
+      # 低于最小量子的微步、或不落在任何量子网格上的增量。
+      # 仅在近战命中后的战斗窗口内采样，需要包引擎开启。
+      # 已知罕见误报源：电影视角平滑 / 手柄与触控板模组 / 观察镜缩放——
+      # 均几乎不可能出现在近战命中期间；若服内确有此类玩家可关闭本项
+      enabled: true
+      exclude-bedrock: true
+      # 近战命中后多少毫秒内的旋转包参与采样
+      combat-window-ms: 4000
+      # 每个统计窗口的增量样本数；yaw 与 pitch 各自独立成窗
+      window-size: 40
+      # 窗口内出现多少次"低于最小量子的微步"判窗口可疑
+      micro-count-to-suspect: 6
+      # 梳状谱扫描所需的中等增量样本数下限，不足则该窗口不做网格判定
+      comb-min-samples: 16
+      # 谱峰低于该值视为"无量化网格"；合法输入在真实量子处得分接近 1
+      suspect-score: 0.5
+      # 连续多个可疑窗口才上报；干净窗口按 decay 洗白
+      buffer-increment: 1.0
+      buffer-decay: 0.5
+      buffer-to-flag: 3.0
+      flag-weight: 1.5
+    acquisition:
+      # 零反应再瞄准：最近几刻视角仍远离目标、同一刻转正并命中的
+      # "同刻转正"占再瞄准事件的比例。人手需要先对齐再确认点击（2-3 刻），
+      # 光环的转正与攻击在同一刻内计算完成。仅统计对玩家的包级命中
+      enabled: true
+      exclude-bedrock: true
+      # 距离过近时目标视角占比过大，不做判定
+      min-distance: 2.75
+      # 视角偏离目标中心多少度算"远离"（近距离按目标视角半径自动加严）
+      off-angle: 12.0
+      # 攻击前回看多少刻判断是否发生过再瞄准
+      lookback-ticks: 4
+      # 累积多少次再瞄准事件后评估一次占比
+      min-samples: 10
+      # 再瞄准事件的滚动统计窗口（毫秒）
+      window-ms: 45000
+      # 同刻转正占比达到该值记一次可疑；低于 clear-ratio 则洗白缓冲
+      instant-ratio: 0.75
+      clear-ratio: 0.4
+      buffer-increment: 1.0
+      buffer-decay: 0.5
+      # 两批高占比样本才上报，偶发甩枪命中不会积累
+      buffer-to-flag: 2.0
+      flag-weight: 2.0
+    accuracy:
+      # 命中率统计：战斗窗口内挥臂 vs 真实攻击包命中。人手对走位目标必然
+      # 空挥，光环只在必中时点击。仅生成管理员辅助警报，不增加 VL
+      enabled: true
+      exclude-bedrock: true
+      # 挥臂计入统计的战斗窗口（毫秒，距最近一次近战命中）
+      combat-window-ms: 4000
+      # 命中率滚动统计窗口（毫秒）
+      window-ms: 30000
+      # 窗口内至少多少次挥臂才评估
+      min-swings: 40
+      # 命中率达到该值上报辅助警报
+      min-accuracy: 0.95
     probe:
       # 玩家产生真实近战攻击后，仅向该玩家发送短时虚拟实体包；不会创建世界实体
       enabled: true

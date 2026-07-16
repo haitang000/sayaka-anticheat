@@ -1,6 +1,7 @@
 package cn.haitang.anticheat.packet;
 
 import cn.haitang.anticheat.AntiCheatPlugin;
+import cn.haitang.anticheat.check.combat.AimCheck;
 import cn.haitang.anticheat.check.movement.RotationCheck;
 import cn.haitang.anticheat.check.packet.BadPacketsCheck;
 import cn.haitang.anticheat.data.PlayerData;
@@ -25,18 +26,20 @@ public class PacketBridge extends PacketListenerAbstract {
     private final AntiCheatPlugin plugin;
     private final RotationCheck rotationCheck;
     private final BadPacketsCheck badPacketsCheck;
+    private final AimCheck aimCheck;
 
     /** config packet-engine.enabled 的缓存（Netty 线程读取，reload 时刷新） */
     private volatile boolean enabled;
     /** PacketEvents 注入成功后由主类置位 */
     private volatile boolean engineRunning;
 
-    public PacketBridge(AntiCheatPlugin plugin,
-                        RotationCheck rotationCheck, BadPacketsCheck badPacketsCheck) {
+    public PacketBridge(AntiCheatPlugin plugin, RotationCheck rotationCheck,
+                        BadPacketsCheck badPacketsCheck, AimCheck aimCheck) {
         super(PacketListenerPriority.LOW);
         this.plugin = plugin;
         this.rotationCheck = rotationCheck;
         this.badPacketsCheck = badPacketsCheck;
+        this.aimCheck = aimCheck;
         reload();
     }
 
@@ -71,6 +74,10 @@ public class PacketBridge extends PacketListenerAbstract {
         Location location = wrapper.getLocation();
         if (wrapper.hasRotationChanged()) {
             rotationCheck.onPacketRotation(event, player, location.getYaw(), location.getPitch());
+            // 非法视角包已被上面取消，不参与量化采样
+            if (!event.isCancelled()) {
+                aimCheck.onPacketRotation(player, data, location.getYaw(), location.getPitch());
+            }
         }
         if (wrapper.hasPositionChanged()) {
             badPacketsCheck.onPacketPosition(event, player,

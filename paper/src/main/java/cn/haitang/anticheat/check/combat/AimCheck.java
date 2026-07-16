@@ -11,7 +11,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerAnimationEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.util.BoundingBox;
@@ -20,10 +20,12 @@ import org.bukkit.util.Vector;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 杀戮光环（KillAura）检测，七条判定线：
+ * 杀戮光环（KillAura）检测，十条判定线：
  * 1. 视角外攻击：攻击方向与目标方向夹角过大（正常玩家必须看着目标才能命中，
  *    KillAura 可以打到背后的实体）。近身混战角度天然偏大，距离过近不判。
  * 2. 快速多目标：在极短的游戏刻间隔内连续切换并命中不同实体（横扫攻击已按
@@ -38,18 +40,58 @@ import java.util.UUID;
  *    角度误差序列几乎零均值、零抖动——人手瞄准必有噪声，平滑瞄准没有。
  * 7. 主动探针：真实近战后在玩家侧后方生成环绕的隐身假人；正常客户端不会
  *    主动选择不可见目标，而 KillAura 的实体扫描可能连续命中这些假人。
+ *
+ * 以下三条针对"低调配置"的光环（单目标、小视角、正常 CPS、带人性化噪声），
+ * 它们能绕过 1-6 的显性特征，但改不掉合成视角与超人反应本身：
+ * 8. 旋转量化：原版视角增量必为鼠标灵敏度量子的整数倍，合成视角产生
+ *    微步增量或不落在任何量子网格上（见 {@link AimQuantumAnalyzer}）。
+ * 9. 零反应再瞄准：上一刻视角仍远离目标、同一刻转正并命中。人手瞄准
+ *    需要 2-3 刻对齐确认，光环的转正与攻击在同一刻里计算完成；
+ *    按再瞄准事件的同刻占比统计，偶发甩枪命中不会积累。
+ * 10. 命中率：战斗中人手对走位目标必然空挥，光环只在必中时点击；
+ *    持续超人命中率仅作辅助证据上报，不计违规值。
  */
 public class AimCheck extends Check {
 
     private static final String BUFFER_SNAPBACK = "kill-aura.snapback";
     private static final String BUFFER_TRACKING = "kill-aura.tracking";
     private static final String BUFFER_INVENTORY = "kill-aura.inventory";
+    private static final String BUFFER_QUANTUM = "kill-aura.quantum";
+    private static final String BUFFER_ACQUISITION = "kill-aura.acquisition";
+
+    /** 目标碰撞箱的等效半径（水平半宽 + 余量），用于换算"看在目标上"的视角半径 */
+    private static final double TARGET_HALF_EXTENT = 0.55;
+
+    private record QuantumConfig(boolean enabled, boolean excludeBedrock, long combatWindowMs,
+                                 AimQuantumAnalyzer.Params params, double bufferIncrement,
+                                 double bufferDecay, double bufferToFlag, double flagWeight) {}
 
     private final VirtualProbeManager probes;
+    private final Map<UUID, AimQuantumAnalyzer> quantumAnalyzers = new ConcurrentHashMap<>();
+    /** Netty 线程读取的量化检测配置缓存，reload 时主线程重建 */
+    private volatile QuantumConfig quantumConfig;
 
     public AimCheck(AntiCheatPlugin plugin) {
         super(plugin, CheckType.KILL_AURA);
         this.probes = new VirtualProbeManager(plugin);
+        reloadConfiguration();
+    }
+
+    @Override
+    public void reloadConfiguration() {
+        quantumConfig = new QuantumConfig(
+                cfgB("quantum.enabled", true),
+                cfgB("quantum.exclude-bedrock", true),
+                Math.max(1000L, cfgI("quantum.combat-window-ms", 4000)),
+                new AimQuantumAnalyzer.Params(
+                        cfgI("quantum.window-size", 40),
+                        cfgI("quantum.micro-count-to-suspect", 6),
+                        cfgI("quantum.comb-min-samples", 16),
+                        cfgD("quantum.suspect-score", 0.5)),
+                cfgD("quantum.buffer-increment", 1.0),
+                cfgD("quantum.buffer-decay", 0.5),
+                cfgD("quantum.buffer-to-flag", 3.0),
+                cfgD("quantum.flag-weight", 1.5));
     }
 
     public void start() {
@@ -81,12 +123,30 @@ public class AimCheck extends Check {
         checkMultiTarget(event, attacker, victim, data);
         checkSnapback(attacker, data, attack, eye, box);
         checkTracking(attacker, data, attack, eye, box);
+        checkAcquisition(attacker, data, victim, attack, eye);
+        checkAccuracy(attacker, data, victim, attack);
+        data.markCombat(System.currentTimeMillis());
         probes.activate(attacker);
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         probes.onQuit(event.getPlayer());
+        quantumAnalyzers.remove(event.getPlayer().getUniqueId());
+    }
+
+    /** 战斗窗口内的挥臂参与命中率统计；挖掘/搭路挥臂只会拉低命中率，方向安全 */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onAnimation(PlayerAnimationEvent event) {
+        if (!cfgB("accuracy.enabled", true)) return;
+        PlayerData data = plugin.getDataManager().getIfPresent(event.getPlayer().getUniqueId());
+        if (data == null) return;
+        if (!data.combatWithin(Math.max(1000L, cfgI("accuracy.combat-window-ms", 4000)))) return;
+        long now = System.currentTimeMillis();
+        Deque<Long> swings = data.getCombatSwings();
+        swings.addLast(now);
+        long windowMs = Math.max(5000L, cfgI("accuracy.window-ms", 30000));
+        while (!swings.isEmpty() && now - swings.peekFirst() > windowMs) swings.removeFirst();
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -308,6 +368,169 @@ public class AimCheck extends Check {
         }
     }
 
+    /**
+     * 零反应再瞄准：以攻击的延迟补偿锚点为基准，回看攻击前 1-N 刻的
+     * 攻击者视角与目标碰撞箱。最近几刻内视角曾远离目标才算一次"再瞄准"；
+     * 其中"上一刻仍远离、本刻转正并命中"为同刻转正。人手需要先对齐再确认
+     * 点击，同刻转正占比持续过高只能来自转正与攻击同帧计算的客户端。
+     */
+    private void checkAcquisition(Player attacker, PlayerData data, LivingEntity victim,
+                                  CombatAttackContext.Attack attack, Location eye) {
+        if (!cfgB("acquisition.enabled", true)) return;
+        if (data.isBedrock() && cfgB("acquisition.exclude-bedrock", true)) return;
+        if (!attack.packetBacked() || !(victim instanceof Player victimPlayer)) return;
+        if (data.teleportedWithin(1500)) return;
+        // 载具内不产生移动事件，视角历史是陈旧样本，无法回看
+        if (attacker.isInsideVehicle()) return;
+
+        BoundingBox attackBox = plugin.getEntityPositionHistory().boxAt(victimPlayer, attack);
+        if (attackBox.getCenter().distance(eye.toVector())
+                < cfgD("acquisition.min-distance", 2.75)) return;
+
+        int attackTick = org.bukkit.Bukkit.getCurrentTick();
+        int lookback = Math.max(1, Math.min(8, cfgI("acquisition.lookback-ticks", 4)));
+        double offAngle = cfgD("acquisition.off-angle", 12.0);
+        double eyeHeight = attacker.getEyeHeight();
+
+        boolean offPrevious = false;
+        boolean reacquired = false;
+        int evaluated = 0;
+        for (int back = 1; back <= lookback; back++) {
+            PlayerData.RotationSample sample = data.rotationAtOrBefore(attackTick - back);
+            if (sample == null) break;
+            BoundingBox box = plugin.getEntityPositionHistory()
+                    .boxNear(victimPlayer, attack, back);
+            if (box == null) break;
+
+            Vector center = box.getCenter();
+            double dx = center.getX() - sample.x();
+            double dy = center.getY() - (sample.y() + eyeHeight);
+            double dz = center.getZ() - sample.z();
+            double angle = AimPatternAnalyzer.viewAngleToTarget(
+                    sample.yaw(), sample.pitch(), dx, dy, dz);
+            if (Double.isNaN(angle)) continue;
+            evaluated++;
+
+            double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            // 远离阈值随距离收缩，但始终显著大于"看在目标上"的视角半径
+            double dynamicOff = Math.max(offAngle, 2.2
+                    * AimPatternAnalyzer.apparentHalfAngle(distance, TARGET_HALF_EXTENT));
+            if (angle >= dynamicOff) {
+                reacquired = true;
+                if (back == 1) offPrevious = true;
+            }
+        }
+        if (evaluated == 0 || !reacquired) return;
+
+        long now = System.currentTimeMillis();
+        Deque<PlayerData.AcquisitionSample> samples = data.getAcquisitionSamples();
+        samples.addLast(new PlayerData.AcquisitionSample(now, offPrevious));
+        long windowMs = Math.max(5000L, cfgI("acquisition.window-ms", 45000));
+        while (!samples.isEmpty() && now - samples.peekFirst().at() > windowMs) {
+            samples.removeFirst();
+        }
+        while (samples.size() > 64) samples.removeFirst();
+
+        int instants = 0;
+        for (PlayerData.AcquisitionSample sample : samples) {
+            if (sample.instant()) instants++;
+        }
+        int decision = acquisitionDecision(instants, samples.size(),
+                Math.max(4, cfgI("acquisition.min-samples", 10)),
+                cfgD("acquisition.instant-ratio", 0.75),
+                cfgD("acquisition.clear-ratio", 0.4));
+        if (decision > 0) {
+            int total = samples.size();
+            samples.clear();
+            double buffered = data.buffer(BUFFER_ACQUISITION,
+                    cfgD("acquisition.buffer-increment", 1.0));
+            if (buffered >= cfgD("acquisition.buffer-to-flag", 2.0)) {
+                data.resetBuffer(BUFFER_ACQUISITION);
+                flag(attacker, cfgD("acquisition.flag-weight", 2.0), String.format(
+                        "零反应再瞄准 %d/%d 次同刻转正命中", instants, total));
+            }
+        } else if (decision < 0) {
+            samples.clear();
+            data.buffer(BUFFER_ACQUISITION, -cfgD("acquisition.buffer-decay", 0.5));
+        }
+    }
+
+    /**
+     * 命中率统计（仅辅助证据，不计 VL）：战斗窗口内挥臂 vs 绑定真实攻击包的
+     * 对玩家命中。人手对走位目标必然产生空挥，持续超人命中率由管理员权衡。
+     */
+    private void checkAccuracy(Player attacker, PlayerData data, LivingEntity victim,
+                               CombatAttackContext.Attack attack) {
+        if (!cfgB("accuracy.enabled", true)) return;
+        if (data.isBedrock() && cfgB("accuracy.exclude-bedrock", true)) return;
+        if (!attack.packetBacked() || !(victim instanceof Player)) return;
+
+        long now = System.currentTimeMillis();
+        long windowMs = Math.max(5000L, cfgI("accuracy.window-ms", 30000));
+        Deque<Long> attacks = data.getCombatAttacks();
+        attacks.addLast(now);
+        while (!attacks.isEmpty() && now - attacks.peekFirst() > windowMs) attacks.removeFirst();
+
+        Deque<Long> swings = data.getCombatSwings();
+        while (!swings.isEmpty() && now - swings.peekFirst() > windowMs) swings.removeFirst();
+
+        int minSwings = Math.max(10, cfgI("accuracy.min-swings", 40));
+        if (accuracyExceeds(attacks.size(), swings.size(), minSwings,
+                cfgD("accuracy.min-accuracy", 0.95))) {
+            observe(attacker, String.format("战斗命中率 %.0f%% (%d 命中 / %d 挥臂，仅辅助证据)",
+                    Math.min(1.0, attacks.size() / (double) swings.size()) * 100.0,
+                    attacks.size(), swings.size()));
+            attacks.clear();
+            swings.clear();
+        }
+    }
+
+    /**
+     * 旋转量化（Netty 线程入口，由 PacketBridge 转发旋转包）：
+     * 仅在战斗窗口内、非载具、非基岩会话时采样，凑满窗口的结论
+     * 调度回主线程做豁免复查与缓冲累积。
+     */
+    public void onPacketRotation(Player player, PlayerData data, float yaw, float pitch) {
+        QuantumConfig config = quantumConfig;
+        if (config == null || !config.enabled()) return;
+        if (!data.combatWithin(config.combatWindowMs())) return;
+        if (data.isInVehicle()) return;
+        if (config.excludeBedrock() && data.isBedrock()) return;
+
+        List<AimQuantumAnalyzer.Window> windows = quantumAnalyzers
+                .computeIfAbsent(player.getUniqueId(), ignored -> new AimQuantumAnalyzer())
+                .accept(yaw, pitch, data.getRotationEpoch(), config.params());
+        if (windows.isEmpty()) return;
+        plugin.getServer().getScheduler().runTask(plugin,
+                () -> handleQuantumWindows(player.getUniqueId(), windows));
+    }
+
+    private void handleQuantumWindows(UUID playerId, List<AimQuantumAnalyzer.Window> windows) {
+        Player player = plugin.getServer().getPlayer(playerId);
+        if (player == null || !player.isOnline() || isExempt(player)) return;
+        PlayerData data = plugin.getDataManager().getIfPresent(playerId);
+        if (data == null || data.teleportedWithin(1500) || player.isInsideVehicle()) return;
+        QuantumConfig config = quantumConfig;
+        if (config == null || !config.enabled()) return;
+        if (config.excludeBedrock() && data.isBedrock()) return;
+
+        for (AimQuantumAnalyzer.Window window : windows) {
+            if (window.verdict() == AimQuantumAnalyzer.Verdict.CLEAN) {
+                data.buffer(BUFFER_QUANTUM, -config.bufferDecay());
+                continue;
+            }
+            double buffered = data.buffer(BUFFER_QUANTUM, config.bufferIncrement());
+            if (buffered < config.bufferToFlag()) continue;
+            data.resetBuffer(BUFFER_QUANTUM);
+            String detail = window.verdict() == AimQuantumAnalyzer.Verdict.SUSPICIOUS_MICRO
+                    ? String.format("视角微步 %d/%d 次低于最小灵敏度量子",
+                            window.microSteps(), window.samples())
+                    : String.format("视角无量化网格 (%s 谱峰 %.2f, n=%d)",
+                            window.stream(), window.bestScore(), window.combSamples());
+            flag(player, config.flagWeight(), detail);
+        }
+    }
+
     static double angleBufferIncrement(double angle, double maxAngle) {
         double excess = angle - maxAngle;
         if (excess >= 60.0) return 2.0;
@@ -319,6 +542,22 @@ public class AimCheck extends Check {
                                        UUID target, UUID lastTarget) {
         return tickGap >= 0 && tickGap <= maxTickGap
                 && lastTarget != null && !target.equals(lastTarget);
+    }
+
+    /** 再瞄准样本的批量结论：+1 同刻转正占比过高，-1 表现正常，0 继续累积。 */
+    static int acquisitionDecision(int instants, int total, int minSamples,
+                                   double flagRatio, double clearRatio) {
+        if (total < minSamples) return 0;
+        double ratio = instants / (double) total;
+        if (ratio >= flagRatio) return 1;
+        if (ratio <= clearRatio) return -1;
+        return 0;
+    }
+
+    /** 命中率是否达到上报线；挥臂样本不足时不判。 */
+    static boolean accuracyExceeds(int attacks, int swings, int minSwings, double minAccuracy) {
+        if (swings < Math.max(1, minSwings)) return false;
+        return Math.min(1.0, attacks / (double) swings) >= minAccuracy;
     }
 
     private static Location attackLocation(Player attacker, CombatAttackContext.Attack attack) {

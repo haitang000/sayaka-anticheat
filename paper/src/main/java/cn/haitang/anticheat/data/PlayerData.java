@@ -41,7 +41,8 @@ public class PlayerData {
     private final String name;
 
     /** 是否为基岩版（手机/主机）玩家，进服时解析一次，检测据此放宽/豁免 */
-    private boolean bedrock;
+    /** 基岩互通标记；Netty 线程的量化采样门控会读取 */
+    private volatile boolean bedrock;
 
     private final Map<CheckType, Double> vl = new EnumMap<>(CheckType.class);
     private final Map<CheckType, Long> lastVlGainAt = new EnumMap<>(CheckType.class);
@@ -107,7 +108,7 @@ public class PlayerData {
      * 玩家静止不转头时客户端不发包，也就没有新样本——此时视角保持不变，
      * {@link #rotationAtOrBefore} 取"该刻或更早的最近样本"语义仍然正确。
      */
-    public record RotationSample(int tick, float yaw, float pitch) {}
+    public record RotationSample(int tick, float yaw, float pitch, double x, double y, double z) {}
 
     private static final int ROTATION_HISTORY_TICKS = 16;
 
@@ -123,6 +124,24 @@ public class PlayerData {
     private int attackBurstTick = -1;
     private int attackBurstCount;
     private int attackBurstFlaggedTick = -1;
+
+    // ---- KillAura 低调配置检测状态 ----
+
+    /** 最近一次真实近战命中时间；Netty 线程用它判断是否处于战斗采样窗口 */
+    private volatile long lastCombatAt;
+    /** 服务端设置视角的代数：传送/下载具后自增，量化分析丢弃跨代增量 */
+    private volatile int rotationEpoch;
+    /** 载具内的乘客视角会被客户端自动回正（非量化增量），采样期间跳过 */
+    private volatile boolean inVehicle;
+
+    /** 再瞄准事件采样：是否"上一刻仍远离目标、同刻转正并命中"。 */
+    public record AcquisitionSample(long at, boolean instant) {}
+
+    private final Deque<AcquisitionSample> acquisitionSamples = new ArrayDeque<>();
+
+    /** 战斗窗口内的挥臂 / 真实攻击时间，命中率统计（仅辅助证据）使用。 */
+    private final Deque<Long> combatSwings = new ArrayDeque<>();
+    private final Deque<Long> combatAttacks = new ArrayDeque<>();
 
     /** 子判定线专用缓冲：与 {@link #buffer(CheckType, double)} 隔离，避免互相稀释。 */
     private final Map<String, Double> namedBuffers = new java.util.HashMap<>();
@@ -383,7 +402,12 @@ public class PlayerData {
     // ---- 宽限 ----
 
     public long getJoinAt() { return joinAt; }
-    public void touchTeleport() { this.lastTeleportAt = System.currentTimeMillis(); }
+
+    public void touchTeleport() {
+        this.lastTeleportAt = System.currentTimeMillis();
+        // 服务端改写了客户端视角，下一次旋转增量不可用于量化分析
+        this.rotationEpoch++;
+    }
     /** Records velocity actually issued by the server for both response and movement exemptions. */
     public void startImpulse(Vector velocity) {
         startImpulse(velocity, System.currentTimeMillis());
@@ -566,11 +590,11 @@ public class PlayerData {
     public long getKbPendingAt() { return kbPendingAt; }
     public void setKbPendingAt(long at) { this.kbPendingAt = at; }
 
-    /** 记录该 tick 的最终视角；同一 tick 重复采样只保留最后一次。 */
-    public void addRotation(int tick, float yaw, float pitch) {
+    /** 记录该 tick 的最终视角与所在位置；同一 tick 重复采样只保留最后一次。 */
+    public void addRotation(int tick, float yaw, float pitch, double x, double y, double z) {
         RotationSample last = rotationHistory.peekLast();
         if (last != null && last.tick() == tick) rotationHistory.removeLast();
-        rotationHistory.addLast(new RotationSample(tick, yaw, pitch));
+        rotationHistory.addLast(new RotationSample(tick, yaw, pitch, x, y, z));
         while (!rotationHistory.isEmpty()
                 && tick - rotationHistory.peekFirst().tick() > ROTATION_HISTORY_TICKS) {
             rotationHistory.removeFirst();
@@ -595,6 +619,23 @@ public class PlayerData {
 
     public double getLastTrackBearing() { return lastTrackBearing; }
     public void setLastTrackBearing(double bearing) { this.lastTrackBearing = bearing; }
+
+    // ---- KillAura 低调配置检测 ----
+
+    public void markCombat(long at) { this.lastCombatAt = at; }
+    /** 最近 ms 毫秒内是否有过真实近战命中（Netty 线程可读） */
+    public boolean combatWithin(long ms) {
+        return System.currentTimeMillis() - lastCombatAt <= ms;
+    }
+
+    public int getRotationEpoch() { return rotationEpoch; }
+
+    public boolean isInVehicle() { return inVehicle; }
+    public void setInVehicle(boolean inVehicle) { this.inVehicle = inVehicle; }
+
+    public Deque<AcquisitionSample> getAcquisitionSamples() { return acquisitionSamples; }
+    public Deque<Long> getCombatSwings() { return combatSwings; }
+    public Deque<Long> getCombatAttacks() { return combatAttacks; }
 
     /**
      * 累计同一服务端 tick 内绑定真实攻击包的命中次数。
