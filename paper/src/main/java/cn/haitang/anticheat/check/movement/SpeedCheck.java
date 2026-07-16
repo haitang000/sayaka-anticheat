@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.util.MoveUtil;
 import org.bukkit.Location;
@@ -26,6 +27,8 @@ import java.util.Deque;
  */
 public class SpeedCheck extends Check {
 
+    private static final long NOMINAL_MOVE_INTERVAL_MS = 50L;
+
     public SpeedCheck(AntiCheatPlugin plugin) {
         super(plugin, CheckType.SPEED);
     }
@@ -34,37 +37,37 @@ public class SpeedCheck extends Check {
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         Location to = event.getTo();
-        if (to == null || isExempt(player)) return;
+        if (to == null) return;
         PlayerData data = data(player);
 
-        // ---- 宽限场景 ----
-        if (player.isInsideVehicle() || player.isFlying() || player.getAllowFlight()) return;
-        if (player.isGliding() || data.glidedWithin(3000)) return;   // 鞘翅本体及落地惯性
-        if (player.isRiptiding() || data.riptideWithin(2000)) return;
-        if (data.liquidWithin(1500)) return;                          // 海豚恩惠/激流等水中变速
-        if (data.teleportedWithin(2000)) return;
-        if (data.velocityWithin(2500)) return;                        // TNT/活塞等服务端赋速
-        if (data.bouncedWithin(3000)) return;
+        if (isExempt(player) || isMovementExempt(player, data)) {
+            resetEvidence(data);
+            return;
+        }
+        Location from = event.getFrom();
+        if (!MovementTracker.isPositionChange(to.getX() - from.getX(),
+                to.getY() - from.getY(), to.getZ() - from.getZ())) return;
 
-        double bps = windowBps(data.getSpeedWindow());
-        if (bps < 0) return;
-
-        // ---- 动态上限 ----
-        double cap = cfgD("max-bps", 9.2);
         int speedLevel = MoveUtil.effectLevel(player, PotionEffectType.SPEED);
-        cap *= 1 + cfgD("speed-effect-bonus", 0.25) * speedLevel;
-        cap *= pluginSpeedRatio(player, speedLevel);
-        if (data.iceWithin(2500)) cap *= cfgD("ice-multiplier", 2.2);
-        if (data.soulSandWithin(2000)) cap *= cfgD("soul-speed-multiplier", 1.6);
+        double multiplier = dynamicCapMultiplier(player, data, speedLevel);
+        long burstWindowMs = cfgI("burst-window-ms", 350);
+        long sustainedWindowMs = cfgI("sustained-window-ms", 1200);
+        SpeedEvidence burst = evidence("短时",
+                windowBps(data.getSpeedWindow(), burstWindowMs),
+                cfgD("burst-max-bps", 12.0) * multiplier);
+        SpeedEvidence sustained = evidence("持续",
+                windowBps(data.getSpeedWindow(), sustainedWindowMs),
+                cfgD("sustained-max-bps", cfgD("max-bps", 9.2)) * multiplier);
+        SpeedEvidence suspicious = stronger(burst, sustained);
 
-        if (bps > cap) {
-            double over = bps / cap;
-            double buffered = data.buffer(type(), over);
+        if (suspicious != null) {
+            double buffered = data.buffer(type(), suspicious.ratio());
             if (buffered >= cfgD("buffer-to-flag", 3.0)) {
                 data.resetBuffer(type());
-                flag(player, Math.min(over, 3.0),
-                        String.format("%.1f m/s > %.1f m/s", bps, cap));
-                if (cfgB("setback", true) && shouldMitigate(player)) {
+                flag(player, Math.min(suspicious.ratio(), 3.0),
+                        String.format("%s %.1f m/s > %.1f m/s",
+                                suspicious.label(), suspicious.bps(), suspicious.cap()));
+                if (cfgB("setback", true) && allowsMitigation(player)) {
                     setback(event, data);
                 }
             }
@@ -73,15 +76,46 @@ public class SpeedCheck extends Check {
         }
     }
 
-    /** 滚动窗口的平均水平速度（m/s）；样本不足或时长过短返回 -1 表示本次不判。 */
-    static double windowBps(Deque<PlayerData.MoveSample> window) {
-        if (window.size() < 4) return -1;
-        long duration = window.peekLast().at() - window.peekFirst().at();
-        if (duration < 700) return -1;
-        double total = 0;
-        for (PlayerData.MoveSample sample : window) total += sample.dist();
-        return total / duration * 1000.0;
+    /** Calculates trailing-window speed; the first sample is only the interval anchor. */
+    static double windowBps(Deque<PlayerData.MoveSample> samples, long windowMs) {
+        if (samples.size() < 4 || windowMs <= 0) return -1;
+        PlayerData.MoveSample latest = samples.peekLast();
+        if (latest == null) return -1;
+
+        long cutoff = latest.at() - windowMs;
+        PlayerData.MoveSample anchor = null;
+        int intervals = 0;
+        double distance = 0;
+        for (PlayerData.MoveSample sample : samples) {
+            if (sample.at() < cutoff) continue;
+            if (anchor == null) {
+                anchor = sample;
+                continue;
+            }
+            distance += sample.dist();
+            intervals++;
+        }
+        if (anchor == null || intervals < 3) return -1;
+
+        long elapsedMs = latest.at() - anchor.at();
+        long minimumSpanMs = Math.max(100L, Math.round(windowMs * 0.8));
+        if (elapsedMs < minimumSpanMs) return -1;
+        long effectiveMs = Math.max(elapsedMs, intervals * NOMINAL_MOVE_INTERVAL_MS);
+        return distance / effectiveMs * 1000.0;
     }
+
+    private static SpeedEvidence evidence(String label, double bps, double cap) {
+        if (bps < 0 || cap <= 0 || bps <= cap) return null;
+        return new SpeedEvidence(label, bps, cap, bps / cap);
+    }
+
+    private static SpeedEvidence stronger(SpeedEvidence first, SpeedEvidence second) {
+        if (first == null) return second;
+        if (second == null) return first;
+        return first.ratio() >= second.ratio() ? first : second;
+    }
+
+    private record SpeedEvidence(String label, double bps, double cap, double ratio) { }
 
     /**
      * MMO/技能类插件常通过移速属性或 walkSpeed 提供合法加速，按比例放大上限。
@@ -104,17 +138,37 @@ public class SpeedCheck extends Check {
         return ratio;
     }
 
+    private double dynamicCapMultiplier(Player player, PlayerData data, int speedLevel) {
+        double multiplier = 1 + cfgD("speed-effect-bonus", 0.25) * speedLevel;
+        multiplier *= pluginSpeedRatio(player, speedLevel);
+        if (data.iceWithin(2500)) multiplier *= cfgD("ice-multiplier", 2.2);
+        if (data.soulSandWithin(2000)) multiplier *= cfgD("soul-speed-multiplier", 1.6);
+        return multiplier;
+    }
+
+    private boolean isMovementExempt(Player player, PlayerData data) {
+        if (player.isInsideVehicle() || player.isFlying() || player.getAllowFlight()) return true;
+        if (player.isGliding() || data.glidedWithin(3000)) return true;
+        if (player.isRiptiding() || data.riptideWithin(2000)) return true;
+        if (data.liquidWithin(1500) || data.teleportedWithin(2000)) return true;
+        return data.velocityWithin(2500) || data.bouncedWithin(3000);
+    }
+
+    private void resetEvidence(PlayerData data) {
+        data.resetBuffer(type());
+        data.getSpeedWindow().clear();
+    }
+
     private void setback(PlayerMoveEvent event, PlayerData data) {
         Location target = data.getLastValidLocation();
         Location from = event.getFrom();
-        // 合法回弹点太远或跨世界时退回本次移动起点
         if (target == null || target.getWorld() == null
-                || !target.getWorld().equals(from.getWorld())
-                || target.distanceSquared(from) > 64) {
+                || !target.getWorld().equals(from.getWorld())) {
             target = from;
         }
         data.touchSetback();
-        data.getSpeedWindow().clear();
-        event.setTo(target);
+        resetEvidence(data);
+        data.resetAirborneState(target.getY());
+        event.setTo(target.clone());
     }
 }

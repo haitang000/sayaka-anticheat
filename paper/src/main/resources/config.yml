@@ -120,8 +120,13 @@ checks:
   speed:
     enabled: true
     enforcement: mitigate
-    # 基准最大水平速度 m/s。疾跑跳跃≈7.13 m/s，此值已留出余量
+    # 旧版单窗口上限；保留给缺少新窗口配置的兼容回退
     max-bps: 9.2
+    # 短窗口拦截突发加速，持续窗口拦截低速绕过
+    burst-window-ms: 350
+    burst-max-bps: 12.0
+    sustained-window-ms: 1200
+    sustained-max-bps: 8.2
     # 每级速度药水效果增加的容差比例
     speed-effect-bonus: 0.25
     # 近期踩过冰面时的速度倍率容差
@@ -147,6 +152,10 @@ checks:
     hover-air-ticks: 8
     # 静止悬浮仅作为辅助警报，低于该 TPS 时不采样
     static-hover-min-tps: 18.0
+    # 原版纵向速度递推的最少滞空样本与向上残差容差
+    gravity-min-air-ticks: 3
+    gravity-tolerance: 0.06
+    gravity-buffer-to-flag: 4.0
     buffer-to-flag: 2.0
     setback: true
 

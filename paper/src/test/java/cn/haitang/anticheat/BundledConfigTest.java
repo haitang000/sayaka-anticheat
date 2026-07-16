@@ -92,6 +92,18 @@ class BundledConfigTest {
     }
 
     @Test
+    void movementPredictionWindowsAndThresholdsAreOrdered() {
+        assertTrue(config.getInt("checks.speed.burst-window-ms") > 0);
+        assertTrue(config.getInt("checks.speed.sustained-window-ms")
+                > config.getInt("checks.speed.burst-window-ms"));
+        assertTrue(config.getDouble("checks.speed.burst-max-bps")
+                > config.getDouble("checks.speed.sustained-max-bps"));
+        assertTrue(config.getInt("checks.flight.gravity-min-air-ticks") >= 3);
+        assertTrue(config.getDouble("checks.flight.gravity-tolerance") > 0);
+        assertTrue(config.getDouble("checks.flight.gravity-buffer-to-flag") > 0);
+    }
+
+    @Test
     void warnedKickMultiplierTightensTheThresholdWithoutZeroingIt() {
         double warn1 = config.getDouble("punishment.warned-kick-multipliers.warn-1");
 

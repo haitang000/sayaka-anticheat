@@ -120,6 +120,21 @@ public final class ConfigSnapshot {
         positiveInt(config, errors, "settings.parallel-analysis.queue-capacity");
         positiveInt(config, errors, "settings.parallel-analysis.completions-per-tick");
         positiveInt(config, errors, "updates.check-interval-minutes");
+        positiveInt(config, errors, "checks.speed.burst-window-ms");
+        positiveInt(config, errors, "checks.speed.sustained-window-ms");
+        positiveInt(config, errors, "checks.flight.gravity-min-air-ticks");
+
+        if (config.getInt("checks.flight.gravity-min-air-ticks") < 3) {
+            errors.add("checks.flight.gravity-min-air-ticks must be at least 3");
+        }
+        if (config.getInt("checks.speed.sustained-window-ms")
+                <= config.getInt("checks.speed.burst-window-ms")) {
+            errors.add("checks.speed.sustained-window-ms must be greater than burst-window-ms");
+        }
+        if (config.getDouble("checks.speed.sustained-max-bps")
+                >= config.getDouble("checks.speed.burst-max-bps")) {
+            errors.add("checks.speed.sustained-max-bps must be less than burst-max-bps");
+        }
 
         if (config.getBoolean("network.enabled", false)) {
             String serverId = config.getString("network.server-id", "").trim();
@@ -190,8 +205,10 @@ public final class ConfigSnapshot {
         }
 
         for (String path : List.of(
-                "checks.speed.max-bps", "checks.speed.buffer-to-flag",
-                "checks.flight.max-jump", "checks.flight.buffer-to-flag",
+                "checks.speed.max-bps", "checks.speed.burst-max-bps",
+                "checks.speed.sustained-max-bps", "checks.speed.buffer-to-flag",
+                "checks.flight.max-jump", "checks.flight.gravity-tolerance",
+                "checks.flight.gravity-buffer-to-flag", "checks.flight.buffer-to-flag",
                 "checks.ground-spoof.buffer-to-flag",
                 "checks.timer.max-packets-per-second", "checks.timer.buffer-to-flag",
                 "checks.fast-ladder.max-climb-per-move", "checks.fast-ladder.buffer-to-flag",

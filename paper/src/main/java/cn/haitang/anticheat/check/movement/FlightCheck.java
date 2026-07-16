@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.util.MoveUtil;
 import org.bukkit.Bukkit;
@@ -11,6 +12,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.scheduler.BukkitTask;
 
 /**
@@ -21,6 +23,10 @@ import org.bukkit.scheduler.BukkitTask;
  *    移动事件驱动的检测会失效，需主动扫描兜底）
  */
 public class FlightCheck extends Check {
+
+    private static final String ASCENT_BUFFER = "flight.ascent";
+    private static final String HOVER_BUFFER = "flight.hover";
+    private static final String GRAVITY_BUFFER = "flight.gravity";
 
     private final BukkitTask sweepTask;
 
@@ -37,36 +43,74 @@ public class FlightCheck extends Check {
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         Location to = event.getTo();
-        if (to == null || isExempt(player) || isMovementExempt(player)) return;
+        if (to == null) return;
         PlayerData data = data(player);
-        if (data.getAirTicks() == 0) return;
+        if (isExempt(player) || isMovementExempt(player)) {
+            resetEvidence(data, to.getY());
+            return;
+        }
+        Location from = event.getFrom();
+        if (!MovementTracker.isPositionChange(to.getX() - from.getX(),
+                to.getY() - from.getY(), to.getZ() - from.getZ())) return;
+        if (data.getFlightAirTicks() == 0) {
+            clearBuffers(data);
+            return;
+        }
 
         // ---- 1. 上升超限 ----
-        double ascent = to.getY() - data.getAirStartY();
+        double ascent = to.getY() - data.getFlightStartY();
         double maxJump = cfgD("max-jump", 1.35)
                 + MoveUtil.effectLevel(player, MoveUtil.jumpBoostType()) * cfgD("jump-boost-bonus", 0.7);
-        if (ascent > maxJump) {
-            double buffered = data.buffer(type(), 1.0);
+        boolean excessiveAscent = ascent > maxJump;
+        double ascentBuffer = data.buffer(ASCENT_BUFFER, excessiveAscent ? 1.0 : -0.5);
+        if (excessiveAscent) {
+            double buffered = ascentBuffer;
             if (buffered >= cfgD("buffer-to-flag", 2.0)) {
-                data.resetBuffer(type());
+                data.resetBuffer(ASCENT_BUFFER);
                 flag(player, 2.0, String.format("上升 %.2f > %.2f", ascent, maxJump));
                 trySetback(event, data);
+                return;
             }
-            return;
         }
 
         // ---- 2. 移动悬浮 ----
         int hoverAirTicks = cfgI("hover-air-ticks", 8);
-        if (data.getAirTicks() >= hoverAirTicks && data.getHoverTicks() >= 5
-                && !MoveUtil.hasCollisionBelow(to, 3.0)) {
-            data.setHoverTicks(0);
-            double buffered = data.buffer(type(), 1.0);
+        boolean movingHover = data.getFlightAirTicks() >= hoverAirTicks
+                && data.getHoverTicks() >= 5 && !MoveUtil.hasCollisionBelow(to, 3.0);
+        double hoverBuffer = data.buffer(HOVER_BUFFER, movingHover ? 1.0 : -0.5);
+        if (movingHover) {
+            double buffered = hoverBuffer;
             if (buffered >= cfgD("buffer-to-flag", 2.0)) {
-                data.resetBuffer(type());
-                flag(player, 2.0, String.format("悬浮 %d 包 dy=%.3f", data.getAirTicks(), data.getLastDeltaY()));
+                data.resetBuffer(HOVER_BUFFER);
+                flag(player, 2.0, String.format("悬浮 %d 包 dy=%.3f",
+                        data.getFlightAirTicks(), data.getLastDeltaY()));
                 trySetback(event, data);
+                return;
             }
         }
+
+        // ---- 3. 重力轨迹残差 ----
+        int gravityMinTicks = cfgI("gravity-min-air-ticks", 3);
+        double tolerance = cfgD("gravity-tolerance", 0.06);
+        boolean gravityReady = data.getFlightAirTicks() >= gravityMinTicks;
+        double excess = gravityExcess(data.getPreviousDeltaY(), data.getLastDeltaY());
+        boolean antiGravity = gravityReady && excess > tolerance
+                && !MoveUtil.hasCollisionBelow(to, 0.5);
+        double gravityBuffer = data.buffer(GRAVITY_BUFFER, antiGravity ? 1.0 : -0.5);
+        if (antiGravity && gravityBuffer >= cfgD("gravity-buffer-to-flag", 4.0)) {
+            data.resetBuffer(GRAVITY_BUFFER);
+            flag(player, 2.0, String.format("重力偏差 %.3f > %.3f (dy=%.3f)",
+                    excess, tolerance, data.getLastDeltaY()));
+            trySetback(event, data);
+        }
+    }
+
+    static double predictedNextDeltaY(double previousDeltaY) {
+        return (previousDeltaY - 0.08) * 0.98;
+    }
+
+    static double gravityExcess(double previousDeltaY, double currentDeltaY) {
+        return currentDeltaY - predictedNextDeltaY(previousDeltaY);
     }
 
     /** 飞行类共用的物理豁免 */
@@ -84,19 +128,21 @@ public class FlightCheck extends Check {
     }
 
     private void trySetback(PlayerMoveEvent event, PlayerData data) {
-        if (!cfgB("setback", true) || !shouldMitigate(event.getPlayer())) return;
+        if (!cfgB("setback", true) || !allowsMitigation(event.getPlayer())) return;
         Location target = data.getLastValidLocation();
         Location from = event.getFrom();
         if (target == null || target.getWorld() == null
-                || !target.getWorld().equals(from.getWorld())
-                || target.distanceSquared(from) > 256) {
+                || !target.getWorld().equals(from.getWorld())) {
             target = from;
         }
         data.touchSetback();
-        event.setTo(target);
+        clearBuffers(data);
+        data.getSpeedWindow().clear();
+        data.resetAirborneState(target.getY());
+        event.setTo(target.clone());
     }
 
-    /** 3. 静止悬浮兜底扫描（每秒一次） */
+    /** 4. 静止悬浮兜底扫描（每秒一次） */
     private void sweepStaticHover() {
         if (!isEnabled()) return;
         double[] tps = plugin.getServer().getTPS();
@@ -106,9 +152,12 @@ public class FlightCheck extends Check {
         }
         long now = System.currentTimeMillis();
         for (Player player : Bukkit.getOnlinePlayers()) {
-            if (isExempt(player) || isMovementExempt(player)) continue;
             PlayerData data = data(player);
             Location loc = player.getLocation();
+            if (isExempt(player) || isMovementExempt(player)) {
+                resetEvidence(data, loc.getY());
+                continue;
+            }
             if (!loc.getWorld().isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) {
                 data.setStaticHoverCount(0);
                 continue;
@@ -124,10 +173,36 @@ public class FlightCheck extends Check {
                 if (count >= 3) {
                     data.setStaticHoverCount(0);
                     observe(player, String.format("静止悬浮 %ds y=%.1f", count, loc.getY()));
+                    tryStaticSetback(player, data, loc);
                 }
             } else {
                 data.setStaticHoverCount(0);
             }
         }
+    }
+
+    private void tryStaticSetback(Player player, PlayerData data, Location current) {
+        if (!cfgB("setback", true) || !allowsMitigation(player)) return;
+        Location target = data.getLastValidLocation();
+        if (target == null || target.getWorld() == null
+                || !target.getWorld().equals(current.getWorld())) return;
+        if (player.teleport(target.clone(), PlayerTeleportEvent.TeleportCause.PLUGIN)) {
+            data.touchSetback();
+            clearBuffers(data);
+            data.getSpeedWindow().clear();
+            data.resetAirborneState(target.getY());
+        }
+    }
+
+    private void resetEvidence(PlayerData data, double currentY) {
+        clearBuffers(data);
+        data.resetFlightTracking(currentY);
+    }
+
+    private void clearBuffers(PlayerData data) {
+        data.resetBuffer(type());
+        data.resetBuffer(ASCENT_BUFFER);
+        data.resetBuffer(HOVER_BUFFER);
+        data.resetBuffer(GRAVITY_BUFFER);
     }
 }

@@ -53,17 +53,15 @@ public class MovementTracker implements Listener {
         double dy = to.getY() - from.getY();
         double distXZ = Math.sqrt(dx * dx + dz * dz);
 
-        data.setLastDeltaXZ(distXZ);
-        data.setLastDeltaY(dy);
-        data.consumeImpulse(new org.bukkit.util.Vector(dx, dy, dz));
-
         // 视角历史供 KillAura 吸附回正检测：纯转头包同样采样
         data.addRotation(org.bukkit.Bukkit.getCurrentTick(), to.getYaw(), to.getPitch());
 
         // 仅转动视角不算位移：不刷新 lastMoveAt，否则悬浮者环顾四周即可绕过静止悬浮扫描
-        boolean rotationOnly = distXZ < 1e-7 && Math.abs(dy) < 1e-7;
+        boolean rotationOnly = !isPositionChange(dx, dy, dz);
         if (rotationOnly) return;
+        data.setLastDeltaXZ(distXZ);
         data.setLastMovementDelta(new org.bukkit.util.Vector(dx, dy, dz));
+        data.consumeImpulse(new org.bukkit.util.Vector(dx, dy, dz));
 
         // ---- 滞空 / 悬浮计数 ----
         boolean collision = MoveUtil.hasCollisionBelow(to, GROUND_DEPTH);
@@ -71,19 +69,18 @@ public class MovementTracker implements Listener {
         if (serverLaunchEnded) {
             // A timed-out launch may still be airborne. Restart Flight from the current position
             // instead of comparing it with the original pressure plate height.
-            data.setAirTicks(0);
-            data.setHoverTicks(0);
-            data.setAirStartY(to.getY());
+            data.resetAirborneState(to.getY());
         }
         data.setCollisionBelow(collision);
         if (collision) {
             data.setSupportedTicks(data.getSupportedTicks() + 1);
-            data.setAirTicks(0);
-            data.setHoverTicks(0);
-            data.setAirStartY(to.getY());
+            data.resetAirborneState(to.getY());
         } else {
             data.setSupportedTicks(0);
+            data.setPreviousDeltaY(data.getAirTicks() == 0 ? dy : data.getLastDeltaY());
+            data.setLastDeltaY(dy);
             data.setAirTicks(data.getAirTicks() + 1);
+            data.setFlightAirTicks(data.getFlightAirTicks() + 1);
             double hoverMaxDy = plugin.config().getDouble("checks.flight.hover-max-dy", 0.06);
             if (Math.abs(dy) <= hoverMaxDy) {
                 data.setHoverTicks(data.getHoverTicks() + 1);
@@ -108,14 +105,17 @@ public class MovementTracker implements Listener {
         data.setInWeb(MoveUtil.isInWeb(player));
         data.setNearHoney(MoveUtil.isNearHoney(to));
 
-        // ---- 速度采样窗口（1.5 秒滚动） ----
+        // ---- 速度采样窗口 ----
         var window = data.getSpeedWindow();
         if (data.hasActiveServerLaunch() || serverLaunchEnded) {
             // Do not let legal launch displacement poison the first Speed window after landing.
             window.clear();
         } else {
             window.addLast(new PlayerData.MoveSample(now, distXZ, collision));
-            while (!window.isEmpty() && now - window.peekFirst().at() > 1500) {
+            long retentionMs = Math.max(1500L, Math.max(
+                    plugin.config().getInt("checks.speed.burst-window-ms", 350),
+                    plugin.config().getInt("checks.speed.sustained-window-ms", 1200)) + 100L);
+            while (!window.isEmpty() && now - window.peekFirst().at() > retentionMs) {
                 window.removeFirst();
             }
         }
@@ -142,5 +142,9 @@ public class MovementTracker implements Listener {
         if (!event.isCancelled()) return;
         PlayerData data = plugin.getDataManager().get(event.getPlayer());
         data.resetMovement(event.getFrom().clone());
+    }
+
+    public static boolean isPositionChange(double dx, double dy, double dz) {
+        return Math.abs(dx) >= 1.0e-7 || Math.abs(dy) >= 1.0e-7 || Math.abs(dz) >= 1.0e-7;
     }
 }

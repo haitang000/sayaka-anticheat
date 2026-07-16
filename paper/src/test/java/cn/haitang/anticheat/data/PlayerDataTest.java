@@ -161,6 +161,38 @@ class PlayerDataTest {
     }
 
     @Test
+    void resettingFlightTrackingDoesNotChangeSharedAirTicks() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+        data.setAirTicks(12);
+        data.setFlightAirTicks(8);
+        data.setHoverTicks(5);
+
+        data.resetFlightTracking(42.5);
+
+        assertEquals(12, data.getAirTicks());
+        assertEquals(0, data.getFlightAirTicks());
+        assertEquals(0, data.getHoverTicks());
+        assertEquals(42.5, data.getFlightStartY(), 0.0001);
+    }
+
+    @Test
+    void resettingAirborneStateClearsSharedAndFlightPhysics() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+        data.setAirTicks(12);
+        data.setFlightAirTicks(8);
+        data.setPreviousDeltaY(0.3);
+        data.setLastDeltaY(0.2);
+
+        data.resetAirborneState(64.0);
+
+        assertEquals(0, data.getAirTicks());
+        assertEquals(0, data.getFlightAirTicks());
+        assertEquals(0.0, data.getPreviousDeltaY(), 0.0001);
+        assertEquals(0.0, data.getLastDeltaY(), 0.0001);
+        assertEquals(64.0, data.getFlightStartY(), 0.0001);
+    }
+
+    @Test
     void burstCountingRestartsEveryTickAndFlagsOnce() {
         PlayerData data = new PlayerData(UUID.randomUUID(), "player");
 

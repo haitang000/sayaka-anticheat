@@ -74,6 +74,23 @@ class ConfigSnapshotTest {
     }
 
     @Test
+    void rejectsReversedMovementPredictionWindowsAndCaps() {
+        config.set("checks.speed.burst-window-ms", 1200);
+        config.set("checks.speed.sustained-window-ms", 350);
+        config.set("checks.speed.burst-max-bps", 8.0);
+        config.set("checks.speed.sustained-max-bps", 12.0);
+
+        assertTrue(ConfigSnapshot.validate(config).size() >= 2);
+    }
+
+    @Test
+    void rejectsFlightGravityCheckBeforeAUsableBaselineExists() {
+        config.set("checks.flight.gravity-min-air-ticks", 2);
+
+        assertFalse(ConfigSnapshot.validate(config).isEmpty());
+    }
+
+    @Test
     void validatesNetworkIdentityAndMariaDbUrlWhenEnabled() {
         config.set("network.enabled", true);
         config.set("network.server-id", "");

@@ -86,6 +86,11 @@ public abstract class Check implements Listener {
         return plugin.getViolationManager().shouldMitigate(player, type);
     }
 
+    /** Whether the effective enforcement mode permits local evidence-based mitigation. */
+    protected boolean allowsMitigation(Player player) {
+        return plugin.getViolationManager().effectiveEnforcement(player, type).allowsMitigation();
+    }
+
     // ---- 配置便捷读取（checks.<key>.<path>） ----
 
     protected double cfgD(String path, double def) {

@@ -55,8 +55,11 @@ public class PlayerData {
     private Location lastValidLocation;
     private int airTicks;
     private double airStartY;
+    private int flightAirTicks;
+    private double flightStartY;
     private int hoverTicks;
     private double lastDeltaXZ;
+    private double previousDeltaY;
     private double lastDeltaY;
     private Vector lastMovementDelta = new Vector();
     private long lastMoveAt;
@@ -306,6 +309,11 @@ public class PlayerData {
     public double getAirStartY() { return airStartY; }
     public void setAirStartY(double airStartY) { this.airStartY = airStartY; }
 
+    public int getFlightAirTicks() { return flightAirTicks; }
+    public void setFlightAirTicks(int ticks) { this.flightAirTicks = Math.max(0, ticks); }
+
+    public double getFlightStartY() { return flightStartY; }
+
     public int getHoverTicks() { return hoverTicks; }
     public void setHoverTicks(int hoverTicks) { this.hoverTicks = hoverTicks; }
 
@@ -314,6 +322,9 @@ public class PlayerData {
 
     public double getLastDeltaY() { return lastDeltaY; }
     public void setLastDeltaY(double v) { this.lastDeltaY = v; }
+
+    public double getPreviousDeltaY() { return previousDeltaY; }
+    public void setPreviousDeltaY(double v) { this.previousDeltaY = v; }
 
     public Vector getLastMovementDelta() { return lastMovementDelta.clone(); }
     public void setLastMovementDelta(Vector movement) {
@@ -334,21 +345,34 @@ public class PlayerData {
 
     public Deque<MoveSample> getSpeedWindow() { return speedWindow; }
 
+    /** Restarts Flight evidence without changing shared airborne state used by other checks. */
+    public void resetFlightTracking(double y) {
+        this.flightAirTicks = 0;
+        this.hoverTicks = 0;
+        this.staticHoverCount = 0;
+        this.flightStartY = y;
+    }
+
+    /** Restarts all airborne physics after landing, a world reset, or a setback. */
+    public void resetAirborneState(double y) {
+        this.airTicks = 0;
+        this.airStartY = y;
+        this.previousDeltaY = 0;
+        this.lastDeltaY = 0;
+        resetFlightTracking(y);
+    }
+
     /** 世界切换 / 传送 / 重生后重置移动轨迹，避免跨位置误判 */
     public void resetMovement(Location current) {
         this.lastLocation = current;
         this.lastValidLocation = current;
-        this.airTicks = 0;
-        this.hoverTicks = 0;
-        this.staticHoverCount = 0;
+        resetAirborneState(current == null ? 0 : current.getY());
         this.supportedTicks = 0;
         this.lastDeltaXZ = 0;
-        this.lastDeltaY = 0;
         this.lastMovementDelta = new Vector();
         this.collisionBelow = true;
         this.inWeb = false;
         this.nearHoney = false;
-        this.airStartY = current == null ? 0 : current.getY();
         this.speedWindow.clear();
         this.moveTimes.clear();
         this.rotationHistory.clear();
