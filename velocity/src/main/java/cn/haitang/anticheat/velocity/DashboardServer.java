@@ -47,28 +47,35 @@ final class DashboardServer {
     private static final long DAY_MILLIS = 86_400_000L;
 
     private final JdbcNetworkStore store;
-    private final IntSupplier onlinePlayers;
+    private final NetworkControl control;
+    private final VelocityUpdateManager updateManager;
+    private final ProtectionState protection;
     private final Consumer<UUID> invalidateBanCache;
     private final HttpServer server;
     private final ThreadPoolExecutor executor;
     private final AdminAuthService adminAuth;
     private final String indexHtml;
     private final String publicUrl;
+    private final String serverId;
     private final RateLimiter appealLimiter = new RateLimiter(20, 60_000L);
     private final OneTimeLoginTokens loginTokens = new OneTimeLoginTokens();
 
-    private DashboardServer(JdbcNetworkStore store, IntSupplier onlinePlayers,
+    private DashboardServer(JdbcNetworkStore store, NetworkControl control,
+                            VelocityUpdateManager updateManager, ProtectionState protection,
                             Consumer<UUID> invalidateBanCache, HttpServer server,
                             ThreadPoolExecutor executor, AdminAuthService adminAuth, String indexHtml,
-                            String publicUrl) {
+                            String publicUrl, String serverId) {
         this.store = store;
-        this.onlinePlayers = onlinePlayers;
+        this.control = control;
+        this.updateManager = updateManager;
+        this.protection = protection;
         this.invalidateBanCache = invalidateBanCache;
         this.server = server;
         this.executor = executor;
         this.adminAuth = adminAuth;
         this.indexHtml = indexHtml;
         this.publicUrl = publicUrl;
+        this.serverId = serverId;
     }
 
     static DashboardServer start(JdbcNetworkStore store, IntSupplier onlinePlayers,
@@ -86,6 +93,21 @@ final class DashboardServer {
                                  Consumer<UUID> invalidateBanCache,
                                  VelocitySettings settings, Logger logger,
                                  AdminAuthService injectedAuth) throws IOException {
+        return start(store, controlFrom(onlinePlayers), null, ProtectionState.fromSettings(settings),
+                invalidateBanCache, settings, logger, injectedAuth);
+    }
+
+    static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
+                                 VelocityUpdateManager updateManager, ProtectionState protection,
+                                 Consumer<UUID> invalidateBanCache, VelocitySettings settings,
+                                 Logger logger) throws IOException {
+        return start(store, control, updateManager, protection, invalidateBanCache, settings, logger, null);
+    }
+
+    static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
+                                 VelocityUpdateManager updateManager, ProtectionState protection,
+                                 Consumer<UUID> invalidateBanCache, VelocitySettings settings,
+                                 Logger logger, AdminAuthService injectedAuth) throws IOException {
         String html;
         try (InputStream input = DashboardServer.class.getResourceAsStream("/web/index.html")) {
             if (input == null) throw new IOException("bundled web/index.html is missing");
@@ -102,13 +124,22 @@ final class DashboardServer {
         AdminAuthService adminAuth = injectedAuth == null
                 ? new AdminAuthService(token, settings) : injectedAuth;
         DashboardServer dashboard = new DashboardServer(
-                store, onlinePlayers, invalidateBanCache, server, executor, adminAuth, html,
-                settings.webPublicUrl());
+                store, control, updateManager, protection, invalidateBanCache, server, executor,
+                adminAuth, html, settings.webPublicUrl(), settings.serverId());
         dashboard.register();
         server.start();
         logger.info("Sayaka 统一面板已启动: {}", dashboard.displayUrl());
         if (generated) logger.warn("未设置 SAYAKA_ADMIN_TOKEN，本次临时管理令牌: {}", token);
         return dashboard;
+    }
+
+    private static NetworkControl controlFrom(IntSupplier onlinePlayers) {
+        return new NetworkControl() {
+            @Override public int onlineCount() { return onlinePlayers.getAsInt(); }
+            @Override public List<OnlinePlayer> onlinePlayers() { return List.of(); }
+            @Override public boolean kick(UUID playerId, String reason) { return false; }
+            @Override public List<ServerNode> servers() { return List.of(); }
+        };
     }
 
     void stop() {
@@ -156,6 +187,13 @@ final class DashboardServer {
         server.createContext("/api/admin/whitelist/add", wrap(admin(this::addWhitelist)));
         server.createContext("/api/admin/whitelist/remove", wrap(admin(this::removeWhitelist)));
         server.createContext("/api/admin/whitelist", wrap(admin(this::whitelist)));
+        server.createContext("/api/admin/system/update/check", wrap(admin(this::updateCheck)));
+        server.createContext("/api/admin/system/update/download", wrap(admin(this::updateDownload)));
+        server.createContext("/api/admin/system", wrap(admin(this::systemInfo)));
+        server.createContext("/api/admin/network/players/kick", wrap(admin(this::kickPlayer)));
+        server.createContext("/api/admin/network/players", wrap(admin(this::networkPlayers)));
+        server.createContext("/api/admin/network/servers", wrap(admin(this::networkServers)));
+        server.createContext("/api/admin/protection/set", wrap(admin(this::setProtection)));
         server.createContext("/", wrap(this::staticFile));
     }
 
@@ -245,7 +283,7 @@ final class DashboardServer {
         validateRange(from, to);
         DashboardOverview value = store.dashboardOverview(from, to, DAY_MILLIS, now);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("onlinePlayers", onlinePlayers.getAsInt());
+        body.put("onlinePlayers", control.onlineCount());
         body.put("from", from);
         body.put("to", to);
         body.put("totalPunishments", value.totalPunishments());
@@ -412,6 +450,150 @@ final class DashboardServer {
         exchange.getResponseHeaders().set("Content-Disposition",
                 "attachment; filename=\"sayaka-punishments.csv\"");
         sendText(exchange, 200, csv.toString(), "text/csv; charset=utf-8");
+    }
+
+    private void systemInfo(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "GET");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("serverId", serverId);
+        body.put("onlinePlayers", control.onlineCount());
+        body.put("databaseOnline", store.healthCheck());
+        body.put("update", updateMap());
+        sendJson(exchange, 200, body);
+    }
+
+    private void updateCheck(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        requireUpdateManager();
+        runUpdate(updateManager::check);
+        sendJson(exchange, 200, Map.of("ok", true, "update", updateMap()));
+    }
+
+    private void updateDownload(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        requireUpdateManager();
+        runUpdate(updateManager::download);
+        sendJson(exchange, 200, Map.of("ok", true, "update", updateMap()));
+    }
+
+    private void requireUpdateManager() {
+        if (updateManager == null) throw new HttpError(503, "更新功能未启用");
+    }
+
+    private void runUpdate(UpdateAction action) {
+        try {
+            action.run();
+        } catch (IllegalStateException busy) {
+            throw new HttpError(409, busy.getMessage());
+        } catch (IOException error) {
+            throw new HttpError(502, "更新操作失败：" + safeMessage(error));
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new HttpError(502, "更新操作被中断");
+        }
+    }
+
+    private Map<String, Object> updateMap() {
+        Map<String, Object> map = new LinkedHashMap<>();
+        if (updateManager == null) {
+            map.put("enabled", false);
+            return map;
+        }
+        VelocityUpdateManager.Snapshot snapshot = updateManager.snapshot();
+        map.put("enabled", true);
+        map.put("currentVersion", snapshot.currentVersion());
+        map.put("lastCheckedAt", snapshot.lastCheckedAt());
+        map.put("lastError", snapshot.lastError());
+        map.put("available", availableMap(snapshot.available()));
+        map.put("staged", stagedMap(snapshot.staged()));
+        return map;
+    }
+
+    private static Object availableMap(VelocityUpdateManager.Available available) {
+        if (available == null) return null;
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("version", available.version());
+        map.put("tag", available.tag());
+        map.put("pageUrl", available.pageUrl());
+        return map;
+    }
+
+    private static Object stagedMap(VelocityUpdateManager.Staged staged) {
+        if (staged == null) return null;
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("version", staged.version());
+        map.put("fileName", staged.fileName());
+        map.put("path", staged.path());
+        map.put("sizeBytes", staged.sizeBytes());
+        map.put("stagedAt", staged.stagedAt());
+        return map;
+    }
+
+    private void networkPlayers(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "GET");
+        List<Object> items = control.onlinePlayers().stream().map(player -> {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("playerUuid", player.id().toString());
+            map.put("playerName", player.name());
+            map.put("server", player.server());
+            map.put("ping", player.pingMillis());
+            return (Object) map;
+        }).toList();
+        sendJson(exchange, 200, Map.of("players", items, "total", items.size()));
+    }
+
+    private void kickPlayer(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        Map<String, Object> json = readJson(exchange);
+        UUID id = uuidValue(json.get("uuid"));
+        String reason = truncate(string(json.get("reason")).trim(), MAX_REASON_LENGTH);
+        if (reason.isEmpty()) reason = "你已被管理员从服务器踢出";
+        if (!control.kick(id, reason)) throw new HttpError(404, "该玩家当前不在线");
+        sendJson(exchange, 200, Map.of("ok", true));
+    }
+
+    private void networkServers(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "GET");
+        var seen = new java.util.LinkedHashSet<String>();
+        List<Object> items = new java.util.ArrayList<>();
+        for (NetworkControl.ServerNode node : control.servers()) {
+            seen.add(node.name().toLowerCase(java.util.Locale.ROOT));
+            items.add(serverMap(node.name(), node.playerCount(), node.reachable(), node.pingMillis()));
+        }
+        for (String name : protection.knownOverrides().keySet()) {
+            if (seen.add(name)) items.add(serverMap(name, 0, false, -1L));
+        }
+        sendJson(exchange, 200, Map.of("defaultEnabled", protection.defaultEnabled(), "servers", items));
+    }
+
+    private Map<String, Object> serverMap(String name, int playerCount, boolean reachable, long ping) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("name", name);
+        map.put("playerCount", playerCount);
+        map.put("reachable", reachable);
+        map.put("ping", ping);
+        map.put("protectionEnabled", protection.enabledFor(name));
+        map.put("source", protection.hasRuntimeOverride(name) ? "override"
+                : protection.hasConfigOverride(name) ? "config" : "default");
+        return map;
+    }
+
+    private void setProtection(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        Map<String, Object> json = readJson(exchange);
+        String server = string(json.get("server")).trim();
+        if (server.isEmpty()) throw new HttpError(400, "缺少服务器名称");
+        if (server.length() > 64) throw new HttpError(400, "服务器名称过长");
+        if (Boolean.TRUE.equals(json.get("reset"))) {
+            store.clearProtectionOverride(server);
+            protection.clearRuntimeOverride(server);
+        } else if (json.get("enabled") instanceof Boolean enabled) {
+            store.setProtectionOverride(server, enabled, System.currentTimeMillis());
+            protection.setRuntimeOverride(server, enabled);
+        } else {
+            throw new HttpError(400, "缺少 enabled 布尔值");
+        }
+        sendJson(exchange, 200, Map.of("ok", true, "protectionEnabled", protection.enabledFor(server)));
     }
 
     private PunishmentFilter punishmentFilter(HttpExchange exchange) {
@@ -659,6 +841,11 @@ final class DashboardServer {
         return value.length() <= length ? value : value.substring(0, length);
     }
 
+    private static String safeMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+    }
+
     private static String csvCell(String value) {
         String safe = value == null ? "" : value;
         if (!safe.isEmpty() && "=+-@".indexOf(safe.charAt(0)) >= 0) safe = "'" + safe;
@@ -672,6 +859,11 @@ final class DashboardServer {
     @FunctionalInterface
     private interface ThrowingHandler {
         void handle(HttpExchange exchange) throws Exception;
+    }
+
+    @FunctionalInterface
+    private interface UpdateAction {
+        void run() throws IOException, InterruptedException;
     }
 
     private static final class HttpError extends RuntimeException {

@@ -14,6 +14,8 @@ import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
+import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.proxy.server.ServerPing;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -24,9 +26,13 @@ import org.slf4j.Logger;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -46,6 +52,8 @@ public final class SayakaVelocityPlugin {
 
     private VelocitySettings settings;
     private JdbcNetworkStore store;
+    private ProtectionState protection;
+    private VelocityUpdateManager updateManager;
     private DashboardServer dashboard;
     private ScheduledTask recoveryTask;
     private volatile boolean databaseReady;
@@ -66,6 +74,8 @@ public final class SayakaVelocityPlugin {
             logger.error("Sayaka Velocity 配置加载失败，插件未启动", error);
             return;
         }
+        protection = ProtectionState.fromSettings(settings);
+        updateManager = new VelocityUpdateManager(pluginVersion(), dataDirectory.resolve("updates"));
         recoverServices();
         proxy.getChannelRegistrar().register(WEB_LOGIN_CHANNEL);
         recoveryTask = proxy.getScheduler().buildTask(this, this::recoverServices)
@@ -76,7 +86,7 @@ public final class SayakaVelocityPlugin {
     @Subscribe
     public EventTask onServerPreConnect(ServerPreConnectEvent event) {
         String serverName = event.getOriginalServer().getServerInfo().getName();
-        if (store == null || !settings.protectionEnabledFor(serverName)) return null;
+        if (store == null || !protection.enabledFor(serverName)) return null;
         return EventTask.async(() -> lookupBan(event.getPlayer().getUniqueId(), true).ifPresent(ban -> {
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
             event.getPlayer().disconnect(denial(ban));
@@ -125,14 +135,85 @@ public final class SayakaVelocityPlugin {
                 logger.warn("Sayaka 群组数据库不可用；缓存封禁继续生效，未知玩家放行: {}", error.getMessage());
                 return;
             }
+            try {
+                protection.loadRuntimeOverrides(store.protectionOverrides());
+            } catch (SQLException error) {
+                logger.warn("Sayaka 保护开关覆盖读取失败，暂用配置文件默认值: {}", error.getMessage());
+            }
         }
         if (settings.webEnabled() && dashboard == null) {
             try {
-                dashboard = DashboardServer.start(store, proxy::getPlayerCount, banCache::remove, settings, logger);
+                dashboard = DashboardServer.start(store, networkControl(), updateManager, protection,
+                        banCache::remove, settings, logger);
             } catch (Exception error) {
                 logger.warn("Sayaka Web 面板暂未启动，将在 30 秒后重试: {}", error.getMessage());
             }
         }
+    }
+
+    private String pluginVersion() {
+        return proxy.getPluginManager().getPlugin("sayaka-anticheat")
+                .flatMap(container -> container.getDescription().getVersion())
+                .orElse("0.0.0");
+    }
+
+    private NetworkControl networkControl() {
+        return new NetworkControl() {
+            @Override
+            public int onlineCount() {
+                return proxy.getPlayerCount();
+            }
+
+            @Override
+            public List<OnlinePlayer> onlinePlayers() {
+                List<OnlinePlayer> players = new ArrayList<>();
+                for (var player : proxy.getAllPlayers()) {
+                    String server = player.getCurrentServer()
+                            .map(connection -> connection.getServerInfo().getName()).orElse("—");
+                    players.add(new OnlinePlayer(player.getUniqueId(), player.getUsername(),
+                            server, Math.max(-1L, player.getPing())));
+                }
+                players.sort(Comparator.comparing(OnlinePlayer::name, String.CASE_INSENSITIVE_ORDER));
+                return players;
+            }
+
+            @Override
+            public boolean kick(UUID playerId, String reason) {
+                return proxy.getPlayer(playerId).map(player -> {
+                    player.disconnect(Component.text(reason, NamedTextColor.RED));
+                    return true;
+                }).orElse(false);
+            }
+
+            @Override
+            public List<ServerNode> servers() {
+                List<RegisteredServer> registered = new ArrayList<>(proxy.getAllServers());
+                List<CompletableFuture<ServerPing>> pings = registered.stream()
+                        .map(RegisteredServer::ping).toList();
+                long deadline = System.nanoTime() + Duration.ofMillis(1500).toNanos();
+                List<ServerNode> nodes = new ArrayList<>();
+                for (int i = 0; i < registered.size(); i++) {
+                    RegisteredServer server = registered.get(i);
+                    boolean reachable = false;
+                    long pingMillis = -1L;
+                    long start = System.nanoTime();
+                    try {
+                        long remaining = Math.max(1L, (deadline - start) / 1_000_000L);
+                        pings.get(i).get(remaining, TimeUnit.MILLISECONDS);
+                        reachable = true;
+                        pingMillis = (System.nanoTime() - start) / 1_000_000L;
+                    } catch (Exception unreachable) {
+                        if (unreachable instanceof InterruptedException) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    nodes.add(new ServerNode(server.getServerInfo().getName(),
+                            server.getPlayersConnected().size(), reachable, pingMillis));
+                }
+                nodes.sort(Comparator.comparing(ServerNode::name, String.CASE_INSENSITIVE_ORDER));
+                return nodes;
+            }
+        };
     }
 
     private Optional<ActiveBan> lookupBan(UUID playerId, boolean forceRefresh) {

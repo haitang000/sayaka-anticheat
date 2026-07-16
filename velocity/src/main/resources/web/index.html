@@ -53,7 +53,7 @@
       ConfigProvider, theme, Layout, Typography, Segmented, Card, Input, Button, Form,
       Row, Col, Statistic, Table, Tag, Drawer, Descriptions, Space, Empty, Modal,
       message, Alert, Spin, Tabs, Select, DatePicker, Checkbox, AutoComplete, Timeline,
-      Divider, Tooltip
+      Divider, Tooltip, Switch
     } = antd;
     const Icons = window.icons || {};
     const { Header, Content } = Layout;
@@ -661,6 +661,172 @@
       </>;
     }
 
+    function OnlinePlayersPanel({ token, onUnauthorized }) {
+      const [data, setData] = useState({ players: [], total: 0 });
+      const [loading, setLoading] = useState(false);
+      const [query, setQuery] = useState('');
+      const [playerUuid, setPlayerUuid] = useState(null);
+      const load = useCallback(async () => {
+        setLoading(true);
+        try { setData(await api('/api/admin/network/players', { token })); }
+        catch (error) { if (error.status === 401) onUnauthorized(); else message.error(error.message); }
+        finally { setLoading(false); }
+      }, [token, onUnauthorized]);
+      useEffect(() => { load(); }, [load]);
+      const kick = (row) => Modal.confirm({ title: '将 ' + row.playerName + ' 踢出服务器？',
+        okButtonProps: { danger: true }, onOk: async () => {
+          try { await api('/api/admin/network/players/kick', { method: 'POST', token, body: { uuid: row.playerUuid } });
+            message.success('已踢出玩家'); load(); }
+          catch (error) { message.error(error.message); }
+        }});
+      const normalized = query.trim().toLowerCase();
+      const rows = normalized ? data.players.filter((p) =>
+        p.playerName.toLowerCase().includes(normalized) || p.playerUuid.toLowerCase().includes(normalized)
+        || (p.server || '').toLowerCase().includes(normalized)) : data.players;
+      const columns = [
+        { title: '玩家', dataIndex: 'playerName', render: (value, row) => <Button type="link" className="player-link" onClick={() => setPlayerUuid(row.playerUuid)}>{value}</Button> },
+        { title: '所在节点', dataIndex: 'server', width: 160 },
+        { title: '延迟', dataIndex: 'ping', width: 110, render: (value) => value < 0 ? <Text type="secondary">—</Text> : value + ' ms' },
+        { title: '操作', key: 'op', width: 130, render: (_, row) => <Space size="small" className="table-actions">
+          <Button size="small" icon={icon('FileSearchOutlined')} onClick={() => setPlayerUuid(row.playerUuid)}>档案</Button>
+          <Tooltip title="踢出"><Button size="small" danger icon={icon('LogoutOutlined')} onClick={() => kick(row)} /></Tooltip>
+        </Space> },
+      ];
+      return <>
+        <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>在线玩家 <Text type="secondary" style={{ fontSize: 14 }}>· {data.total}</Text></Title>
+          <Tooltip title="刷新"><Button icon={icon('ReloadOutlined')} onClick={load} loading={loading} /></Tooltip></div>
+        <div className="filter-row">
+          <Input className="filter-search" prefix={icon('SearchOutlined')} allowClear placeholder="玩家、UUID 或节点"
+            value={query} onChange={(event) => setQuery(event.target.value)} />
+        </div>
+        <Table rowKey="playerUuid" size="small" loading={loading} dataSource={rows} columns={columns}
+          scroll={{ x: 620 }} locale={{ emptyText: <Empty description="当前没有在线玩家" /> }}
+          pagination={{ pageSize: 20, showTotal: (total) => '共 ' + total + ' 人' }} />
+        <PlayerDrawer token={token} playerUuid={playerUuid} open={!!playerUuid} onClose={() => setPlayerUuid(null)} onChanged={load} />
+      </>;
+    }
+
+    function SOURCE_META(source) {
+      return { override: { color: 'blue', label: '面板覆盖' }, config: { color: 'geekblue', label: '配置文件' } }[source]
+        || { color: 'default', label: '默认' };
+    }
+
+    function ServerNodesPanel({ token, onUnauthorized }) {
+      const [data, setData] = useState({ defaultEnabled: true, servers: [] });
+      const [loading, setLoading] = useState(false);
+      const [savingKey, setSavingKey] = useState(null);
+      const load = useCallback(async () => {
+        setLoading(true);
+        try { setData(await api('/api/admin/network/servers', { token })); }
+        catch (error) { if (error.status === 401) onUnauthorized(); else message.error(error.message); }
+        finally { setLoading(false); }
+      }, [token, onUnauthorized]);
+      useEffect(() => { load(); }, [load]);
+      const setProtection = async (name, body) => {
+        setSavingKey(name);
+        try { await api('/api/admin/protection/set', { method: 'POST', token, body: { server: name, ...body } });
+          message.success('保护设置已更新'); await load(); }
+        catch (error) { message.error(error.message); }
+        finally { setSavingKey(null); }
+      };
+      const columns = [
+        { title: '节点', dataIndex: 'name', render: (value) => <Text strong>{value}</Text> },
+        { title: '在线', dataIndex: 'playerCount', width: 80 },
+        { title: '状态', dataIndex: 'reachable', width: 130, render: (value, row) => value
+          ? <Tag color="green">可达{row.ping >= 0 ? ' · ' + row.ping + 'ms' : ''}</Tag> : <Tag color="red">不可达</Tag> },
+        { title: '反作弊保护', dataIndex: 'protectionEnabled', width: 120, render: (value, row) =>
+          <Switch checked={value} loading={savingKey === row.name}
+            onChange={(checked) => setProtection(row.name, { enabled: checked })} /> },
+        { title: '来源', dataIndex: 'source', width: 110, render: (value) => { const m = SOURCE_META(value); return <Tag color={m.color}>{m.label}</Tag>; } },
+        { title: '操作', key: 'op', width: 110, render: (_, row) => row.source === 'override'
+          ? <Button size="small" icon={icon('RollbackOutlined')} loading={savingKey === row.name}
+              onClick={() => setProtection(row.name, { reset: true })}>重置</Button>
+          : <Text type="secondary">—</Text> },
+      ];
+      return <>
+        <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>节点状态与保护</Title>
+          <Tooltip title="刷新"><Button icon={icon('ReloadOutlined')} onClick={load} loading={loading} /></Tooltip></div>
+        <Alert style={{ marginBottom: 14 }} type="info" showIcon
+          message={<span>未单独设置的节点默认<Text strong>{data.defaultEnabled ? '启用' : '停用'}</Text>反作弊保护。切换开关会立即生效并持久化，重启后依然保留。</span>} />
+        <Table rowKey="name" size="small" loading={loading} dataSource={data.servers} columns={columns}
+          scroll={{ x: 640 }} locale={{ emptyText: <Empty description="未发现后端节点" /> }} pagination={false} />
+      </>;
+    }
+
+    function fmtBytes(bytes) {
+      if (!bytes && bytes !== 0) return '—';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+    }
+
+    function SystemPanel({ token, onUnauthorized }) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [checking, setChecking] = useState(false);
+      const [downloading, setDownloading] = useState(false);
+      const load = useCallback(async () => {
+        setLoading(true);
+        try { setData(await api('/api/admin/system', { token })); }
+        catch (error) { if (error.status === 401) onUnauthorized(); else message.error(error.message); }
+        finally { setLoading(false); }
+      }, [token, onUnauthorized]);
+      useEffect(() => { load(); }, [load]);
+      const check = async () => {
+        setChecking(true);
+        try { const res = await api('/api/admin/system/update/check', { method: 'POST', token });
+          setData((prev) => ({ ...(prev || {}), update: res.update }));
+          message.success(res.update.available ? '发现新版本' : '当前已是最新版本'); }
+        catch (error) { message.error(error.message); }
+        finally { setChecking(false); }
+      };
+      const download = async () => {
+        setDownloading(true);
+        try { const res = await api('/api/admin/system/update/download', { method: 'POST', token });
+          setData((prev) => ({ ...(prev || {}), update: res.update }));
+          message.success('新版本已下载并暂存'); }
+        catch (error) { message.error(error.message); }
+        finally { setDownloading(false); }
+      };
+      const update = data && data.update;
+      const available = update && update.available;
+      const staged = update && update.staged;
+      return <Spin spinning={loading}>
+        <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>系统与更新</Title>
+          <Tooltip title="刷新"><Button icon={icon('ReloadOutlined')} onClick={load} /></Tooltip></div>
+        <Row gutter={[12, 12]}>
+          <Col xs={12} md={6}><Card><Statistic title="当前版本" value={(update && update.currentVersion) || '—'} /></Card></Col>
+          <Col xs={12} md={6}><Card><Statistic title="节点 ID" value={(data && data.serverId) || '—'} /></Card></Col>
+          <Col xs={12} md={6}><Card><Statistic title="在线玩家" value={data ? data.onlinePlayers : '—'} /></Card></Col>
+          <Col xs={12} md={6}><Card><Statistic title="群组数据库" value=" "
+            formatter={() => !data ? '—' : (data.databaseOnline ? <Tag color="green">正常</Tag> : <Tag color="red">离线</Tag>)} /></Card></Col>
+        </Row>
+        <Card style={{ marginTop: 12 }} title={<Space>{icon('CloudDownloadOutlined')}一键更新</Space>}>
+          {update && !update.enabled && <Alert type="warning" showIcon message="更新功能未启用" />}
+          {update && update.enabled && <>
+            <Space wrap style={{ marginBottom: 12 }}>
+              <Button type="primary" icon={icon('SyncOutlined')} loading={checking} onClick={check}>检查更新</Button>
+              <Text type="secondary">上次检查：{fmt(update.lastCheckedAt)}</Text>
+            </Space>
+            {update.lastError && <Alert style={{ marginBottom: 12 }} type="error" showIcon message="上次操作失败" description={update.lastError} />}
+            {!available && <Alert type="success" showIcon message={'已是最新版本（' + update.currentVersion + '）'} />}
+            {available && <Alert type="info" showIcon
+              message={<span>发现新版本 <Text strong>{available.version}</Text>（当前 {update.currentVersion}）</span>}
+              description={<Space direction="vertical" size={4}>
+                <a href={available.pageUrl} target="_blank" rel="noreferrer">查看发布说明 →</a>
+                <Button type="primary" icon={icon('CloudDownloadOutlined')} loading={downloading} onClick={download}>下载并暂存</Button>
+              </Space>} />}
+            {staged && <Alert style={{ marginTop: 12 }} type="success" showIcon
+              message={'已下载 ' + staged.version + '（' + fmtBytes(staged.sizeBytes) + '）'}
+              description={<div>
+                <Paragraph style={{ marginBottom: 6 }}>已保存到：<Text code copyable>{staged.path}</Text></Paragraph>
+                <Text type="secondary">用该文件替换 Velocity <Text code>plugins</Text> 目录中旧的插件 jar，然后重启代理即可生效（面板不会自动热替换正在运行的代理插件）。</Text>
+              </div>} />}
+          </>}
+        </Card>
+      </Spin>;
+    }
+
     function AdminDashboard({ token, onLogout, dark }) {
       const [tab, setTab] = useState('overview');
       const [filters, setFilters] = useState({ servers: [], checks: [] });
@@ -674,7 +840,10 @@
         { key: 'overview', label: <Space>{icon('DashboardOutlined')}概览</Space>, children: <OverviewPanel token={token} dark={dark} onUnauthorized={unauthorized} /> },
         { key: 'punishments', label: <Space>{icon('SafetyCertificateOutlined')}处罚</Space>, children: <PunishmentsPanel token={token} filters={filters} onUnauthorized={unauthorized} /> },
         { key: 'appeals', label: <Space>{icon('AuditOutlined')}申诉</Space>, children: <AppealsPanel token={token} onUnauthorized={unauthorized} /> },
+        { key: 'players', label: <Space>{icon('UserOutlined')}在线玩家</Space>, children: <OnlinePlayersPanel token={token} onUnauthorized={unauthorized} /> },
+        { key: 'nodes', label: <Space>{icon('CloudServerOutlined')}节点</Space>, children: <ServerNodesPanel token={token} onUnauthorized={unauthorized} /> },
         { key: 'whitelist', label: <Space>{icon('TeamOutlined')}白名单</Space>, children: <WhitelistPanel token={token} onUnauthorized={unauthorized} /> },
+        { key: 'system', label: <Space>{icon('SettingOutlined')}系统</Space>, children: <SystemPanel token={token} onUnauthorized={unauthorized} /> },
       ];
       return <>
         <div className="admin-topbar">

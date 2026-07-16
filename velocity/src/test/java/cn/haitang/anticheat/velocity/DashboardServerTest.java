@@ -270,6 +270,89 @@ class DashboardServerTest {
         }
     }
 
+    @Test
+    void servesSystemNetworkStatusAndRuntimeProtectionToggles() throws Exception {
+        String database = "dashboard_ops_" + UUID.randomUUID().toString().replace("-", "");
+        DatabaseConfig databaseConfig = new DatabaseConfig(
+                "jdbc:h2:mem:" + database + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
+                "sa", "");
+        JdbcNetworkStore store = new JdbcNetworkStore(databaseConfig);
+        store.initialize();
+        UUID alice = UUID.randomUUID();
+        AtomicReference<UUID> kicked = new AtomicReference<>();
+        NetworkControl control = new NetworkControl() {
+            @Override public int onlineCount() { return 3; }
+            @Override public List<OnlinePlayer> onlinePlayers() {
+                return List.of(new OnlinePlayer(alice, "Alice", "lobby", 42L));
+            }
+            @Override public boolean kick(UUID playerId, String reason) {
+                if (!alice.equals(playerId)) return false;
+                kicked.set(playerId);
+                return true;
+            }
+            @Override public List<ServerNode> servers() {
+                return List.of(new ServerNode("lobby", 1, true, 5L),
+                        new ServerNode("survival", 0, false, -1L));
+            }
+        };
+        VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
+        ProtectionState protection = ProtectionState.fromSettings(settings);
+        VelocityUpdateManager updateManager = new VelocityUpdateManager(
+                "2.1.0.5", tempDir.resolve("updates"));
+        DashboardServer dashboard = DashboardServer.start(store, control, updateManager, protection,
+                ignored -> {}, settings, LoggerFactory.getLogger("dashboard-ops-test"));
+        try {
+            URI root = URI.create("http://127.0.0.1:" + dashboard.port());
+            HttpClient client = HttpClient.newHttpClient();
+
+            assertEquals(401, client.send(HttpRequest.newBuilder(root.resolve("/api/admin/system")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString()).statusCode());
+            String session = login(client, root, "test-token");
+
+            Map<String, Object> system = Json.parseObject(get(client, root.resolve("/api/admin/system"), session).body());
+            assertEquals(3L, ((Number) system.get("onlinePlayers")).longValue());
+            assertEquals(Boolean.TRUE, system.get("databaseOnline"));
+            Map<?, ?> update = (Map<?, ?>) system.get("update");
+            assertEquals(Boolean.TRUE, update.get("enabled"));
+            assertEquals("2.1.0.5", update.get("currentVersion"));
+
+            Map<String, Object> players = Json.parseObject(
+                    get(client, root.resolve("/api/admin/network/players"), session).body());
+            assertEquals(1L, ((Number) players.get("total")).longValue());
+            assertTrue(players.toString().contains("Alice"));
+
+            assertEquals(200, post(client, root.resolve("/api/admin/network/players/kick"),
+                    Map.of("uuid", alice.toString()), session).statusCode());
+            assertEquals(alice, kicked.get());
+            assertEquals(404, post(client, root.resolve("/api/admin/network/players/kick"),
+                    Map.of("uuid", UUID.randomUUID().toString()), session).statusCode());
+
+            Map<String, Object> servers = Json.parseObject(
+                    get(client, root.resolve("/api/admin/network/servers"), session).body());
+            assertEquals(Boolean.TRUE, servers.get("defaultEnabled"));
+            assertEquals(2, ((List<?>) servers.get("servers")).size());
+
+            HttpResponse<String> disable = post(client, root.resolve("/api/admin/protection/set"),
+                    Map.of("server", "lobby", "enabled", false), session);
+            assertEquals(200, disable.statusCode());
+            assertEquals(Boolean.FALSE, Json.parseObject(disable.body()).get("protectionEnabled"));
+            assertFalse(protection.enabledFor("lobby"));
+            assertEquals(Boolean.FALSE, store.protectionOverrides().get("lobby"));
+
+            HttpResponse<String> reset = post(client, root.resolve("/api/admin/protection/set"),
+                    Map.of("server", "lobby", "reset", true), session);
+            assertEquals(200, reset.statusCode());
+            assertTrue(protection.enabledFor("lobby"));
+            assertTrue(store.protectionOverrides().isEmpty());
+
+            assertEquals(400, post(client, root.resolve("/api/admin/protection/set"),
+                    Map.of("server", "lobby"), session).statusCode());
+        } finally {
+            dashboard.stop();
+        }
+    }
+
     private static String login(HttpClient client, URI root, String token) throws Exception {
         HttpResponse<String> response = loginResponse(client, root, token, null, null);
         assertEquals(200, response.statusCode());

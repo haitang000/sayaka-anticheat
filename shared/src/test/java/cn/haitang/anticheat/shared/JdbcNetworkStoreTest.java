@@ -62,6 +62,24 @@ class JdbcNetworkStoreTest {
     }
 
     @Test
+    void persistsAndClearsPerServerProtectionOverrides() throws Exception {
+        assertTrue(store.protectionOverrides().isEmpty());
+
+        store.setProtectionOverride("Lobby", false, 1_000L);
+        store.setProtectionOverride("survival", true, 1_001L);
+        assertEquals(Boolean.FALSE, store.protectionOverrides().get("lobby"));
+        assertEquals(Boolean.TRUE, store.protectionOverrides().get("survival"));
+
+        store.setProtectionOverride("lobby", true, 1_002L);
+        assertEquals(Boolean.TRUE, store.protectionOverrides().get("lobby"));
+
+        assertTrue(store.clearProtectionOverride("LOBBY"));
+        assertFalse(store.clearProtectionOverride("lobby"));
+        assertFalse(store.protectionOverrides().containsKey("lobby"));
+        assertEquals(1, store.protectionOverrides().size());
+    }
+
+    @Test
     void concurrentServersReuseTheSameActivePunishment() throws Exception {
         UUID player = UUID.randomUUID();
         long now = System.currentTimeMillis();

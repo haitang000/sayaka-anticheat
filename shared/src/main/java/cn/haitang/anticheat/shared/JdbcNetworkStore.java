@@ -81,7 +81,10 @@ public final class JdbcNetworkStore {
                         + "punishment_id VARCHAR(36) PRIMARY KEY, player_name VARCHAR(64) NOT NULL, "
                         + "reason_text VARCHAR(2000) NOT NULL, contact_text VARCHAR(200) NOT NULL, "
                         + "submitted_at BIGINT NOT NULL, status VARCHAR(16) NOT NULL, "
-                        + "resolved_at BIGINT NOT NULL DEFAULT 0, note_text VARCHAR(2000) NOT NULL)"
+                        + "resolved_at BIGINT NOT NULL DEFAULT 0, note_text VARCHAR(2000) NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS sayaka_protection_overrides ("
+                        + "server_name VARCHAR(64) PRIMARY KEY, enabled BOOLEAN NOT NULL, "
+                        + "updated_at BIGINT NOT NULL)"
         );
         List<String> indexes = List.of(
                 "CREATE INDEX sayaka_strikes_player_at ON sayaka_strikes(player_uuid, created_at)",
@@ -652,6 +655,53 @@ public final class JdbcNetworkStore {
                 throw error;
             }
         }
+    }
+
+    /** Reads every persisted per-server protection override, keyed by lower-cased server name. */
+    public Map<String, Boolean> protectionOverrides() throws SQLException {
+        Map<String, Boolean> overrides = new java.util.LinkedHashMap<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT server_name,enabled FROM sayaka_protection_overrides ORDER BY server_name")) {
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    overrides.put(result.getString("server_name"), result.getBoolean("enabled"));
+                }
+            }
+        }
+        return overrides;
+    }
+
+    /** Persists a per-server protection override, replacing any existing value for that server. */
+    public void setProtectionOverride(String serverName, boolean enabled, long now) throws SQLException {
+        String normalized = normalizeServerName(serverName);
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try {
+                execute(connection, "DELETE FROM sayaka_protection_overrides WHERE server_name=?", normalized);
+                execute(connection, "INSERT INTO sayaka_protection_overrides"
+                        + "(server_name,enabled,updated_at) VALUES(?,?,?)", normalized, enabled, now);
+                connection.commit();
+            } catch (SQLException | RuntimeException error) {
+                connection.rollback();
+                throw error;
+            }
+        }
+    }
+
+    /** Removes a per-server protection override, reverting that server to the configured default. */
+    public boolean clearProtectionOverride(String serverName) throws SQLException {
+        try (Connection connection = open()) {
+            return execute(connection, "DELETE FROM sayaka_protection_overrides WHERE server_name=?",
+                    normalizeServerName(serverName)) > 0;
+        }
+    }
+
+    private static String normalizeServerName(String serverName) {
+        if (serverName == null) throw new IllegalArgumentException("server name must not be null");
+        String normalized = serverName.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.isEmpty()) throw new IllegalArgumentException("server name must not be blank");
+        if (normalized.length() > 64) throw new IllegalArgumentException("server name is too long");
+        return normalized;
     }
 
     public List<PlayerReference> searchPlayers(String query, int limit) throws SQLException {
