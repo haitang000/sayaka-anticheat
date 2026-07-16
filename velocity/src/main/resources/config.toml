@@ -10,6 +10,9 @@ password = "${SAYAKA_DATABASE_PASSWORD}"
 enabled = true
 bind = "127.0.0.1"
 port = 8080
+# Public origin used by /sac web links, for example "https://sac.example.com/".
+# Leave empty when the bind address and port are directly reachable by administrators.
+public-url = ""
 admin-token = "${SAYAKA_ADMIN_TOKEN}"
 threads = 4
 

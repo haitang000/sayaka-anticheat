@@ -31,6 +31,7 @@ import java.util.regex.Pattern;
  *   reset <玩家> [all]  清空实时 VL（all 连同 strike/封禁档案）
  *   whitelist <add|remove|list> [玩家]  管理反作弊白名单
  *   unban <玩家> [reset]  解封并可选重置封禁次数阶梯
+ *   web             生成 Velocity 管理后台的一次性登录链接
  *   alerts          开关个人警报
  *   reload          重载配置
  *   update [check]  安装更新并热重载，或仅检查更新
@@ -66,6 +67,7 @@ public class AntiCheatCommand implements TabExecutor {
             case "reset" -> handleReset(sender, args);
             case "whitelist" -> handleWhitelist(sender, args);
             case "unban" -> handleUnban(sender, args);
+            case "web" -> handleWeb(sender);
             default -> sendHelp(sender);
         }
         return true;
@@ -335,6 +337,20 @@ public class AntiCheatCommand implements TabExecutor {
                 Map.of("player", name)));
     }
 
+    private void handleWeb(CommandSender sender) {
+        if (denyIfNoPerm(sender, PERM_ADMIN)) return;
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(plugin.getMessages().prefix() + "§e该命令需要由在线管理员执行，以连接 Velocity。");
+            return;
+        }
+        if (!plugin.isNetworkMode()) {
+            sender.sendMessage(plugin.getMessages().prefix() + "§eWeb 面板仅在 Velocity 群组模式下可用。");
+            return;
+        }
+        player.sendPluginMessage(plugin, AntiCheatPlugin.WEB_LOGIN_CHANNEL, new byte[] {1});
+        sender.sendMessage(plugin.getMessages().prefix() + "§7正在向 Velocity 请求一次性登录链接…");
+    }
+
     private OfflinePlayer requireOfflineTarget(CommandSender sender, String[] args, int index) {
         if (args.length <= index) {
             sendHelp(sender);
@@ -376,6 +392,7 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage("  §e/sac reset <玩家> [all] §7- 清空违规值（all 含档案）");
         sender.sendMessage("  §e/sac whitelist add|remove|list [玩家] §7- 管理检测白名单");
         sender.sendMessage("  §e/sac unban <玩家> [reset] §7- 解封（reset 重置处罚档位）");
+        sender.sendMessage("  §e/sac web §7- 生成管理后台一次性登录链接");
         sender.sendMessage("  §e/sac alerts §7- 开关个人实时警报");
         sender.sendMessage("  §e/sac reload §7- 重载配置");
         sender.sendMessage("  §e/sac update [check] §7- 安装更新并热重载（check 仅检查）");
@@ -385,7 +402,7 @@ public class AntiCheatCommand implements TabExecutor {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
         if (args.length == 1) {
-            for (String sub : List.of("status", "history", "punishment", "reset", "whitelist", "unban", "alerts", "reload", "update")) {
+            for (String sub : List.of("status", "history", "punishment", "reset", "whitelist", "unban", "web", "alerts", "reload", "update")) {
                 if (sub.startsWith(args[0].toLowerCase())) out.add(sub);
             }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("update")) {
@@ -396,6 +413,7 @@ public class AntiCheatCommand implements TabExecutor {
             }
         } else if (args.length == 2 && !args[0].equalsIgnoreCase("alerts")
                 && !args[0].equalsIgnoreCase("reload")
+                && !args[0].equalsIgnoreCase("web")
                 && !args[0].equalsIgnoreCase("update")
                 && !args[0].equalsIgnoreCase("punishment")) {
             for (Player p : Bukkit.getOnlinePlayers()) {

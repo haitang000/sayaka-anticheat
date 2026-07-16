@@ -54,11 +54,14 @@ final class DashboardServer {
     private final ThreadPoolExecutor executor;
     private final String adminToken;
     private final String indexHtml;
+    private final String publicUrl;
     private final RateLimiter appealLimiter = new RateLimiter(20, 60_000L);
+    private final OneTimeLoginTokens loginTokens = new OneTimeLoginTokens();
 
     private DashboardServer(JdbcNetworkStore store, IntSupplier onlinePlayers,
                             Consumer<UUID> invalidateBanCache, HttpServer server,
-                            ThreadPoolExecutor executor, String adminToken, String indexHtml) {
+                            ThreadPoolExecutor executor, String adminToken, String indexHtml,
+                            String publicUrl) {
         this.store = store;
         this.onlinePlayers = onlinePlayers;
         this.invalidateBanCache = invalidateBanCache;
@@ -66,6 +69,7 @@ final class DashboardServer {
         this.executor = executor;
         this.adminToken = adminToken;
         this.indexHtml = indexHtml;
+        this.publicUrl = publicUrl;
     }
 
     static DashboardServer start(JdbcNetworkStore store, IntSupplier onlinePlayers,
@@ -90,10 +94,11 @@ final class DashboardServer {
         boolean generated = settings.adminToken() == null || settings.adminToken().isBlank();
         String token = generated ? UUID.randomUUID().toString().replace("-", "") : settings.adminToken();
         DashboardServer dashboard = new DashboardServer(
-                store, onlinePlayers, invalidateBanCache, server, executor, token, html);
+                store, onlinePlayers, invalidateBanCache, server, executor, token, html,
+                settings.webPublicUrl());
         dashboard.register();
         server.start();
-        logger.info("Sayaka 统一面板已启动: http://{}:{}/", settings.webBind(), settings.webPort());
+        logger.info("Sayaka 统一面板已启动: {}", dashboard.displayUrl());
         if (generated) logger.warn("未设置 SAYAKA_ADMIN_TOKEN，本次临时管理令牌: {}", token);
         return dashboard;
     }
@@ -107,9 +112,27 @@ final class DashboardServer {
         return server.getAddress().getPort();
     }
 
+    String createOneTimeLoginUrl() {
+        return displayUrl() + "#admin-login=" + loginTokens.issue();
+    }
+
+    private String displayUrl() {
+        if (publicUrl != null && !publicUrl.isBlank()) {
+            return publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
+        }
+        String host = server.getAddress().getHostString();
+        if (host.equals("0.0.0.0") || host.equals("::") || host.equals("0:0:0:0:0:0:0:0")) {
+            host = "127.0.0.1";
+        } else if (host.contains(":") && !host.startsWith("[")) {
+            host = "[" + host + "]";
+        }
+        return "http://" + host + ":" + port() + "/";
+    }
+
     private void register() {
         server.createContext("/api/appeal/lookup", wrap(this::appealLookup));
         server.createContext("/api/appeal/submit", wrap(this::appealSubmit));
+        server.createContext("/api/admin/login/exchange", wrap(this::loginExchange));
         server.createContext("/api/admin/overview", wrap(admin(this::overview)));
         server.createContext("/api/admin/filters", wrap(admin(this::filters)));
         server.createContext("/api/admin/punishments/export", wrap(admin(this::exportPunishments)));
@@ -123,6 +146,15 @@ final class DashboardServer {
         server.createContext("/api/admin/whitelist/remove", wrap(admin(this::removeWhitelist)));
         server.createContext("/api/admin/whitelist", wrap(admin(this::whitelist)));
         server.createContext("/", wrap(this::staticFile));
+    }
+
+    private void loginExchange(HttpExchange exchange) throws IOException {
+        requireMethod(exchange, "POST");
+        String ticket = string(readJson(exchange).get("ticket")).trim();
+        if (!loginTokens.redeem(ticket)) {
+            throw new HttpError(401, "一次性登录链接无效、已使用或已过期");
+        }
+        sendJson(exchange, 200, Map.of("token", adminToken));
     }
 
     private void staticFile(HttpExchange exchange) throws IOException {

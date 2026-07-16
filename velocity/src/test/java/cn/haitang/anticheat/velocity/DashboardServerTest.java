@@ -46,7 +46,7 @@ class DashboardServerTest {
         JdbcNetworkStore store = new JdbcNetworkStore(databaseConfig);
         store.initialize();
         VelocitySettings dynamic = new VelocitySettings("velocity-test", databaseConfig,
-                true, "127.0.0.1", 0, "test-token", 1, 1000L);
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
         DashboardServer first = DashboardServer.start(store, () -> 0, dynamic,
                 LoggerFactory.getLogger("dashboard-test"));
         try {
@@ -56,8 +56,25 @@ class DashboardServerTest {
             assertEquals(200, response.statusCode());
             assertTrue(response.body().contains("Sayaka AntiCheat"));
 
+            String loginUrl = first.createOneTimeLoginUrl();
+            assertTrue(loginUrl.startsWith("http://127.0.0.1:" + first.port() + "/#admin-login="));
+            String ticket = new URI(loginUrl).getFragment().substring("admin-login=".length());
+            URI exchange = URI.create("http://127.0.0.1:" + first.port()
+                    + "/api/admin/login/exchange");
+            HttpResponse<String> login = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(exchange).header("Content-Type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("ticket", ticket))))
+                            .build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, login.statusCode());
+            assertEquals("test-token", Json.parseObject(login.body()).get("token"));
+            HttpResponse<String> reused = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(exchange).header("Content-Type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("ticket", ticket))))
+                            .build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(401, reused.statusCode());
+
             VelocitySettings conflicting = new VelocitySettings("velocity-test", databaseConfig,
-                    true, "127.0.0.1", first.port(), "test-token", 1, 1000L);
+                    true, "127.0.0.1", first.port(), "", "test-token", 1, 1000L);
             assertThrows(IOException.class, () -> DashboardServer.start(store, () -> 0, conflicting,
                     LoggerFactory.getLogger("dashboard-test")));
         } finally {
@@ -78,7 +95,7 @@ class DashboardServerTest {
         var punishment = store.prepareEnforcement(request(player, "=Formula", "lobby"), now).punishment();
         AtomicReference<UUID> invalidated = new AtomicReference<>();
         VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
-                true, "127.0.0.1", 0, "test-token", 1, 1000L);
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
         DashboardServer dashboard = DashboardServer.start(store, () -> 12, invalidated::set, settings,
                 LoggerFactory.getLogger("dashboard-api-test"));
         try {
@@ -142,7 +159,7 @@ class DashboardServerTest {
         store.submitAppeal(id, "这是一次误判，请重新检查", "discord", now + 1);
         AtomicReference<UUID> invalidated = new AtomicReference<>();
         VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
-                true, "127.0.0.1", 0, "test-token", 1, 1000L);
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
         DashboardServer dashboard = DashboardServer.start(store, () -> 0, invalidated::set, settings,
                 LoggerFactory.getLogger("dashboard-appeal-test"));
         try {

@@ -70,6 +70,8 @@ import java.util.List;
  */
 public final class AntiCheatPlugin extends JavaPlugin {
 
+    public static final String WEB_LOGIN_CHANNEL = "sayaka:web";
+
     private PlayerDataManager dataManager;
     private PersistentStore store;
     private BedrockSupport bedrockSupport;
@@ -185,6 +187,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
             command.setExecutor(executor);
             command.setTabCompleter(executor);
         }
+        getServer().getMessenger().registerOutgoingPluginChannel(this, WEB_LOGIN_CHANNEL);
 
         violationManager.startDecayTask();
         aimCheck.start();
@@ -200,6 +203,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        getServer().getMessenger().unregisterOutgoingPluginChannel(this, WEB_LOGIN_CHANNEL);
         if (updateManager != null) updateManager.shutdown();
         if (saveTask != null) saveTask.cancel();
         if (violationManager != null) violationManager.shutdown();

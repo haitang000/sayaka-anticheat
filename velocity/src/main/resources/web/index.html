@@ -58,6 +58,15 @@
     const fmt = (ts) => (ts ? dayjs(ts).format('YYYY-MM-DD HH:mm') : '—');
     const icon = (name) => Icons[name] ? React.createElement(Icons[name]) : null;
 
+    function readLoginTicket() {
+      const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
+      return new URLSearchParams(hash).get('admin-login');
+    }
+
+    function clearLoginTicketFromUrl() {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+
     const STATUS_META = {
       PENDING: { color: 'gold', label: '待处理' },
       APPROVED: { color: 'green', label: '已通过' },
@@ -632,16 +641,51 @@
       </>;
     }
 
-    function AdminView({ dark }) {
+    function AdminView({ dark, loginTicket, clearLoginTicket }) {
       const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || '');
+      const [exchanging, setExchanging] = useState(!!loginTicket);
       const connect = (value) => { localStorage.setItem(TOKEN_KEY, value); setToken(value); };
       const logout = useCallback(() => { localStorage.removeItem(TOKEN_KEY); setToken(''); }, []);
+      useEffect(() => {
+        if (!loginTicket) return;
+        let active = true;
+        setExchanging(true);
+        api('/api/admin/login/exchange', { method: 'POST', body: { ticket: loginTicket } })
+          .then((data) => { if (active) connect(data.token); })
+          .catch((error) => {
+            if (active) message.error(error.status === 401
+              ? '一次性登录链接无效、已使用或已过期' : error.message);
+          })
+          .finally(() => {
+            clearLoginTicket(null);
+            if (active) setExchanging(false);
+          });
+        return () => { active = false; };
+      }, [loginTicket, clearLoginTicket]);
+      if (exchanging) {
+        return <div style={{ textAlign: 'center', padding: 64 }}><Spin tip="正在登录管理后台…" /></div>;
+      }
       return token ? <AdminDashboard token={token} onLogout={logout} dark={dark} /> : <AdminLogin onConnect={connect} />;
     }
 
     function App() {
-      const [view, setView] = useState('appeal');
+      const [loginTicket, setLoginTicket] = useState(readLoginTicket);
+      const [view, setView] = useState(() => readLoginTicket() ? 'admin' : 'appeal');
       const [dark, setDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches || false);
+      useEffect(() => {
+        if (loginTicket) clearLoginTicketFromUrl();
+      }, [loginTicket]);
+      useEffect(() => {
+        const acceptLoginTicket = () => {
+          const ticket = readLoginTicket();
+          if (!ticket) return;
+          setLoginTicket(ticket);
+          setView('admin');
+          clearLoginTicketFromUrl();
+        };
+        window.addEventListener('hashchange', acceptLoginTicket);
+        return () => window.removeEventListener('hashchange', acceptLoginTicket);
+      }, []);
       useEffect(() => {
         const media = window.matchMedia?.('(prefers-color-scheme: dark)');
         if (!media) return;
@@ -654,11 +698,12 @@
         <Layout style={{ minHeight: '100vh' }}>
           <Header className="app-header" style={{ background: dark ? '#181818' : '#b83212' }}>
             <div className="app-brand">Sayaka AntiCheat</div>
-            <Segmented value={view} onChange={setView} options={[
+            <Segmented value={view} onChange={setView} disabled={!!loginTicket} options={[
               { label: '玩家申诉', value: 'appeal' }, { label: '管理后台', value: 'admin' }
             ]} />
           </Header>
-          <Content><main className="page-content">{view === 'appeal' ? <AppealView /> : <AdminView dark={dark} />}</main></Content>
+          <Content><main className="page-content">{view === 'appeal' ? <AppealView />
+            : <AdminView dark={dark} loginTicket={loginTicket} clearLoginTicket={setLoginTicket} />}</main></Content>
         </Layout>
       </ConfigProvider>;
     }

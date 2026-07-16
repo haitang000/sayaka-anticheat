@@ -7,15 +7,20 @@ import com.velocitypowered.api.event.EventTask;
 import com.velocitypowered.api.event.ResultedEvent;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.LoginEvent;
+import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
+import com.velocitypowered.api.proxy.ServerConnection;
+import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
 import org.slf4j.Logger;
 
 import java.nio.file.Path;
@@ -34,6 +39,8 @@ import java.util.concurrent.TimeUnit;
         authors = {"haitang"}
 )
 public final class SayakaVelocityPlugin {
+    private static final MinecraftChannelIdentifier WEB_LOGIN_CHANNEL =
+            MinecraftChannelIdentifier.create("sayaka", "web");
     private final ProxyServer proxy;
     private final Logger logger;
     private final Path dataDirectory;
@@ -62,6 +69,7 @@ public final class SayakaVelocityPlugin {
             return;
         }
         recoverServices();
+        proxy.getChannelRegistrar().register(WEB_LOGIN_CHANNEL);
         recoveryTask = proxy.getScheduler().buildTask(this, this::recoverServices)
                 .repeat(30, TimeUnit.SECONDS).schedule();
         logger.info("Sayaka Velocity 已启动，节点 ID: {}", settings.serverId());
@@ -84,7 +92,30 @@ public final class SayakaVelocityPlugin {
     }
 
     @Subscribe
+    public void onPluginMessage(PluginMessageEvent event) {
+        if (!event.getIdentifier().equals(WEB_LOGIN_CHANNEL)) return;
+        event.setResult(PluginMessageEvent.ForwardResult.handled());
+        if (!(event.getSource() instanceof ServerConnection connection)
+                || event.getTarget() != connection.getPlayer()) return;
+        byte[] data = event.getData();
+        if (data.length != 1 || data[0] != 1) return;
+        if (dashboard == null) {
+            connection.getPlayer().sendMessage(Component.text(
+                    "[Sayaka] Web 面板未启用或尚未启动，请检查 Velocity 控制台。", NamedTextColor.YELLOW));
+            return;
+        }
+        String url = dashboard.createOneTimeLoginUrl();
+        connection.getPlayer().sendMessage(Component.text("[Sayaka] ", NamedTextColor.DARK_RED)
+                .append(Component.text("点击打开管理后台", NamedTextColor.AQUA)
+                        .clickEvent(ClickEvent.openUrl(url))
+                        .hoverEvent(HoverEvent.showText(Component.text("链接在 2 分钟内有效且只能使用一次")))));
+        connection.getPlayer().sendMessage(Component.text(
+                "链接在 2 分钟内有效且只能使用一次。", NamedTextColor.DARK_GRAY));
+    }
+
+    @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
+        proxy.getChannelRegistrar().unregister(WEB_LOGIN_CHANNEL);
         if (dashboard != null) dashboard.stop();
         if (recoveryTask != null) recoveryTask.cancel();
         banCache.clear();
