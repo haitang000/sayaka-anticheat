@@ -14,9 +14,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,6 +37,45 @@ class DashboardServerTest {
         assertTrue(java.nio.file.Files.isRegularFile(tempDir.resolve("config.toml")));
         assertEquals("127.0.0.1", settings.webBind());
         assertEquals(8080, settings.webPort());
+        assertEquals(3, settings.captchaAfterFailures());
+        assertEquals(10, settings.loginFailureLimit());
+        assertEquals(600_000L, settings.loginWindowMillis());
+        assertEquals(43_200_000L, settings.sessionIdleMillis());
+    }
+
+    @Test
+    void rejectsInvalidWebSecurityConfiguration() throws Exception {
+        java.nio.file.Files.writeString(tempDir.resolve("config.toml"), """
+                [web.security]
+                captcha-after-failures = 3
+                login-failure-limit = 3
+                login-window-seconds = 600
+                session-idle-seconds = 43200
+                """);
+
+        IOException error = assertThrows(IOException.class, () -> VelocitySettings.load(tempDir));
+        assertTrue(error.getMessage().contains("login-failure-limit"));
+    }
+
+    @Test
+    void loadsCustomWebSecurityConfiguration() throws Exception {
+        java.nio.file.Files.writeString(tempDir.resolve("config.toml"), """
+                [database]
+                jdbc-url = "jdbc:h2:mem:custom_security"
+
+                [web.security]
+                captcha-after-failures = 4
+                login-failure-limit = 12
+                login-window-seconds = 900
+                session-idle-seconds = 7200
+                """);
+
+        VelocitySettings settings = VelocitySettings.load(tempDir);
+
+        assertEquals(4, settings.captchaAfterFailures());
+        assertEquals(12, settings.loginFailureLimit());
+        assertEquals(900_000L, settings.loginWindowMillis());
+        assertEquals(7_200_000L, settings.sessionIdleMillis());
     }
 
     @Test
@@ -66,7 +107,11 @@ class DashboardServerTest {
                             .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("ticket", ticket))))
                             .build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(200, login.statusCode());
-            assertEquals("test-token", Json.parseObject(login.body()).get("token"));
+            String session = String.valueOf(Json.parseObject(login.body()).get("sessionToken"));
+            assertTrue(session.matches("[A-Za-z0-9_-]{43}"));
+            HttpResponse<String> overview = clientGet(HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + first.port() + "/api/admin/overview"), session);
+            assertEquals(200, overview.statusCode());
             HttpResponse<String> reused = HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder(exchange).header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("ticket", ticket))))
@@ -106,36 +151,42 @@ class DashboardServerTest {
                     HttpRequest.newBuilder(root.resolve("/api/admin/punishments")).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(401, unauthorized.statusCode());
+            HttpResponse<String> legacyToken = client.send(HttpRequest.newBuilder(
+                            root.resolve("/api/admin/punishments"))
+                    .header("X-Admin-Token", "test-token").GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(401, legacyToken.statusCode());
+            String session = login(client, root, "test-token");
 
             HttpResponse<String> page = get(client, root.resolve(
-                    "/api/admin/punishments?q=Formula&page=1&pageSize=20"));
+                    "/api/admin/punishments?q=Formula&page=1&pageSize=20"), session);
             assertEquals(200, page.statusCode());
             Map<String, Object> pageJson = Json.parseObject(page.body());
             assertEquals(1L, ((Number) pageJson.get("total")).longValue());
             assertEquals(1, ((List<?>) pageJson.get("items")).size());
 
             HttpResponse<String> invalidPage = get(client, root.resolve(
-                    "/api/admin/punishments?pageSize=101"));
+                    "/api/admin/punishments?pageSize=101"), session);
             assertEquals(400, invalidPage.statusCode());
 
             HttpResponse<String> addWhitelist = post(client, root.resolve("/api/admin/whitelist/add"),
-                    Map.of("uuid", player.toString()));
+                    Map.of("uuid", player.toString()), session);
             assertEquals(200, addWhitelist.statusCode());
             assertTrue(store.isWhitelisted(player));
 
             HttpResponse<String> detail = get(client, root.resolve(
-                    "/api/admin/players/detail?uuid=" + player));
+                    "/api/admin/players/detail?uuid=" + player), session);
             assertEquals(200, detail.statusCode());
             assertTrue(detail.body().contains("Formula"));
 
-            HttpResponse<String> csv = get(client, root.resolve("/api/admin/punishments/export"));
+            HttpResponse<String> csv = get(client, root.resolve("/api/admin/punishments/export"), session);
             assertEquals(200, csv.statusCode());
             assertTrue(csv.headers().firstValue("Content-Disposition").orElse("").contains(".csv"));
             assertTrue(csv.body().startsWith("\ufeff"));
             assertTrue(csv.body().contains("\"'=Formula\""));
 
             HttpResponse<String> pardon = post(client, root.resolve("/api/admin/punishments/pardon"),
-                    Map.of("id", punishment.id(), "note", "Web review", "resetBanCount", true));
+                    Map.of("id", punishment.id(), "note", "Web review", "resetBanCount", true), session);
             assertEquals(200, pardon.statusCode());
             assertEquals(player, invalidated.get());
             assertFalse(store.findActiveBan(player, now + 1).isPresent());
@@ -163,9 +214,11 @@ class DashboardServerTest {
         DashboardServer dashboard = DashboardServer.start(store, () -> 0, invalidated::set, settings,
                 LoggerFactory.getLogger("dashboard-appeal-test"));
         try {
-            URI uri = URI.create("http://127.0.0.1:" + dashboard.port() + "/api/admin/appeals/resolve");
-            HttpResponse<String> response = post(HttpClient.newHttpClient(), uri,
-                    Map.of("id", id, "approved", true, "note", "evidence reviewed"));
+            URI root = URI.create("http://127.0.0.1:" + dashboard.port());
+            HttpClient client = HttpClient.newHttpClient();
+            String session = login(client, root, "test-token");
+            HttpResponse<String> response = post(client, root.resolve("/api/admin/appeals/resolve"),
+                    Map.of("id", id, "approved", true, "note", "evidence reviewed"), session);
             assertEquals(200, response.statusCode());
             assertEquals(player, invalidated.get());
             assertFalse(store.findActiveBan(player, now + 2).isPresent());
@@ -174,15 +227,92 @@ class DashboardServerTest {
         }
     }
 
-    private static HttpResponse<String> get(HttpClient client, URI uri) throws Exception {
-        return client.send(HttpRequest.newBuilder(uri).header("X-Admin-Token", "test-token").GET().build(),
+    @Test
+    void requiresCaptchaAndRateLimitsManualTokenLogin() throws Exception {
+        String database = "dashboard_auth_" + UUID.randomUUID().toString().replace("-", "");
+        DatabaseConfig databaseConfig = new DatabaseConfig(
+                "jdbc:h2:mem:" + database + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
+                "sa", "");
+        JdbcNetworkStore store = new JdbcNetworkStore(databaseConfig);
+        store.initialize();
+        VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L,
+                1, 3, 600_000L, 43_200_000L, true, Map.of());
+        AtomicLong now = new AtomicLong(1_000L);
+        AdminAuthService auth = new AdminAuthService("test-token", 1, 3,
+                600_000L, 43_200_000L, now::get, new SecureRandom(), () -> "ABCDE",
+                (answer, random) -> new byte[] {1, 2, 3});
+        DashboardServer dashboard = DashboardServer.start(store, () -> 0, ignored -> {}, settings,
+                LoggerFactory.getLogger("dashboard-auth-test"), auth);
+        try {
+            URI root = URI.create("http://127.0.0.1:" + dashboard.port());
+            HttpClient client = HttpClient.newHttpClient();
+            HttpResponse<String> first = loginResponse(client, root, "wrong", null, null);
+            assertEquals(401, first.statusCode());
+            assertEquals(true, Json.parseObject(first.body()).get("captchaRequired"));
+
+            Map<String, Object> firstCaptcha = captcha(client, root);
+            HttpResponse<String> second = loginResponse(client, root, "wrong",
+                    String.valueOf(firstCaptcha.get("challengeId")), "ABCDE");
+            assertEquals(401, second.statusCode());
+            Map<String, Object> secondCaptcha = captcha(client, root);
+            HttpResponse<String> limited = loginResponse(client, root, "wrong",
+                    String.valueOf(secondCaptcha.get("challengeId")), "ABCDE");
+            assertEquals(429, limited.statusCode());
+            assertTrue(limited.headers().firstValue("Retry-After").isPresent());
+            assertEquals("RATE_LIMITED", Json.parseObject(limited.body()).get("code"));
+
+            now.addAndGet(600_000L);
+            String session = login(client, root, "test-token");
+            assertEquals(200, clientGet(client, root.resolve("/api/admin/overview"), session).statusCode());
+        } finally {
+            dashboard.stop();
+        }
+    }
+
+    private static String login(HttpClient client, URI root, String token) throws Exception {
+        HttpResponse<String> response = loginResponse(client, root, token, null, null);
+        assertEquals(200, response.statusCode());
+        return String.valueOf(Json.parseObject(response.body()).get("sessionToken"));
+    }
+
+    private static HttpResponse<String> loginResponse(HttpClient client, URI root, String token,
+                                                       String captchaId, String captchaAnswer)
+            throws Exception {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("token", token);
+        if (captchaId != null) body.put("captchaId", captchaId);
+        if (captchaAnswer != null) body.put("captchaAnswer", captchaAnswer);
+        return client.send(HttpRequest.newBuilder(root.resolve("/api/admin/login"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(Json.write(body))).build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 
-    private static HttpResponse<String> post(HttpClient client, URI uri, Map<String, Object> body)
+    private static Map<String, Object> captcha(HttpClient client, URI root) throws Exception {
+        HttpResponse<String> response = client.send(HttpRequest.newBuilder(
+                        root.resolve("/api/admin/login/captcha")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertTrue(String.valueOf(Json.parseObject(response.body()).get("imageDataUrl"))
+                .startsWith("data:image/png;base64,"));
+        return Json.parseObject(response.body());
+    }
+
+    private static HttpResponse<String> get(HttpClient client, URI uri, String session) throws Exception {
+        return clientGet(client, uri, session);
+    }
+
+    private static HttpResponse<String> clientGet(HttpClient client, URI uri, String session) throws Exception {
+        return client.send(HttpRequest.newBuilder(uri).header("X-Admin-Session", session).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static HttpResponse<String> post(HttpClient client, URI uri, Map<String, Object> body,
+                                             String session)
             throws Exception {
         return client.send(HttpRequest.newBuilder(uri)
-                        .header("X-Admin-Token", "test-token")
+                        .header("X-Admin-Session", session)
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(Json.write(body))).build(),
                 HttpResponse.BodyHandlers.ofString());

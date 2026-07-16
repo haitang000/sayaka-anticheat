@@ -72,6 +72,8 @@ PacketEvents 使用 `provided` 依赖，不会被重复打包进产物。
 
 Velocity 可按后端服务器决定是否拦截共享封禁。`[protection]` 的 `default-enabled` 控制未单独列出的服务器，`[protection.servers]` 以 Velocity 服务器名覆盖，例如 `lobby = false`、`survival = true`。关闭后，受到共享封禁的玩家仍可进入该后端；该开关只控制 Velocity 的共享封禁入口防护，不会关闭后端 Paper 上的检测项。旧配置未包含此段时默认全部开启。
 
+管理令牌只用于换取内存会话，不再直接访问管理 API。手动登录在同一来源连续失败 3 次后要求图片验证码，10 分钟内失败 10 次会锁定到窗口结束；会话默认在 12 小时无管理请求后过期，Velocity 重启也会使会话失效。可在 `config.toml` 的 `[web.security]` 中通过 `captcha-after-failures`、`login-failure-limit`、`login-window-seconds` 和 `session-idle-seconds` 调整这些值。使用本机 Nginx/Caddy 反向代理时，面板会读取 `X-Forwarded-For` 的首个地址；非回环代理不会被自动信任。
+
 数据库不可用时，Paper 继续检测和回弹，新临时封禁降级为普通踢出；Velocity 对缓存中的有效封禁继续拦截，未缓存玩家放行。数据库恢复后无需重启。
 
 ## 命令与权限

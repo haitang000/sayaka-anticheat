@@ -25,5 +25,14 @@ public-url = ""
 admin-token = "${SAYAKA_ADMIN_TOKEN}"
 threads = 4
 
+[web.security]
+# Require a CAPTCHA after this many failed manual token logins from one client.
+captcha-after-failures = 3
+# Lock manual token login until the failure window ends after this many failures.
+login-failure-limit = 10
+login-window-seconds = 600
+# Successful sessions expire after this many seconds without an admin API request.
+session-idle-seconds = 43200
+
 [cache]
 ban-seconds = 5

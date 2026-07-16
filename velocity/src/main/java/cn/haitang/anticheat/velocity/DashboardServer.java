@@ -24,7 +24,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,7 +51,7 @@ final class DashboardServer {
     private final Consumer<UUID> invalidateBanCache;
     private final HttpServer server;
     private final ThreadPoolExecutor executor;
-    private final String adminToken;
+    private final AdminAuthService adminAuth;
     private final String indexHtml;
     private final String publicUrl;
     private final RateLimiter appealLimiter = new RateLimiter(20, 60_000L);
@@ -60,14 +59,14 @@ final class DashboardServer {
 
     private DashboardServer(JdbcNetworkStore store, IntSupplier onlinePlayers,
                             Consumer<UUID> invalidateBanCache, HttpServer server,
-                            ThreadPoolExecutor executor, String adminToken, String indexHtml,
+                            ThreadPoolExecutor executor, AdminAuthService adminAuth, String indexHtml,
                             String publicUrl) {
         this.store = store;
         this.onlinePlayers = onlinePlayers;
         this.invalidateBanCache = invalidateBanCache;
         this.server = server;
         this.executor = executor;
-        this.adminToken = adminToken;
+        this.adminAuth = adminAuth;
         this.indexHtml = indexHtml;
         this.publicUrl = publicUrl;
     }
@@ -80,6 +79,13 @@ final class DashboardServer {
     static DashboardServer start(JdbcNetworkStore store, IntSupplier onlinePlayers,
                                  Consumer<UUID> invalidateBanCache,
                                  VelocitySettings settings, Logger logger) throws IOException {
+        return start(store, onlinePlayers, invalidateBanCache, settings, logger, null);
+    }
+
+    static DashboardServer start(JdbcNetworkStore store, IntSupplier onlinePlayers,
+                                 Consumer<UUID> invalidateBanCache,
+                                 VelocitySettings settings, Logger logger,
+                                 AdminAuthService injectedAuth) throws IOException {
         String html;
         try (InputStream input = DashboardServer.class.getResourceAsStream("/web/index.html")) {
             if (input == null) throw new IOException("bundled web/index.html is missing");
@@ -93,8 +99,10 @@ final class DashboardServer {
         executor.allowCoreThreadTimeOut(true);
         boolean generated = settings.adminToken() == null || settings.adminToken().isBlank();
         String token = generated ? UUID.randomUUID().toString().replace("-", "") : settings.adminToken();
+        AdminAuthService adminAuth = injectedAuth == null
+                ? new AdminAuthService(token, settings) : injectedAuth;
         DashboardServer dashboard = new DashboardServer(
-                store, onlinePlayers, invalidateBanCache, server, executor, token, html,
+                store, onlinePlayers, invalidateBanCache, server, executor, adminAuth, html,
                 settings.webPublicUrl());
         dashboard.register();
         server.start();
@@ -132,7 +140,10 @@ final class DashboardServer {
     private void register() {
         server.createContext("/api/appeal/lookup", wrap(this::appealLookup));
         server.createContext("/api/appeal/submit", wrap(this::appealSubmit));
+        server.createContext("/api/admin/login/captcha", wrap(this::loginCaptcha));
         server.createContext("/api/admin/login/exchange", wrap(this::loginExchange));
+        server.createContext("/api/admin/login", wrap(this::login));
+        server.createContext("/api/admin/logout", wrap(admin(this::logout)));
         server.createContext("/api/admin/overview", wrap(admin(this::overview)));
         server.createContext("/api/admin/filters", wrap(admin(this::filters)));
         server.createContext("/api/admin/punishments/export", wrap(admin(this::exportPunishments)));
@@ -154,7 +165,36 @@ final class DashboardServer {
         if (!loginTokens.redeem(ticket)) {
             throw new HttpError(401, "一次性登录链接无效、已使用或已过期");
         }
-        sendJson(exchange, 200, Map.of("token", adminToken));
+        sendJson(exchange, 200, sessionResponse(adminAuth.issueSession()));
+    }
+
+    private void login(HttpExchange exchange) throws IOException {
+        requireMethod(exchange, "POST");
+        Map<String, Object> json = readJson(exchange);
+        AdminAuthService.LoginResult result = adminAuth.login(clientIp(exchange),
+                string(json.get("token")), string(json.get("captchaId")),
+                string(json.get("captchaAnswer")));
+        sendJson(exchange, 200, sessionResponse(result));
+    }
+
+    private void loginCaptcha(HttpExchange exchange) throws IOException {
+        requireMethod(exchange, "GET");
+        AdminAuthService.CaptchaChallenge challenge = adminAuth.createCaptcha(clientIp(exchange));
+        sendJson(exchange, 200, Map.of(
+                "challengeId", challenge.challengeId(),
+                "imageDataUrl", challenge.imageDataUrl(),
+                "expiresInSeconds", challenge.expiresInSeconds()));
+    }
+
+    private void logout(HttpExchange exchange) throws IOException {
+        requireMethod(exchange, "POST");
+        adminAuth.revokeSession(exchange.getRequestHeaders().getFirst("X-Admin-Session"));
+        sendJson(exchange, 200, Map.of("ok", true));
+    }
+
+    private static Map<String, Object> sessionResponse(AdminAuthService.LoginResult result) {
+        return Map.of("sessionToken", result.sessionToken(),
+                "expiresInSeconds", result.expiresInSeconds());
     }
 
     private void staticFile(HttpExchange exchange) throws IOException {
@@ -434,10 +474,9 @@ final class DashboardServer {
 
     private ThrowingHandler admin(ThrowingHandler handler) {
         return exchange -> {
-            String supplied = exchange.getRequestHeaders().getFirst("X-Admin-Token");
-            if (supplied == null || !MessageDigest.isEqual(
-                    supplied.getBytes(StandardCharsets.UTF_8), adminToken.getBytes(StandardCharsets.UTF_8))) {
-                throw new HttpError(401, "管理令牌无效或缺失");
+            String supplied = exchange.getRequestHeaders().getFirst("X-Admin-Session");
+            if (!adminAuth.validateSession(supplied)) {
+                throw new HttpError(401, "管理会话无效或已过期", "SESSION_EXPIRED", false, 0L);
             }
             handler.handle(exchange);
         };
@@ -447,8 +486,21 @@ final class DashboardServer {
         return exchange -> {
             try {
                 handler.handle(exchange);
+            } catch (AdminAuthService.AuthFailure error) {
+                if (error.retryAfterSeconds() > 0) {
+                    exchange.getResponseHeaders().set("Retry-After",
+                            String.valueOf(error.retryAfterSeconds()));
+                }
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("error", error.getMessage());
+                body.put("code", error.code());
+                body.put("captchaRequired", error.captchaRequired());
+                if (error.retryAfterSeconds() > 0) {
+                    body.put("retryAfterSeconds", error.retryAfterSeconds());
+                }
+                sendJson(exchange, error.status(), body);
             } catch (HttpError error) {
-                sendJson(exchange, error.status(), error(error.getMessage()));
+                sendJson(exchange, error.status(), error(error));
             } catch (SQLException error) {
                 sendJson(exchange, 503, error("群组数据库暂时不可用，请稍后重试"));
             } catch (IllegalArgumentException error) {
@@ -585,6 +637,16 @@ final class DashboardServer {
         }
     }
 
+    private static Map<String, Object> error(HttpError error) {
+        if (error.code() == null) return error(error.getMessage());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", error.getMessage());
+        body.put("code", error.code());
+        body.put("captchaRequired", error.captchaRequired());
+        if (error.retryAfterSeconds() > 0) body.put("retryAfterSeconds", error.retryAfterSeconds());
+        return body;
+    }
+
     private static Map<String, Object> error(String message) {
         return Map.of("error", message);
     }
@@ -614,13 +676,27 @@ final class DashboardServer {
 
     private static final class HttpError extends RuntimeException {
         private final int status;
+        private final String code;
+        private final boolean captchaRequired;
+        private final long retryAfterSeconds;
 
         private HttpError(int status, String message) {
+            this(status, message, null, false, 0L);
+        }
+
+        private HttpError(int status, String message, String code,
+                          boolean captchaRequired, long retryAfterSeconds) {
             super(message);
             this.status = status;
+            this.code = code;
+            this.captchaRequired = captchaRequired;
+            this.retryAfterSeconds = retryAfterSeconds;
         }
 
         private int status() { return status; }
+        private String code() { return code; }
+        private boolean captchaRequired() { return captchaRequired; }
+        private long retryAfterSeconds() { return retryAfterSeconds; }
     }
 
     private static final class RateLimiter {

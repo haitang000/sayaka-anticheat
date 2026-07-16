@@ -24,6 +24,10 @@ record VelocitySettings(
         String adminToken,
         int webThreads,
         long banCacheMillis,
+        int captchaAfterFailures,
+        int loginFailureLimit,
+        long loginWindowMillis,
+        long sessionIdleMillis,
         boolean protectionDefaultEnabled,
         Map<String, Boolean> serverProtection
 ) {
@@ -35,7 +39,16 @@ record VelocitySettings(
                      int webPort, String webPublicUrl, String adminToken, int webThreads,
                      long banCacheMillis) {
         this(serverId, database, webEnabled, webBind, webPort, webPublicUrl, adminToken, webThreads,
-                banCacheMillis, true, Map.of());
+                banCacheMillis, 3, 10, 600_000L, 43_200_000L, true, Map.of());
+    }
+
+    VelocitySettings(String serverId, DatabaseConfig database, boolean webEnabled, String webBind,
+                     int webPort, String webPublicUrl, String adminToken, int webThreads,
+                     long banCacheMillis, int captchaAfterFailures, int loginFailureLimit,
+                     long loginWindowMillis, long sessionIdleMillis) {
+        this(serverId, database, webEnabled, webBind, webPort, webPublicUrl, adminToken, webThreads,
+                banCacheMillis, captchaAfterFailures, loginFailureLimit, loginWindowMillis,
+                sessionIdleMillis, true, Map.of());
     }
 
     static VelocitySettings load(Path dataDirectory) throws IOException {
@@ -52,10 +65,17 @@ record VelocitySettings(
         int port = Math.toIntExact(toml.getLong("web.port", () -> 8080L));
         int threads = Math.toIntExact(toml.getLong("web.threads", () -> 4L));
         long cacheSeconds = toml.getLong("cache.ban-seconds", () -> 5L);
+        int captchaAfterFailures = positiveInt(toml, "web.security.captcha-after-failures", 3);
+        int loginFailureLimit = positiveInt(toml, "web.security.login-failure-limit", 10);
+        long loginWindowMillis = secondsToMillis(toml, "web.security.login-window-seconds", 600L);
+        long sessionIdleMillis = secondsToMillis(toml, "web.security.session-idle-seconds", 43_200L);
         boolean protectionDefaultEnabled = toml.getBoolean("protection.default-enabled", () -> true);
         Map<String, Boolean> serverProtection = loadServerProtection(toml);
         if (port < 1 || port > 65535) throw new IOException("web.port must be between 1 and 65535");
         if (threads < 1) throw new IOException("web.threads must be positive");
+        if (loginFailureLimit <= captchaAfterFailures) {
+            throw new IOException("web.security.login-failure-limit must be greater than captcha-after-failures");
+        }
         String publicUrl = toml.getString("web.public-url", () -> "").trim();
         if (!publicUrl.isEmpty()) validatePublicUrl(publicUrl);
         return new VelocitySettings(
@@ -71,6 +91,10 @@ record VelocitySettings(
                 secret(toml.getString("web.admin-token", () -> "")),
                 threads,
                 Math.max(1L, cacheSeconds) * 1000L,
+                captchaAfterFailures,
+                loginFailureLimit,
+                loginWindowMillis,
+                sessionIdleMillis,
                 protectionDefaultEnabled,
                 serverProtection);
     }
@@ -99,6 +123,23 @@ record VelocitySettings(
             }
         }
         return result;
+    }
+
+    private static int positiveInt(TomlParseResult toml, String key, int fallback) throws IOException {
+        long value = toml.getLong(key, () -> (long) fallback);
+        if (value <= 0 || value > Integer.MAX_VALUE) throw new IOException(key + " must be positive");
+        return (int) value;
+    }
+
+    private static long secondsToMillis(TomlParseResult toml, String key, long fallback)
+            throws IOException {
+        long value = toml.getLong(key, () -> fallback);
+        if (value <= 0) throw new IOException(key + " must be positive");
+        try {
+            return Math.multiplyExact(value, 1000L);
+        } catch (ArithmeticException overflow) {
+            throw new IOException(key + " is too large", overflow);
+        }
     }
 
     private static void validatePublicUrl(String value) throws IOException {

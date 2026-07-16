@@ -15,6 +15,8 @@
     .filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
     .filter-search { width: min(320px, 100%); }
     .chart { height: 280px; min-width: 0; }
+    .captcha-row { display: grid; grid-template-columns: minmax(0, 1fr) 160px 32px; gap: 8px; align-items: center; }
+    .captcha-image { display: block; width: 160px; height: 57px; object-fit: cover; border: 1px solid #d9d9d9; border-radius: 6px; }
     .player-link { padding: 0; height: auto; font-weight: 600; }
     .drawer-section { margin-top: 20px; }
     .drawer-section-title { display: block; margin-bottom: 9px; }
@@ -28,6 +30,10 @@
       .filter-search { width: 100%; }
       .filter-row > .ant-picker, .filter-row > .ant-select { flex: 1 1 150px; min-width: 0; }
       .chart { height: 240px; }
+    }
+    @media (max-width: 480px) {
+      .captcha-row { grid-template-columns: minmax(0, 1fr) 32px; }
+      .captcha-input { grid-column: 1 / -1; }
     }
   </style>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -54,7 +60,8 @@
     const { Title, Text, Paragraph } = Typography;
     const { RangePicker } = DatePicker;
 
-    const TOKEN_KEY = 'sayaka-admin-token';
+    const SESSION_KEY = 'sayaka-admin-session';
+    const LEGACY_TOKEN_KEY = 'sayaka-admin-token';
     const fmt = (ts) => (ts ? dayjs(ts).format('YYYY-MM-DD HH:mm') : '—');
     const icon = (name) => Icons[name] ? React.createElement(Icons[name]) : null;
 
@@ -76,13 +83,16 @@
     async function api(path, { method = 'GET', body, token } = {}) {
       const headers = {};
       if (body) headers['Content-Type'] = 'application/json';
-      if (token) headers['X-Admin-Token'] = token;
+      if (token) headers['X-Admin-Session'] = token;
       const response = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
       let data = null;
       try { data = await response.json(); } catch (ignored) {}
       if (!response.ok) {
         const error = new Error((data && data.error) || ('请求失败 (' + response.status + ')'));
         error.status = response.status;
+        error.code = data && data.code;
+        error.captchaRequired = !!(data && data.captchaRequired);
+        error.retryAfterSeconds = Number(data && data.retryAfterSeconds) || 0;
         throw error;
       }
       return data;
@@ -230,24 +240,58 @@
 
     function AdminLogin({ onConnect }) {
       const [token, setToken] = useState('');
+      const [captcha, setCaptcha] = useState(null);
+      const [captchaAnswer, setCaptchaAnswer] = useState('');
       const [loading, setLoading] = useState(false);
+      const [captchaLoading, setCaptchaLoading] = useState(false);
+      const loadCaptcha = useCallback(async () => {
+        setCaptchaLoading(true);
+        try {
+          setCaptcha(await api('/api/admin/login/captcha'));
+          setCaptchaAnswer('');
+        } catch (error) {
+          if (error.code === 'RATE_LIMITED') {
+            message.error('请求过于频繁，请在 ' + error.retryAfterSeconds + ' 秒后重试');
+          } else {
+            message.error(error.message);
+          }
+        } finally { setCaptchaLoading(false); }
+      }, []);
       const connect = async () => {
         if (!token.trim()) { message.warning('请输入管理令牌'); return; }
+        if (captcha && !captchaAnswer.trim()) { message.warning('请输入验证码'); return; }
         setLoading(true);
         try {
-          await api('/api/admin/overview', { token: token.trim() });
-          onConnect(token.trim());
-        } catch (error) { message.error(error.status === 401 ? '令牌无效' : error.message); }
+          const data = await api('/api/admin/login', { method: 'POST', body: {
+            token: token.trim(),
+            captchaId: captcha && captcha.challengeId,
+            captchaAnswer: captchaAnswer.trim()
+          }});
+          onConnect(data.sessionToken);
+        } catch (error) {
+          if (error.captchaRequired && error.code !== 'RATE_LIMITED') await loadCaptcha();
+          if (error.code === 'INVALID_TOKEN') message.error('管理令牌无效');
+          else if (error.code === 'RATE_LIMITED') {
+            message.error('登录失败次数过多，请在 ' + error.retryAfterSeconds + ' 秒后重试');
+          } else message.error(error.message);
+        }
         finally { setLoading(false); }
       };
-      return <div style={{ maxWidth: 430, margin: '48px auto 0' }}><Card>
+      return <div style={{ maxWidth: 460, margin: '48px auto 0' }}><Card>
         <Title level={4} style={{ marginTop: 0 }}>管理员登录</Title>
         <Paragraph type="secondary">管理令牌位于 Velocity 的 <Text code>config.toml</Text> 中。</Paragraph>
-        <Space.Compact style={{ width: '100%' }}>
-          <Input.Password placeholder="管理令牌" value={token} onChange={(event) => setToken(event.target.value)}
-            onPressEnter={connect} />
-          <Button type="primary" icon={icon('LoginOutlined')} onClick={connect} loading={loading}>进入</Button>
-        </Space.Compact>
+        <Form layout="vertical" onFinish={connect}>
+          <Form.Item><Input.Password placeholder="管理令牌" autoComplete="current-password"
+            value={token} onChange={(event) => setToken(event.target.value)} /></Form.Item>
+          {captcha && <Form.Item><div className="captcha-row">
+            <Input className="captcha-input" placeholder="验证码" maxLength={5} autoComplete="off"
+              value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value.toUpperCase())} />
+            <img className="captcha-image" src={captcha.imageDataUrl} alt="验证码" />
+            <Tooltip title="刷新验证码"><Button aria-label="刷新验证码" icon={icon('ReloadOutlined')}
+              loading={captchaLoading} onClick={loadCaptcha} /></Tooltip>
+          </div></Form.Item>}
+          <Button block type="primary" htmlType="submit" icon={icon('LoginOutlined')} loading={loading}>进入</Button>
+        </Form>
       </Card></div>;
     }
 
@@ -444,7 +488,7 @@
       const download = async () => {
         try {
           const exportValues = { ...queryValues }; delete exportValues.page; delete exportValues.pageSize;
-          const response = await fetch('/api/admin/punishments/export' + params(exportValues), { headers: { 'X-Admin-Token': token } });
+          const response = await fetch('/api/admin/punishments/export' + params(exportValues), { headers: { 'X-Admin-Session': token } });
           if (!response.ok) { const body = await response.json(); throw new Error(body.error || '导出失败'); }
           const url = URL.createObjectURL(await response.blob());
           const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'sayaka-punishments.csv'; anchor.click();
@@ -642,16 +686,24 @@
     }
 
     function AdminView({ dark, loginTicket, clearLoginTicket }) {
-      const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || '');
+      const [token, setToken] = useState(() => {
+        localStorage.removeItem(LEGACY_TOKEN_KEY);
+        return localStorage.getItem(SESSION_KEY) || '';
+      });
       const [exchanging, setExchanging] = useState(!!loginTicket);
-      const connect = (value) => { localStorage.setItem(TOKEN_KEY, value); setToken(value); };
-      const logout = useCallback(() => { localStorage.removeItem(TOKEN_KEY); setToken(''); }, []);
+      const connect = (value) => { localStorage.setItem(SESSION_KEY, value); setToken(value); };
+      const logout = useCallback(() => {
+        const current = localStorage.getItem(SESSION_KEY);
+        localStorage.removeItem(SESSION_KEY);
+        setToken('');
+        if (current) api('/api/admin/logout', { method: 'POST', token: current }).catch(() => {});
+      }, []);
       useEffect(() => {
         if (!loginTicket) return;
         let active = true;
         setExchanging(true);
         api('/api/admin/login/exchange', { method: 'POST', body: { ticket: loginTicket } })
-          .then((data) => { if (active) connect(data.token); })
+          .then((data) => { if (active) connect(data.sessionToken); })
           .catch((error) => {
             if (active) message.error(error.status === 401
               ? '一次性登录链接无效、已使用或已过期' : error.message);
