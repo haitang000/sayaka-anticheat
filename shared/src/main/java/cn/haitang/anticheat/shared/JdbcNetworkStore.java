@@ -58,29 +58,17 @@ public final class JdbcNetworkStore {
                 "CREATE TABLE IF NOT EXISTS sayaka_strikes ("
                         + "id BIGINT AUTO_INCREMENT PRIMARY KEY, player_uuid VARCHAR(36) NOT NULL, "
                         + "player_name VARCHAR(64) NOT NULL, created_at BIGINT NOT NULL)",
-                "CREATE INDEX IF NOT EXISTS sayaka_strikes_player_at "
-                        + "ON sayaka_strikes(player_uuid, created_at)",
                 "CREATE TABLE IF NOT EXISTS sayaka_whitelist ("
                         + "player_uuid VARCHAR(36) PRIMARY KEY, player_name VARCHAR(64) NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS sayaka_history ("
                         + "id BIGINT AUTO_INCREMENT PRIMARY KEY, player_uuid VARCHAR(36) NOT NULL, "
                         + "created_at BIGINT NOT NULL, entry_text VARCHAR(2048) NOT NULL)",
-                "CREATE INDEX IF NOT EXISTS sayaka_history_player_at "
-                        + "ON sayaka_history(player_uuid, created_at)",
                 "CREATE TABLE IF NOT EXISTS sayaka_punishments ("
                         + "punishment_id VARCHAR(36) PRIMARY KEY, player_uuid VARCHAR(36) NOT NULL, "
                         + "player_name VARCHAR(64) NOT NULL, server_id VARCHAR(64) NOT NULL, "
                         + "banned_at BIGINT NOT NULL, expires_at BIGINT NOT NULL, check_id VARCHAR(64) NOT NULL, "
                         + "vl DOUBLE NOT NULL, hours INT NOT NULL, ban_number INT NOT NULL, "
                         + "warnings_json LONGTEXT NOT NULL, detections_json LONGTEXT NOT NULL)",
-                "CREATE INDEX IF NOT EXISTS sayaka_punishments_banned_at "
-                        + "ON sayaka_punishments(banned_at)",
-                "CREATE INDEX IF NOT EXISTS sayaka_punishments_player_at "
-                        + "ON sayaka_punishments(player_uuid, banned_at)",
-                "CREATE INDEX IF NOT EXISTS sayaka_punishments_server_at "
-                        + "ON sayaka_punishments(server_id, banned_at)",
-                "CREATE INDEX IF NOT EXISTS sayaka_punishments_check_at "
-                        + "ON sayaka_punishments(check_id, banned_at)",
                 "CREATE TABLE IF NOT EXISTS sayaka_active_bans ("
                         + "player_uuid VARCHAR(36) PRIMARY KEY, punishment_id VARCHAR(36) NOT NULL, "
                         + "player_name VARCHAR(64) NOT NULL, reason_text VARCHAR(2048) NOT NULL, expires_at BIGINT NOT NULL)",
@@ -88,13 +76,33 @@ public final class JdbcNetworkStore {
                         + "punishment_id VARCHAR(36) PRIMARY KEY, player_name VARCHAR(64) NOT NULL, "
                         + "reason_text VARCHAR(2000) NOT NULL, contact_text VARCHAR(200) NOT NULL, "
                         + "submitted_at BIGINT NOT NULL, status VARCHAR(16) NOT NULL, "
-                        + "resolved_at BIGINT NOT NULL DEFAULT 0, note_text VARCHAR(2000) NOT NULL)",
-                "CREATE INDEX IF NOT EXISTS sayaka_appeals_status_at "
-                        + "ON sayaka_appeals(status, submitted_at)"
+                        + "resolved_at BIGINT NOT NULL DEFAULT 0, note_text VARCHAR(2000) NOT NULL)"
+        );
+        List<String> indexes = List.of(
+                "CREATE INDEX sayaka_strikes_player_at ON sayaka_strikes(player_uuid, created_at)",
+                "CREATE INDEX sayaka_history_player_at ON sayaka_history(player_uuid, created_at)",
+                "CREATE INDEX sayaka_punishments_banned_at ON sayaka_punishments(banned_at)",
+                "CREATE INDEX sayaka_punishments_player_at ON sayaka_punishments(player_uuid, banned_at)",
+                "CREATE INDEX sayaka_punishments_server_at ON sayaka_punishments(server_id, banned_at)",
+                "CREATE INDEX sayaka_punishments_check_at ON sayaka_punishments(check_id, banned_at)",
+                "CREATE INDEX sayaka_appeals_status_at ON sayaka_appeals(status, submitted_at)"
         );
         try (Connection connection = open(); Statement statement = connection.createStatement()) {
             for (String sql : ddl) statement.execute(sql);
+            for (String sql : indexes) createIndex(statement, sql);
         }
+    }
+
+    private static void createIndex(Statement statement, String sql) throws SQLException {
+        try {
+            statement.execute(sql);
+        } catch (SQLException error) {
+            if (!isDuplicateIndex(error)) throw error;
+        }
+    }
+
+    private static boolean isDuplicateIndex(SQLException error) {
+        return "42S11".equals(error.getSQLState()) || error.getErrorCode() == 1061;
     }
 
     public boolean healthCheck() {

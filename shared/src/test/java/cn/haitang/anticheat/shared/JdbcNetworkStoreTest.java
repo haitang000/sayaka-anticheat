@@ -35,6 +35,12 @@ class JdbcNetworkStoreTest {
     }
 
     @Test
+    void initializationIsIdempotent() throws Exception {
+        store.initialize();
+        assertTrue(store.healthCheck());
+    }
+
+    @Test
     void escalatesSharedStrikesIntoOneActiveBan() throws Exception {
         UUID player = UUID.randomUUID();
         long now = 1_700_000_000_000L;
