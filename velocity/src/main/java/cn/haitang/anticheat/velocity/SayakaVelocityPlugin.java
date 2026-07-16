@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 @Plugin(
         id = "sayaka-anticheat",
         name = "Sayaka AntiCheat Velocity",
-        version = "2.1.0.5",
+        version = "2.1.0.6",
         authors = {"haitang"}
 )
 public final class SayakaVelocityPlugin {
