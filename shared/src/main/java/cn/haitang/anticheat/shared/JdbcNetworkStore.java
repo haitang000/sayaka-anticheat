@@ -86,27 +86,45 @@ public final class JdbcNetworkStore {
                         + "server_name VARCHAR(64) PRIMARY KEY, enabled BOOLEAN NOT NULL, "
                         + "updated_at BIGINT NOT NULL)"
         );
-        List<String> indexes = List.of(
-                "CREATE INDEX sayaka_strikes_player_at ON sayaka_strikes(player_uuid, created_at)",
-                "CREATE INDEX sayaka_history_player_at ON sayaka_history(player_uuid, created_at)",
-                "CREATE INDEX sayaka_punishments_banned_at ON sayaka_punishments(banned_at)",
-                "CREATE INDEX sayaka_punishments_player_at ON sayaka_punishments(player_uuid, banned_at)",
-                "CREATE INDEX sayaka_punishments_server_at ON sayaka_punishments(server_id, banned_at)",
-                "CREATE INDEX sayaka_punishments_check_at ON sayaka_punishments(check_id, banned_at)",
-                "CREATE INDEX sayaka_appeals_status_at ON sayaka_appeals(status, submitted_at)"
+        List<IndexSpec> indexes = List.of(
+                new IndexSpec("sayaka_strikes_player_at", "sayaka_strikes", "player_uuid, created_at"),
+                new IndexSpec("sayaka_history_player_at", "sayaka_history", "player_uuid, created_at"),
+                new IndexSpec("sayaka_punishments_banned_at", "sayaka_punishments", "banned_at"),
+                new IndexSpec("sayaka_punishments_player_at", "sayaka_punishments", "player_uuid, banned_at"),
+                new IndexSpec("sayaka_punishments_server_at", "sayaka_punishments", "server_id, banned_at"),
+                new IndexSpec("sayaka_punishments_check_at", "sayaka_punishments", "check_id, banned_at"),
+                new IndexSpec("sayaka_appeals_status_at", "sayaka_appeals", "status, submitted_at")
         );
         try (Connection connection = open(); Statement statement = connection.createStatement()) {
             for (String sql : ddl) statement.execute(sql);
-            for (String sql : indexes) createIndex(statement, sql);
+            for (IndexSpec index : indexes) createIndex(connection, statement, index);
         }
     }
 
-    private static void createIndex(Statement statement, String sql) throws SQLException {
+    private record IndexSpec(String name, String table, String columns) {}
+
+    // MariaDB's driver logs the server's 1061 error packet at WARN before our catch runs, so we
+    // check information_schema first to avoid emitting the duplicate error at all on every startup.
+    private static void createIndex(Connection connection, Statement statement, IndexSpec index) throws SQLException {
+        if (indexExists(connection, index)) return;
         try {
-            statement.execute(sql);
+            statement.execute("CREATE INDEX " + index.name() + " ON " + index.table() + "(" + index.columns() + ")");
         } catch (SQLException error) {
+            // Fallback for a race where another node created it between our check and this statement.
             if (!isDuplicateIndex(error)) throw error;
         }
+    }
+
+    private static boolean indexExists(Connection connection, IndexSpec index) throws SQLException {
+        // getIndexInfo is driver-agnostic, unlike the information_schema table names which differ
+        // between MariaDB (STATISTICS) and other engines.
+        try (ResultSet result = connection.getMetaData().getIndexInfo(null, null, index.table(), false, true)) {
+            while (result.next()) {
+                String existing = result.getString("INDEX_NAME");
+                if (existing != null && existing.equalsIgnoreCase(index.name())) return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isDuplicateIndex(SQLException error) {
