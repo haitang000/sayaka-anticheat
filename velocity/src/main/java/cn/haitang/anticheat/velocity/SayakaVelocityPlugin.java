@@ -186,6 +186,18 @@ public final class SayakaVelocityPlugin {
             }
 
             @Override
+            public int broadcast(String message) {
+                Component component = Component.text("[公告] ", NamedTextColor.GOLD)
+                        .append(Component.text(message, NamedTextColor.YELLOW));
+                int delivered = 0;
+                for (var player : proxy.getAllPlayers()) {
+                    player.sendMessage(component);
+                    delivered++;
+                }
+                return delivered;
+            }
+
+            @Override
             public List<ServerNode> servers() {
                 List<RegisteredServer> registered = new ArrayList<>(proxy.getAllServers());
                 List<CompletableFuture<ServerPing>> pings = registered.stream()

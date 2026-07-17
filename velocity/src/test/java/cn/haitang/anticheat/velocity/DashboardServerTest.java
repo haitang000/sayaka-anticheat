@@ -389,6 +389,108 @@ class DashboardServerTest {
         }
     }
 
+    @Test
+    void servesManualBansBatchPardonsActivityStatsAndBroadcast() throws Exception {
+        String database = "dashboard_features_" + UUID.randomUUID().toString().replace("-", "");
+        DatabaseConfig databaseConfig = new DatabaseConfig(
+                "jdbc:h2:mem:" + database + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
+                "sa", "");
+        JdbcNetworkStore store = new JdbcNetworkStore(databaseConfig);
+        store.initialize();
+        long now = System.currentTimeMillis();
+        UUID alice = UUID.randomUUID();
+        UUID bob = UUID.randomUUID();
+        UUID carol = UUID.randomUUID();
+        var first = store.prepareEnforcement(request(alice, "Alice", "lobby"), now).punishment();
+        var second = store.prepareEnforcement(request(bob, "Bob", "games"), now + 1).punishment();
+        store.addStrike(carol, "Carol", now);
+        AtomicReference<String> broadcasted = new AtomicReference<>();
+        NetworkControl control = new NetworkControl() {
+            @Override public int onlineCount() { return 3; }
+            @Override public List<OnlinePlayer> onlinePlayers() { return List.of(); }
+            @Override public boolean kick(UUID playerId, String reason) { return false; }
+            @Override public int broadcast(String message) {
+                broadcasted.set(message);
+                return 3;
+            }
+            @Override public List<ServerNode> servers() { return List.of(); }
+        };
+        VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
+        DashboardServer dashboard = DashboardServer.start(store, control, null,
+                ProtectionState.fromSettings(settings), ignored -> {}, settings,
+                LoggerFactory.getLogger("dashboard-features-test"));
+        try {
+            URI root = URI.create("http://127.0.0.1:" + dashboard.port());
+            HttpClient client = HttpClient.newHttpClient();
+            String session = login(client, root, "test-token");
+
+            HttpResponse<String> manual = post(client, root.resolve("/api/admin/punishments/manual"),
+                    Map.of("uuid", carol.toString(), "hours", 48, "reason", "人工确认作弊"), session);
+            assertEquals(200, manual.statusCode());
+            assertTrue(store.findActiveBan(carol, now + 2).isPresent());
+            assertEquals(409, post(client, root.resolve("/api/admin/punishments/manual"),
+                    Map.of("uuid", carol.toString(), "hours", 24), session).statusCode());
+            assertEquals(404, post(client, root.resolve("/api/admin/punishments/manual"),
+                    Map.of("uuid", UUID.randomUUID().toString(), "hours", 24), session).statusCode());
+            assertEquals(400, post(client, root.resolve("/api/admin/punishments/manual"),
+                    Map.of("uuid", carol.toString(), "hours", 0), session).statusCode());
+
+            long newExpiry = now + 96 * 3_600_000L;
+            HttpResponse<String> adjust = post(client, root.resolve("/api/admin/punishments/adjust"),
+                    Map.of("id", first.id(), "expiresAt", newExpiry, "note", "延长"), session);
+            assertEquals(200, adjust.statusCode());
+            assertEquals(newExpiry, store.findActiveBan(alice, now + 3).orElseThrow().expiresAt());
+            assertEquals(400, post(client, root.resolve("/api/admin/punishments/adjust"),
+                    Map.of("id", first.id(), "expiresAt", now - 1), session).statusCode());
+            assertEquals(404, post(client, root.resolve("/api/admin/punishments/adjust"),
+                    Map.of("id", UUID.randomUUID().toString(), "expiresAt", newExpiry), session).statusCode());
+
+            HttpResponse<String> batch = post(client, root.resolve("/api/admin/punishments/pardon-batch"),
+                    Map.of("ids", List.of(first.id(), second.id(), UUID.randomUUID().toString()),
+                            "note", "批量复查", "resetBanCount", true), session);
+            assertEquals(200, batch.statusCode());
+            Map<String, Object> batchJson = Json.parseObject(batch.body());
+            assertEquals(2L, ((Number) batchJson.get("succeeded")).longValue());
+            assertEquals(1, ((List<?>) batchJson.get("failed")).size());
+            assertFalse(store.findActiveBan(alice, now + 4).isPresent());
+            assertFalse(store.findActiveBan(bob, now + 4).isPresent());
+            assertEquals(400, post(client, root.resolve("/api/admin/punishments/pardon-batch"),
+                    Map.of("ids", List.of()), session).statusCode());
+
+            HttpResponse<String> activity = get(client, root.resolve("/api/admin/activity?limit=20"), session);
+            assertEquals(200, activity.statusCode());
+            List<?> items = (List<?>) Json.parseObject(activity.body()).get("items");
+            assertEquals(3, items.size());
+
+            HttpResponse<String> stats = get(client, root.resolve(
+                    "/api/admin/stats?tzOffsetMinutes=-480"), session);
+            assertEquals(200, stats.statusCode());
+            Map<String, Object> statsJson = Json.parseObject(stats.body());
+            assertFalse(((List<?>) statsJson.get("topPlayers")).isEmpty());
+            assertEquals(5, ((List<?>) statsJson.get("durations")).size());
+            assertFalse(((List<?>) statsJson.get("heatmap")).isEmpty());
+            assertEquals(400, get(client, root.resolve(
+                    "/api/admin/stats?tzOffsetMinutes=9999"), session).statusCode());
+
+            HttpResponse<String> broadcast = post(client, root.resolve("/api/admin/network/broadcast"),
+                    Map.of("message", "服务器将于 10 分钟后重启"), session);
+            assertEquals(200, broadcast.statusCode());
+            assertEquals("服务器将于 10 分钟后重启", broadcasted.get());
+            assertEquals(3L, ((Number) Json.parseObject(broadcast.body()).get("delivered")).longValue());
+            assertEquals(400, post(client, root.resolve("/api/admin/network/broadcast"),
+                    Map.of("message", "  "), session).statusCode());
+
+            HttpResponse<String> reset = post(client, root.resolve("/api/admin/players/reset"),
+                    Map.of("uuid", carol.toString()), session);
+            assertEquals(200, reset.statusCode());
+            assertEquals(0, store.banCount(carol));
+            assertFalse(store.findActiveBan(carol, now + 5).isPresent());
+        } finally {
+            dashboard.stop();
+        }
+    }
+
     private static String login(HttpClient client, URI root, String token) throws Exception {
         HttpResponse<String> response = loginResponse(client, root, token, null, null);
         assertEquals(200, response.statusCode());

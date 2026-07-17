@@ -151,5 +151,26 @@ public final class NetworkModels {
         }
     }
 
+    /** A single entry of the admin activity feed; kind is "punishment" or "appeal". */
+    public record ActivityItem(String kind, long at, UUID playerId, String playerName,
+                               String punishmentId, String summary, String status) {}
+
+    /** One cell of the 7x24 punishment heatmap; day is 0=Monday..6=Sunday, hour is 0-23. */
+    public record HeatCell(int day, int hour, long count) {}
+
+    public record DashboardStats(
+            List<NamedCount> topPlayers,
+            List<NamedCount> appealOutcomes,
+            List<NamedCount> durations,
+            List<HeatCell> heatmap
+    ) {
+        public DashboardStats {
+            topPlayers = List.copyOf(topPlayers);
+            appealOutcomes = List.copyOf(appealOutcomes);
+            durations = List.copyOf(durations);
+            heatmap = List.copyOf(heatmap);
+        }
+    }
+
     public enum PardonResult { OK, PUNISHMENT_NOT_FOUND, NOT_ACTIVE }
 }

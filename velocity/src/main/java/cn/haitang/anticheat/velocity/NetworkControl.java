@@ -15,6 +15,11 @@ interface NetworkControl {
     /** Disconnects a player with the given reason; returns false when the player is not online. */
     boolean kick(UUID playerId, String reason);
 
+    /** Broadcasts a message to every connected player; returns how many players received it. */
+    default int broadcast(String message) {
+        return 0;
+    }
+
     /** Snapshot of every registered backend server. */
     List<ServerNode> servers();
 

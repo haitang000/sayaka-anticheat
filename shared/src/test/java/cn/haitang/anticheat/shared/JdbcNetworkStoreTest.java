@@ -221,6 +221,101 @@ class JdbcNetworkStoreTest {
         assertTrue(store.historyEntries(player).stream().anyMatch(entry -> entry.text().contains("复查通过")));
     }
 
+    @Test
+    void manualPunishmentBansImmediatelyAndConflictsWithExistingBan() throws Exception {
+        long now = System.currentTimeMillis();
+        UUID player = UUID.randomUUID();
+        store.addStrike(player, "Manual", now);
+
+        var created = store.createManualPunishment(player, "Manual", 48, "人工复查确认", now);
+
+        assertTrue(created.isPresent());
+        assertEquals("manual", created.get().check());
+        assertEquals("web", created.get().serverId());
+        assertEquals(1, created.get().banNumber());
+        assertEquals(now + 48 * 3_600_000L, created.get().expiresAt());
+        assertTrue(store.findActiveBan(player, now + 1).isPresent());
+        assertEquals(1, store.banCount(player));
+        assertEquals(0, store.strikeCount(player, 24, now + 2));
+        assertTrue(store.historyEntries(player).stream()
+                .anyMatch(entry -> entry.text().contains("手动封禁")));
+
+        assertTrue(store.createManualPunishment(player, "Manual", 24, "", now + 3).isEmpty());
+        assertEquals(1, store.listPunishments().size());
+    }
+
+    @Test
+    void adjustsActiveBanExpiryAndKeepsPunishmentRowConsistent() throws Exception {
+        long now = System.currentTimeMillis();
+        UUID player = UUID.randomUUID();
+        var punishment = store.createManualPunishment(player, "Adjuster", 24, "", now).orElseThrow();
+        long newExpiry = now + 72 * 3_600_000L;
+
+        assertTrue(store.adjustActiveBanExpiry(punishment.id(), newExpiry, "延长观察", now + 1));
+
+        assertEquals(newExpiry, store.findActiveBan(player, now + 2).orElseThrow().expiresAt());
+        var restored = store.getPunishment(punishment.id()).orElseThrow();
+        assertEquals(newExpiry, restored.expiresAt());
+        assertEquals(72, restored.hours());
+        assertTrue(store.historyEntries(player).stream()
+                .anyMatch(entry -> entry.text().contains("调整时长")));
+
+        assertEquals(PardonResult.OK, store.pardonPunishment(punishment.id(), false, "", now + 3));
+        assertFalse(store.adjustActiveBanExpiry(punishment.id(), newExpiry, "", now + 4));
+        assertFalse(store.adjustActiveBanExpiry("not-a-uuid", newExpiry, "", now + 5));
+    }
+
+    @Test
+    void recentActivityMergesPunishmentsAndAppealsNewestFirst() throws Exception {
+        long now = 1_700_000_000_000L;
+        UUID player = UUID.randomUUID();
+        var punishment = store.prepareEnforcement(
+                request(player, "Feed", "lobby", "speed", 1), now - 2_000L).punishment();
+        store.submitAppeal(punishment.id(), "我要申诉这次封禁", "", now - 1_000L);
+
+        var items = store.recentActivity(10, now);
+
+        assertEquals(2, items.size());
+        assertEquals("appeal", items.get(0).kind());
+        assertEquals("PENDING", items.get(0).status());
+        assertEquals("punishment", items.get(1).kind());
+        assertEquals(player, items.get(1).playerId());
+        assertEquals("active", items.get(1).status());
+        assertTrue(items.get(1).summary().contains("speed"));
+
+        assertEquals(1, store.recentActivity(1, now).size());
+    }
+
+    @Test
+    void dashboardStatsAggregatesPlayersAppealsDurationsAndHeatmap() throws Exception {
+        long now = 1_700_000_000_000L;
+        UUID alice = UUID.randomUUID();
+        UUID bob = UUID.randomUUID();
+        var firstBan = store.prepareEnforcement(
+                request(alice, "Alice", "lobby", "speed", 1), now - 3_000L).punishment();
+        assertEquals(PardonResult.OK, store.pardonPunishment(firstBan.id(), false, "", now - 2_500L));
+        store.prepareEnforcement(request(alice, "Alice", "lobby", "reach", 1), now - 2_000L);
+        store.prepareEnforcement(request(bob, "Bob", "lobby", "speed", 1), now - 1_000L);
+        store.submitAppeal(firstBan.id(), "请复查这次处罚", "", now - 500L);
+
+        var stats = store.dashboardStats(now - 10_000L, now + 1_000L, 0L);
+
+        assertEquals("Alice", stats.topPlayers().get(0).name());
+        assertEquals(2, stats.topPlayers().get(0).count());
+        assertEquals(1, stats.appealOutcomes().size());
+        assertEquals("PENDING", stats.appealOutcomes().get(0).name());
+        assertEquals(5, stats.durations().size());
+        assertEquals(3, stats.durations().get(0).count());
+        assertEquals(1, stats.heatmap().size());
+        assertEquals(3, stats.heatmap().get(0).count());
+        assertEquals(1, stats.heatmap().get(0).day());
+        assertEquals(22, stats.heatmap().get(0).hour());
+
+        var shifted = store.dashboardStats(now - 10_000L, now + 1_000L, 8 * 3_600_000L);
+        assertEquals(2, shifted.heatmap().get(0).day());
+        assertEquals(6, shifted.heatmap().get(0).hour());
+    }
+
     private static EnforcementRequest request(UUID player, String serverId, int threshold) {
         return request(player, "Cheater", serverId, "speed", threshold);
     }

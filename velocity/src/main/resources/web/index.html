@@ -53,7 +53,7 @@
       ConfigProvider, theme, Layout, Typography, Segmented, Card, Input, Button, Form,
       Row, Col, Statistic, Table, Tag, Drawer, Descriptions, Space, Empty, Modal,
       message, Alert, Spin, Tabs, Select, DatePicker, Checkbox, AutoComplete, Timeline,
-      Divider, Tooltip, Switch
+      Divider, Tooltip, Switch, InputNumber
     } = antd;
     const Icons = window.icons || {};
     const { Header, Content } = Layout;
@@ -227,7 +227,7 @@
       </div>;
     }
 
-    function Chart({ option, dark }) {
+    function Chart({ option, dark, height }) {
       const element = useRef(null);
       const instance = useRef(null);
       useEffect(() => {
@@ -238,7 +238,19 @@
         return () => { observer.disconnect(); instance.current && instance.current.dispose(); instance.current = null; };
       }, [dark]);
       useEffect(() => { instance.current && instance.current.setOption(option, true); }, [option]);
-      return <div ref={element} className="chart" />;
+      return <div ref={element} className="chart" style={height ? { height } : undefined} />;
+    }
+
+    function usePrefersDark() {
+      const [dark, setDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches || false);
+      useEffect(() => {
+        const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+        if (!media) return;
+        const listener = (event) => setDark(event.matches);
+        media.addEventListener('change', listener);
+        return () => media.removeEventListener('change', listener);
+      }, []);
+      return dark;
     }
 
     function AdminLogin({ onConnect }) {
@@ -342,10 +354,136 @@
       </Modal>;
     }
 
+    function ManualBanModal({ token, open, onClose, onDone }) {
+      const [form] = Form.useForm();
+      const [saving, setSaving] = useState(false);
+      const [options, setOptions] = useState([]);
+      const [selected, setSelected] = useState(null);
+      useEffect(() => { if (open) { form.resetFields(); setOptions([]); setSelected(null); } }, [open, form]);
+      const searchPlayers = async (value) => {
+        if (!value || !value.trim()) { setOptions([]); return; }
+        try {
+          const data = await api('/api/admin/players/search' + params({ q: value }), { token });
+          setOptions(data.players.map((player) => ({ value: player.playerUuid, label: player.playerName + ' · ' + player.playerUuid })));
+        } catch (error) { message.error(error.message); }
+      };
+      const submit = async (values) => {
+        if (!selected) { message.warning('请先搜索并选择玩家'); return; }
+        setSaving(true);
+        try {
+          await api('/api/admin/punishments/manual', { method: 'POST', token,
+            body: { uuid: selected, hours: values.hours, reason: values.reason || '' } });
+          message.success('已手动封禁该玩家'); onClose(); onDone();
+        } catch (error) { message.error(error.message); }
+        finally { setSaving(false); }
+      };
+      return <Modal title="手动封禁玩家" open={open} onCancel={onClose} onOk={() => form.submit()}
+        confirmLoading={saving} okText="确认封禁" okButtonProps={{ danger: true }}>
+        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ hours: 24 }}>
+          <Form.Item label="玩家（仅可选择数据库中已知的玩家）" required>
+            <AutoComplete options={options} onSearch={searchPlayers}
+              onSelect={(value) => setSelected(value)} placeholder="搜索玩家名称或 UUID" />
+          </Form.Item>
+          <Form.Item name="hours" label="封禁时长（小时）" rules={[{ required: true, message: '请输入封禁时长' }]}>
+            <InputNumber min={1} max={8760} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="reason" label="封禁理由（选填）"><Input.TextArea maxLength={2000} rows={3} /></Form.Item>
+        </Form>
+      </Modal>;
+    }
+
+    function AdjustBanModal({ token, punishment, open, onClose, onDone }) {
+      const [form] = Form.useForm();
+      const [saving, setSaving] = useState(false);
+      const [expiresAt, setExpiresAt] = useState(null);
+      useEffect(() => {
+        if (open && punishment) { form.resetFields(); setExpiresAt(dayjs(punishment.expiresAt)); }
+      }, [open, punishment, form]);
+      const quick = (hours) => setExpiresAt(dayjs(punishment.expiresAt).add(hours, 'hour'));
+      const submit = async (values) => {
+        if (!expiresAt) { message.warning('请选择新的解封时间'); return; }
+        setSaving(true);
+        try {
+          await api('/api/admin/punishments/adjust', { method: 'POST', token,
+            body: { id: punishment.id, expiresAt: expiresAt.valueOf(), note: values.note || '' } });
+          message.success('封禁时长已调整'); onClose(); onDone();
+        } catch (error) { message.error(error.message); }
+        finally { setSaving(false); }
+      };
+      return <Modal title={'调整封禁时长 · ' + (punishment ? punishment.playerName : '')} open={open}
+        onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} okText="确认调整">
+        {punishment && <Paragraph type="secondary">当前解封时间：{fmt(punishment.expiresAt)}</Paragraph>}
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Button size="small" onClick={() => quick(6)}>+6 小时</Button>
+          <Button size="small" onClick={() => quick(24)}>+24 小时</Button>
+          <Button size="small" onClick={() => quick(72)}>+72 小时</Button>
+          <Button size="small" onClick={() => quick(-24)}>-24 小时</Button>
+        </Space>
+        <Form form={form} layout="vertical" onFinish={submit}>
+          <Form.Item label="新的解封时间" required>
+            <DatePicker showTime value={expiresAt} onChange={setExpiresAt} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="note" label="管理员说明"><Input.TextArea maxLength={2000} rows={2} /></Form.Item>
+        </Form>
+      </Modal>;
+    }
+
+    function BatchPardonModal({ token, ids, open, onClose, onDone }) {
+      const [form] = Form.useForm();
+      const [saving, setSaving] = useState(false);
+      useEffect(() => { if (open) form.resetFields(); }, [open, form]);
+      const submit = async (values) => {
+        setSaving(true);
+        try {
+          const res = await api('/api/admin/punishments/pardon-batch', { method: 'POST', token,
+            body: { ids, note: values.note || '', resetBanCount: !!values.resetBanCount } });
+          if (res.failed && res.failed.length) {
+            message.warning('已解封 ' + res.succeeded + ' 条，' + res.failed.length + ' 条失败（可能已失效）');
+          } else {
+            message.success('已批量解封 ' + res.succeeded + ' 条处罚');
+          }
+          onClose(); onDone();
+        } catch (error) { message.error(error.message); }
+        finally { setSaving(false); }
+      };
+      return <Modal title={'批量解封（' + ids.length + ' 条处罚）'} open={open} onCancel={onClose}
+        onOk={() => form.submit()} confirmLoading={saving} okText="确认解封" okButtonProps={{ danger: true }}>
+        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ resetBanCount: false }}>
+          <Form.Item name="note" label="管理员说明"><Input.TextArea maxLength={2000} rows={3} /></Form.Item>
+          <Form.Item name="resetBanCount" valuePropName="checked"><Checkbox>同时重置这些玩家的累计封禁次数</Checkbox></Form.Item>
+        </Form>
+      </Modal>;
+    }
+
+    function BroadcastModal({ token, open, onClose }) {
+      const [form] = Form.useForm();
+      const [saving, setSaving] = useState(false);
+      useEffect(() => { if (open) form.resetFields(); }, [open, form]);
+      const submit = async (values) => {
+        setSaving(true);
+        try {
+          const res = await api('/api/admin/network/broadcast', { method: 'POST', token,
+            body: { message: values.message } });
+          message.success('广播已发送给 ' + res.delivered + ' 名在线玩家'); onClose();
+        } catch (error) { message.error(error.message); }
+        finally { setSaving(false); }
+      };
+      return <Modal title="广播消息" open={open} onCancel={onClose} onOk={() => form.submit()}
+        confirmLoading={saving} okText="发送">
+        <Form form={form} layout="vertical" onFinish={submit}>
+          <Form.Item name="message" label="消息内容（发送给全服在线玩家）"
+            rules={[{ required: true, whitespace: true, message: '请输入广播内容' }]}>
+            <Input.TextArea rows={3} maxLength={500} showCount />
+          </Form.Item>
+        </Form>
+      </Modal>;
+    }
+
     function PlayerDrawer({ token, playerUuid, open, onClose, onChanged }) {
       const [profile, setProfile] = useState(null);
       const [loading, setLoading] = useState(false);
       const [pardon, setPardon] = useState(null);
+      const dark = usePrefersDark();
       const load = useCallback(async () => {
         if (!playerUuid) return;
         setLoading(true);
@@ -370,7 +508,40 @@
         else execute();
       };
 
+      const resetPlayer = () => {
+        if (!profile) return;
+        Modal.confirm({
+          title: '重置 ' + profile.playerName + ' 的玩家数据？',
+          content: '将清空该玩家的违规计数、管理历史、生效封禁与累计封禁次数（处罚记录保留）。此操作不可撤销。',
+          okText: '确认重置', okButtonProps: { danger: true },
+          onOk: async () => {
+            try {
+              await api('/api/admin/players/reset', { method: 'POST', token, body: { uuid: profile.playerUuid } });
+              message.success('玩家数据已重置'); load(); onChanged();
+            } catch (error) { message.error(error.message); }
+          }
+        });
+      };
+
       const active = profile && profile.punishments.find((item) => item.id === profile.activePunishmentId);
+      const topCheck = useMemo(() => {
+        if (!profile || !profile.punishments.length) return null;
+        const counts = {};
+        profile.punishments.forEach((item) => { counts[item.checkDisplay] = (counts[item.checkDisplay] || 0) + 1; });
+        return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+      }, [profile]);
+      const vlOption = useMemo(() => {
+        if (!profile || !profile.punishments.length) return null;
+        const points = [...profile.punishments].sort((a, b) => a.bannedAt - b.bannedAt);
+        return {
+          backgroundColor: 'transparent', tooltip: { trigger: 'axis' },
+          grid: { left: 42, right: 16, top: 24, bottom: 32 },
+          xAxis: { type: 'category', data: points.map((item) => dayjs(item.bannedAt).format('MM-DD HH:mm')) },
+          yAxis: { type: 'value', name: 'VL' },
+          series: [{ name: 'VL', type: 'line', smooth: true, symbolSize: 7,
+            data: points.map((item) => item.vl), lineStyle: { color: '#d4380d', width: 3 }, itemStyle: { color: '#d4380d' } }]
+        };
+      }, [profile]);
       return <>
         <Drawer width={640} open={open} onClose={onClose} title="玩家档案">
           <Spin spinning={loading}>
@@ -379,6 +550,8 @@
                 { key: 'n', label: '玩家', children: profile.playerName },
                 { key: 'u', label: 'UUID', children: <Text copyable>{profile.playerUuid}</Text> },
                 { key: 'b', label: '累计封禁', children: profile.banCount },
+                { key: 'p', label: '处罚记录', children: profile.punishments.length + ' 条' },
+                { key: 't', label: '常见检测', children: topCheck || '—' },
                 { key: 'w', label: '白名单', children: profile.whitelisted ? <Tag color="green">已加入</Tag> : <Tag>未加入</Tag> },
               ]} />
               <Space style={{ marginTop: 14 }} wrap>
@@ -387,7 +560,12 @@
                   {profile.whitelisted ? '移出白名单' : '加入白名单'}
                 </Button>
                 {active && <Button danger type="primary" icon={icon('UnlockOutlined')} onClick={() => setPardon(active)}>解封</Button>}
+                <Button danger icon={icon('DeleteOutlined')} onClick={resetPlayer}>重置数据</Button>
               </Space>
+              {vlOption && <div className="drawer-section">
+                <Text strong className="drawer-section-title">VL 变化趋势</Text>
+                <Chart option={vlOption} dark={dark} height={200} />
+              </div>}
               <div className="drawer-section">
                 <Text strong className="drawer-section-title">管理历史</Text>
                 {profile.history.length ? <Timeline items={profile.history.map((item) => ({
@@ -414,13 +592,20 @@
     function OverviewPanel({ token, dark, onUnauthorized }) {
       const [days, setDays] = useState(30);
       const [data, setData] = useState(null);
+      const [stats, setStats] = useState(null);
       const [loading, setLoading] = useState(false);
       const load = useCallback(async () => {
         const to = dayjs().add(1, 'day').startOf('day').valueOf();
         const from = dayjs(to).subtract(days, 'day').valueOf();
         setLoading(true);
-        try { setData(await api('/api/admin/overview' + params({ from, to }), { token })); }
-        catch (error) { if (error.status === 401) onUnauthorized(); else message.error(error.message); }
+        try {
+          const [overviewData, statsData] = await Promise.all([
+            api('/api/admin/overview' + params({ from, to }), { token }),
+            api('/api/admin/stats' + params({ from, to, tzOffsetMinutes: new Date().getTimezoneOffset() }), { token })
+          ]);
+          setData(overviewData);
+          setStats(statsData);
+        } catch (error) { if (error.status === 401) onUnauthorized(); else message.error(error.message); }
         finally { setLoading(false); }
       }, [days, token, onUnauthorized]);
       useEffect(() => { load(); }, [load]);
@@ -439,6 +624,39 @@
         yAxis: { type: 'category', inverse: true, data: items.map((item) => item.name) },
         series: [{ type: 'bar', data: items.map((item) => item.count), itemStyle: { color }, barMaxWidth: 22 }]
       });
+      const appealPieOption = useMemo(() => ({
+        backgroundColor: 'transparent', tooltip: { trigger: 'item' },
+        legend: { bottom: 0 },
+        series: [{ type: 'pie', radius: ['42%', '68%'], center: ['50%', '44%'],
+          label: { formatter: '{b}: {c}' },
+          data: (stats?.appealOutcomes || []).map((item) => ({
+            name: (STATUS_META[item.name] || {}).label || item.name, value: item.count,
+            itemStyle: { color: { PENDING: '#d48806', APPROVED: '#389e0d', REJECTED: '#cf1322' }[item.name] }
+          })) }]
+      }), [stats]);
+      const durationOption = useMemo(() => ({
+        backgroundColor: 'transparent', tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        grid: { left: 45, right: 20, top: 24, bottom: 30 },
+        xAxis: { type: 'category', data: (stats?.durations || []).map((item) => item.name) },
+        yAxis: { type: 'value', minInterval: 1 },
+        series: [{ type: 'bar', data: (stats?.durations || []).map((item) => item.count),
+          itemStyle: { color: '#722ed1' }, barMaxWidth: 42 }]
+      }), [stats]);
+      const heatOption = useMemo(() => {
+        const dayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+        const cells = (stats?.heatmap || []).map((cell) => [cell.hour, cell.day, cell.count]);
+        const maxCount = Math.max(1, ...cells.map((cell) => cell[2]));
+        return {
+          backgroundColor: 'transparent',
+          tooltip: { position: 'top', formatter: (point) => dayLabels[point.value[1]] + ' ' + point.value[0] + ':00 · ' + point.value[2] + ' 次' },
+          grid: { left: 52, right: 16, top: 14, bottom: 64 },
+          xAxis: { type: 'category', data: Array.from({ length: 24 }, (ignored, i) => i + '时'), splitArea: { show: true } },
+          yAxis: { type: 'category', data: dayLabels, splitArea: { show: true } },
+          visualMap: { min: 0, max: maxCount, calculable: true, orient: 'horizontal', left: 'center', bottom: 0,
+            inRange: { color: dark ? ['#2b2111', '#ad4e00', '#d4380d'] : ['#fff7e6', '#ffa940', '#d4380d'] } },
+          series: [{ type: 'heatmap', data: cells, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' } } }]
+        };
+      }, [stats, dark]);
       return <Spin spinning={loading}>
         <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>运营概览</Title>
           <Space><Segmented value={days} onChange={setDays} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />
@@ -455,6 +673,10 @@
           <Col xs={24}><Card title="处罚趋势"><Chart option={lineOption} dark={dark} /></Card></Col>
           <Col xs={24} lg={12}><Card title="检测类型分布"><Chart option={barOption(data?.checks || [], '#d4380d')} dark={dark} /></Card></Col>
           <Col xs={24} lg={12}><Card title="来源服分布"><Chart option={barOption(data?.servers || [], '#1677a3')} dark={dark} /></Card></Col>
+          <Col xs={24} lg={12}><Card title="高频违规玩家 TOP 10"><Chart option={barOption(stats?.topPlayers || [], '#722ed1')} dark={dark} /></Card></Col>
+          <Col xs={24} lg={12}><Card title="申诉处理结果"><Chart option={appealPieOption} dark={dark} /></Card></Col>
+          <Col xs={24} lg={12}><Card title="封禁时长分布"><Chart option={durationOption} dark={dark} /></Card></Col>
+          <Col xs={24} lg={12}><Card title="处罚时段热力图"><Chart option={heatOption} dark={dark} /></Card></Col>
         </Row>
       </Spin>;
     }
@@ -474,6 +696,10 @@
       const [detail, setDetail] = useState(null);
       const [playerUuid, setPlayerUuid] = useState(null);
       const [pardon, setPardon] = useState(null);
+      const [manualBan, setManualBan] = useState(false);
+      const [adjust, setAdjust] = useState(null);
+      const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+      const [batchOpen, setBatchOpen] = useState(false);
 
       const queryValues = useMemo(() => ({ q: debounced, status, appealStatus, server, check,
         from: range?.[0]?.startOf('day').valueOf(), to: range?.[1]?.add(1, 'day').startOf('day').valueOf(), page, pageSize
@@ -483,6 +709,7 @@
         try { setData(await api('/api/admin/punishments' + params(queryValues), { token })); }
         catch (error) { if (error.status === 401) onUnauthorized(); else message.error(error.message); }
         finally { setLoading(false); }
+        setSelectedRowKeys([]);
       }, [queryValues, token, onUnauthorized]);
       useEffect(() => { load(); }, [load]);
       useEffect(() => { setPage(1); }, [debounced, status, appealStatus, server, check, range]);
@@ -514,7 +741,11 @@
       ];
       return <>
         <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>处罚记录</Title>
-          <Space><Button icon={icon('DownloadOutlined')} onClick={download}>导出</Button>
+          <Space>
+            {selectedRowKeys.length > 0 && <Button danger icon={icon('UnlockOutlined')}
+              onClick={() => setBatchOpen(true)}>批量解封 ({selectedRowKeys.length})</Button>}
+            <Button type="primary" icon={icon('PlusOutlined')} onClick={() => setManualBan(true)}>手动封禁</Button>
+            <Button icon={icon('DownloadOutlined')} onClick={download}>导出</Button>
             <Tooltip title="刷新"><Button icon={icon('ReloadOutlined')} onClick={load} loading={loading} /></Tooltip></Space></div>
         <div className="filter-row">
           <Input className="filter-search" prefix={icon('SearchOutlined')} allowClear placeholder="玩家、UUID 或处罚 ID"
@@ -531,15 +762,25 @@
           <Button icon={icon('ClearOutlined')} onClick={reset}>重置</Button>
         </div>
         <Table rowKey="id" size="small" loading={loading} dataSource={data.items} columns={columns}
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys,
+            getCheckboxProps: (row) => ({ disabled: !row.active }) }}
           scroll={{ x: 1020 }} locale={{ emptyText: <Empty description="暂无处罚记录" /> }}
           pagination={{ current: page, pageSize, total: data.total, showSizeChanger: true, showTotal: (total) => '共 ' + total + ' 条',
             onChange: (next, size) => { setPage(next); setPageSize(size); } }} />
         <Drawer width={640} open={!!detail} onClose={() => setDetail(null)} title="处罚详情"
-          extra={detail?.active && <Button danger icon={icon('UnlockOutlined')} onClick={() => setPardon(detail)}>解封</Button>}>
+          extra={detail?.active && <Space>
+            <Button icon={icon('FieldTimeOutlined')} onClick={() => setAdjust(detail)}>调整时长</Button>
+            <Button danger icon={icon('UnlockOutlined')} onClick={() => setPardon(detail)}>解封</Button>
+          </Space>}>
           <EvidenceBlock punishment={detail} />
         </Drawer>
         <PlayerDrawer token={token} playerUuid={playerUuid} open={!!playerUuid} onClose={() => setPlayerUuid(null)} onChanged={load} />
         <PardonModal token={token} punishment={pardon} open={!!pardon} onClose={() => setPardon(null)} onDone={() => { setDetail(null); load(); }} />
+        <ManualBanModal token={token} open={manualBan} onClose={() => setManualBan(false)} onDone={load} />
+        <AdjustBanModal token={token} punishment={adjust} open={!!adjust} onClose={() => setAdjust(null)}
+          onDone={() => { setDetail(null); load(); }} />
+        <BatchPardonModal token={token} ids={selectedRowKeys} open={batchOpen} onClose={() => setBatchOpen(false)}
+          onDone={() => { setSelectedRowKeys([]); load(); }} />
       </>;
     }
 
@@ -669,6 +910,7 @@
       const [loading, setLoading] = useState(false);
       const [query, setQuery] = useState('');
       const [playerUuid, setPlayerUuid] = useState(null);
+      const [broadcastOpen, setBroadcastOpen] = useState(false);
       const load = useCallback(async () => {
         setLoading(true);
         try { setData(await api('/api/admin/network/players', { token })); }
@@ -697,7 +939,9 @@
       ];
       return <>
         <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>在线玩家 <Text type="secondary" style={{ fontSize: 14 }}>· {data.total}</Text></Title>
-          <Tooltip title="刷新"><Button icon={icon('ReloadOutlined')} onClick={load} loading={loading} /></Tooltip></div>
+          <Space>
+            <Button icon={icon('SoundOutlined')} onClick={() => setBroadcastOpen(true)}>广播消息</Button>
+            <Tooltip title="刷新"><Button icon={icon('ReloadOutlined')} onClick={load} loading={loading} /></Tooltip></Space></div>
         <div className="filter-row">
           <Input className="filter-search" prefix={icon('SearchOutlined')} allowClear placeholder="玩家、UUID 或节点"
             value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -705,6 +949,63 @@
         <Table rowKey="playerUuid" size="small" loading={loading} dataSource={rows} columns={columns}
           scroll={{ x: 620 }} locale={{ emptyText: <Empty description="当前没有在线玩家" /> }}
           pagination={{ pageSize: 20, showTotal: (total) => '共 ' + total + ' 人' }} />
+        <PlayerDrawer token={token} playerUuid={playerUuid} open={!!playerUuid} onClose={() => setPlayerUuid(null)} onChanged={load} />
+        <BroadcastModal token={token} open={broadcastOpen} onClose={() => setBroadcastOpen(false)} />
+      </>;
+    }
+
+    function ActivityPanel({ token, onUnauthorized }) {
+      const [data, setData] = useState({ items: [] });
+      const [loading, setLoading] = useState(false);
+      const [autoRefresh, setAutoRefresh] = useState(true);
+      const [playerUuid, setPlayerUuid] = useState(null);
+      const load = useCallback(async (silent) => {
+        if (!silent) setLoading(true);
+        try { setData(await api('/api/admin/activity?limit=50', { token })); }
+        catch (error) { if (error.status === 401) onUnauthorized(); else if (!silent) message.error(error.message); }
+        finally { setLoading(false); }
+      }, [token, onUnauthorized]);
+      useEffect(() => { load(); }, [load]);
+      useEffect(() => {
+        if (!autoRefresh) return;
+        const timer = setInterval(() => load(true), 15000);
+        return () => clearInterval(timer);
+      }, [autoRefresh, load]);
+      const items = (data.items || []).map((item, index) => ({
+        key: item.kind + '-' + item.punishmentId + '-' + index,
+        color: item.kind === 'punishment' ? 'red' : item.status === 'PENDING' ? 'gold' : item.status === 'APPROVED' ? 'green' : 'gray',
+        children: <>
+          <Space size="small" wrap>
+            {item.kind === 'punishment'
+              ? <Tag color="volcano">封禁</Tag>
+              : <Tag color="gold">申诉</Tag>}
+            {item.playerUuid
+              ? <Button type="link" className="player-link" onClick={() => setPlayerUuid(item.playerUuid)}>{item.playerName}</Button>
+              : <Text strong>{item.playerName}</Text>}
+            <Text type="secondary">{item.summary}</Text>
+            {item.kind === 'punishment' && item.status === 'active' && <Tag color="red">生效中</Tag>}
+            {item.kind === 'appeal' && <StatusTag status={item.status} />}
+          </Space>
+          <br />
+          <Text type="secondary" style={{ fontSize: 12 }}>{fmt(item.at)}</Text>
+        </>
+      }));
+      return <>
+        <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>实时动态</Title>
+          <Space>
+            <Text type="secondary">自动刷新</Text>
+            <Switch checked={autoRefresh} onChange={setAutoRefresh} />
+            <Tooltip title="刷新"><Button icon={icon('ReloadOutlined')} onClick={() => load()} loading={loading} /></Tooltip>
+          </Space></div>
+        <Alert style={{ marginBottom: 14 }} type="info" showIcon
+          message="展示全网络最近的封禁与申诉事件，开启自动刷新后每 15 秒更新一次。" />
+        <Card>
+          <Spin spinning={loading}>
+            {items.length
+              ? <Timeline items={items} />
+              : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无动态" />}
+          </Spin>
+        </Card>
         <PlayerDrawer token={token} playerUuid={playerUuid} open={!!playerUuid} onClose={() => setPlayerUuid(null)} onChanged={load} />
       </>;
     }
@@ -841,6 +1142,7 @@
       }, [token, unauthorized]);
       const items = [
         { key: 'overview', label: <Space>{icon('DashboardOutlined')}概览</Space>, children: <OverviewPanel token={token} dark={dark} onUnauthorized={unauthorized} /> },
+        { key: 'activity', label: <Space>{icon('ThunderboltOutlined')}动态</Space>, children: <ActivityPanel token={token} onUnauthorized={unauthorized} /> },
         { key: 'punishments', label: <Space>{icon('SafetyCertificateOutlined')}处罚</Space>, children: <PunishmentsPanel token={token} filters={filters} onUnauthorized={unauthorized} /> },
         { key: 'appeals', label: <Space>{icon('AuditOutlined')}申诉</Space>, children: <AppealsPanel token={token} onUnauthorized={unauthorized} /> },
         { key: 'players', label: <Space>{icon('UserOutlined')}在线玩家</Space>, children: <OnlinePlayersPanel token={token} onUnauthorized={unauthorized} /> },

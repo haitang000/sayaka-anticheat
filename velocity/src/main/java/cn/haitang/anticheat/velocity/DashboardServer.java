@@ -7,6 +7,7 @@ import cn.haitang.anticheat.shared.NetworkModels.AppealFilter;
 import cn.haitang.anticheat.shared.NetworkModels.AppealStatus;
 import cn.haitang.anticheat.shared.NetworkModels.AppealSubmitResult;
 import cn.haitang.anticheat.shared.NetworkModels.DashboardOverview;
+import cn.haitang.anticheat.shared.NetworkModels.DashboardStats;
 import cn.haitang.anticheat.shared.NetworkModels.FilterOptions;
 import cn.haitang.anticheat.shared.NetworkModels.Page;
 import cn.haitang.anticheat.shared.NetworkModels.PardonResult;
@@ -25,9 +26,11 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
@@ -44,6 +47,9 @@ final class DashboardServer {
     private static final int MAX_QUERY_LENGTH = 64;
     private static final int MAX_PAGE_SIZE = 100;
     private static final int MAX_EXPORT_ROWS = 10_000;
+    private static final int MAX_BATCH_SIZE = 100;
+    private static final int MAX_BAN_HOURS = 8760;
+    private static final int MAX_BROADCAST_LENGTH = 500;
     private static final long DAY_MILLIS = 86_400_000L;
 
     private final JdbcNetworkStore store;
@@ -178,12 +184,18 @@ final class DashboardServer {
         server.createContext("/api/admin/overview", wrap(admin(this::overview)));
         server.createContext("/api/admin/filters", wrap(admin(this::filters)));
         server.createContext("/api/admin/punishments/export", wrap(admin(this::exportPunishments)));
+        server.createContext("/api/admin/punishments/pardon-batch", wrap(admin(this::pardonBatch)));
         server.createContext("/api/admin/punishments/pardon", wrap(admin(this::pardon)));
+        server.createContext("/api/admin/punishments/manual", wrap(admin(this::manualBan)));
+        server.createContext("/api/admin/punishments/adjust", wrap(admin(this::adjustBan)));
         server.createContext("/api/admin/punishments", wrap(admin(this::punishments)));
+        server.createContext("/api/admin/stats", wrap(admin(this::stats)));
+        server.createContext("/api/admin/activity", wrap(admin(this::activity)));
         server.createContext("/api/admin/appeals/resolve", wrap(admin(this::resolve)));
         server.createContext("/api/admin/appeals", wrap(admin(this::appeals)));
         server.createContext("/api/admin/players/search", wrap(admin(this::searchPlayers)));
         server.createContext("/api/admin/players/detail", wrap(admin(this::playerDetail)));
+        server.createContext("/api/admin/players/reset", wrap(admin(this::resetPlayer)));
         server.createContext("/api/admin/whitelist/add", wrap(admin(this::addWhitelist)));
         server.createContext("/api/admin/whitelist/remove", wrap(admin(this::removeWhitelist)));
         server.createContext("/api/admin/whitelist", wrap(admin(this::whitelist)));
@@ -192,6 +204,7 @@ final class DashboardServer {
         server.createContext("/api/admin/system", wrap(admin(this::systemInfo)));
         server.createContext("/api/admin/network/players/kick", wrap(admin(this::kickPlayer)));
         server.createContext("/api/admin/network/players", wrap(admin(this::networkPlayers)));
+        server.createContext("/api/admin/network/broadcast", wrap(admin(this::broadcast)));
         server.createContext("/api/admin/network/servers", wrap(admin(this::networkServers)));
         server.createContext("/api/admin/protection/set", wrap(admin(this::setProtection)));
         server.createContext("/", wrap(this::staticFile));
@@ -371,6 +384,136 @@ final class DashboardServer {
         if (result == PardonResult.PUNISHMENT_NOT_FOUND) throw new HttpError(404, "未找到该处罚 ID");
         if (result == PardonResult.NOT_ACTIVE) throw new HttpError(409, "该处罚不是玩家当前生效的封禁");
         invalidateBanCache.accept(punishment.playerId());
+        sendJson(exchange, 200, Map.of("ok", true));
+    }
+
+    private void manualBan(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        Map<String, Object> json = readJson(exchange);
+        UUID playerId = uuidValue(json.get("uuid"));
+        int hours = intValue(json.get("hours"), 0);
+        if (hours < 1 || hours > MAX_BAN_HOURS) {
+            throw new HttpError(400, "封禁时长必须在 1-" + MAX_BAN_HOURS + " 小时之间");
+        }
+        String reason = truncate(string(json.get("reason")).trim(), MAX_REASON_LENGTH);
+        long now = System.currentTimeMillis();
+        PlayerProfile profile = store.playerProfile(playerId, now)
+                .orElseThrow(() -> new HttpError(404, "只能封禁数据库中已知的玩家"));
+        Optional<Punishment> created = store.createManualPunishment(
+                playerId, profile.playerName(), hours, reason, now);
+        if (created.isEmpty()) throw new HttpError(409, "该玩家已有生效中的封禁");
+        invalidateBanCache.accept(playerId);
+        sendJson(exchange, 200, Map.of("ok", true,
+                "punishment", punishmentMap(created.get(), true, true)));
+    }
+
+    private void adjustBan(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        Map<String, Object> json = readJson(exchange);
+        String id = string(json.get("id")).trim();
+        long expiresAt = longValue(json.get("expiresAt"), 0L);
+        String note = truncate(string(json.get("note")).trim(), MAX_REASON_LENGTH);
+        long now = System.currentTimeMillis();
+        if (expiresAt <= now) throw new HttpError(400, "新的解封时间必须晚于当前时间");
+        if (expiresAt - now > 10L * 366 * DAY_MILLIS) throw new HttpError(400, "解封时间超出允许范围");
+        Punishment punishment = store.getPunishment(id)
+                .orElseThrow(() -> new HttpError(404, "未找到该处罚 ID"));
+        if (!store.adjustActiveBanExpiry(id, expiresAt, note, now)) {
+            throw new HttpError(409, "该处罚不是玩家当前生效的封禁");
+        }
+        invalidateBanCache.accept(punishment.playerId());
+        sendJson(exchange, 200, Map.of("ok", true));
+    }
+
+    private void pardonBatch(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        Map<String, Object> json = readJson(exchange);
+        if (!(json.get("ids") instanceof List<?> ids) || ids.isEmpty()) {
+            throw new HttpError(400, "缺少处罚 ID 列表");
+        }
+        if (ids.size() > MAX_BATCH_SIZE) {
+            throw new HttpError(400, "单次最多批量处理 " + MAX_BATCH_SIZE + " 条");
+        }
+        String note = truncate(string(json.get("note")).trim(), MAX_REASON_LENGTH);
+        boolean resetBanCount = Boolean.TRUE.equals(json.get("resetBanCount"));
+        long now = System.currentTimeMillis();
+        int succeeded = 0;
+        List<Map<String, String>> failed = new ArrayList<>();
+        for (Object item : ids) {
+            String id = string(item).trim();
+            try {
+                Punishment punishment = store.getPunishment(id).orElse(null);
+                if (punishment == null) {
+                    failed.add(Map.of("id", id, "error", "未找到该处罚 ID"));
+                    continue;
+                }
+                PardonResult result = store.pardonPunishment(id, resetBanCount, note, now);
+                if (result == PardonResult.OK) {
+                    succeeded++;
+                    invalidateBanCache.accept(punishment.playerId());
+                } else {
+                    failed.add(Map.of("id", id, "error",
+                            result == PardonResult.NOT_ACTIVE ? "不是生效中的封禁" : "未找到该处罚 ID"));
+                }
+            } catch (SQLException error) {
+                failed.add(Map.of("id", id, "error", "数据库暂时不可用"));
+            }
+        }
+        sendJson(exchange, 200, Map.of("ok", true, "succeeded", succeeded, "failed", failed));
+    }
+
+    private void stats(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "GET");
+        long now = System.currentTimeMillis();
+        long to = longParam(exchange, "to", now);
+        long from = longParam(exchange, "from", to - 30L * DAY_MILLIS);
+        validateRange(from, to);
+        long tzOffsetMinutes = longParam(exchange, "tzOffsetMinutes", 0L);
+        if (Math.abs(tzOffsetMinutes) > 14L * 60) throw new HttpError(400, "无效的时区偏移");
+        DashboardStats value = store.dashboardStats(from, to, -tzOffsetMinutes * 60_000L);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("from", from);
+        body.put("to", to);
+        body.put("topPlayers", value.topPlayers().stream()
+                .map(item -> Map.of("name", item.name(), "count", item.count())).toList());
+        body.put("appealOutcomes", value.appealOutcomes().stream()
+                .map(item -> Map.of("name", item.name(), "count", item.count())).toList());
+        body.put("durations", value.durations().stream()
+                .map(item -> Map.of("name", item.name(), "count", item.count())).toList());
+        body.put("heatmap", value.heatmap().stream()
+                .map(item -> Map.of("day", item.day(), "hour", item.hour(), "count", item.count())).toList());
+        sendJson(exchange, 200, body);
+    }
+
+    private void activity(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "GET");
+        int limit = intParam(exchange, "limit", 30, 1, MAX_PAGE_SIZE);
+        List<Object> items = store.recentActivity(limit, System.currentTimeMillis()).stream().map(item -> {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("kind", item.kind());
+            map.put("at", item.at());
+            map.put("playerUuid", item.playerId() == null ? null : item.playerId().toString());
+            map.put("playerName", item.playerName());
+            map.put("punishmentId", item.punishmentId());
+            map.put("summary", item.summary());
+            map.put("status", item.status());
+            return (Object) map;
+        }).toList();
+        sendJson(exchange, 200, Map.of("items", items));
+    }
+
+    private void broadcast(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        String message = truncate(string(readJson(exchange).get("message")).trim(), MAX_BROADCAST_LENGTH);
+        if (message.isEmpty()) throw new HttpError(400, "广播内容不能为空");
+        sendJson(exchange, 200, Map.of("ok", true, "delivered", control.broadcast(message)));
+    }
+
+    private void resetPlayer(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        UUID playerId = uuidValue(readJson(exchange).get("uuid"));
+        store.resetPlayer(playerId);
+        invalidateBanCache.accept(playerId);
         sendJson(exchange, 200, Map.of("ok", true));
     }
 
@@ -839,6 +982,24 @@ final class DashboardServer {
 
     private static String string(Object value) {
         return value == null ? "" : String.valueOf(value);
+    }
+
+    private static int intValue(Object value, int fallback) {
+        if (value instanceof Number number) return number.intValue();
+        try {
+            return Integer.parseInt(string(value).trim());
+        } catch (NumberFormatException invalid) {
+            return fallback;
+        }
+    }
+
+    private static long longValue(Object value, long fallback) {
+        if (value instanceof Number number) return number.longValue();
+        try {
+            return Long.parseLong(string(value).trim());
+        } catch (NumberFormatException invalid) {
+            return fallback;
+        }
     }
 
     private static String truncate(String value, int length) {

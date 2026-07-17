@@ -1,17 +1,20 @@
 package cn.haitang.anticheat.shared;
 
 import cn.haitang.anticheat.shared.NetworkModels.ActiveBan;
+import cn.haitang.anticheat.shared.NetworkModels.ActivityItem;
 import cn.haitang.anticheat.shared.NetworkModels.Appeal;
 import cn.haitang.anticheat.shared.NetworkModels.AppealStatus;
 import cn.haitang.anticheat.shared.NetworkModels.AppealSubmitResult;
 import cn.haitang.anticheat.shared.NetworkModels.AppealFilter;
 import cn.haitang.anticheat.shared.NetworkModels.AppealView;
 import cn.haitang.anticheat.shared.NetworkModels.DashboardOverview;
+import cn.haitang.anticheat.shared.NetworkModels.DashboardStats;
 import cn.haitang.anticheat.shared.NetworkModels.DetectionEvidence;
 import cn.haitang.anticheat.shared.NetworkModels.EnforcementDecision;
 import cn.haitang.anticheat.shared.NetworkModels.EnforcementKind;
 import cn.haitang.anticheat.shared.NetworkModels.EnforcementRequest;
 import cn.haitang.anticheat.shared.NetworkModels.FilterOptions;
+import cn.haitang.anticheat.shared.NetworkModels.HeatCell;
 import cn.haitang.anticheat.shared.NetworkModels.HistoryEntry;
 import cn.haitang.anticheat.shared.NetworkModels.NamedCount;
 import cn.haitang.anticheat.shared.NetworkModels.Page;
@@ -647,6 +650,205 @@ public final class JdbcNetworkStore {
                 throw error;
             }
         }
+    }
+
+    /**
+     * Creates a network-wide ban from the web panel. Returns empty when the player already has an
+     * active ban, so the caller can surface a conflict instead of stacking a second one.
+     */
+    public Optional<Punishment> createManualPunishment(UUID playerId, String playerName, int hours,
+                                                       String reason, long now) throws SQLException {
+        try (Connection connection = open()) {
+            ensurePlayer(connection, playerId, playerName);
+            connection.setAutoCommit(false);
+            connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+            try {
+                int banCount = lockBanCount(connection, playerId);
+                if (findActivePunishment(connection, playerId, now) != null) {
+                    connection.rollback();
+                    return Optional.empty();
+                }
+                int banNumber = banCount + 1;
+                String punishmentId = UUID.randomUUID().toString();
+                long expiresAt = now + hours * 3_600_000L;
+                Punishment punishment = new Punishment(punishmentId, playerId, playerName, "web",
+                        now, expiresAt, "manual", 0.0, hours, banNumber, List.of(), List.of());
+                insertPunishment(connection, punishment);
+                String banReason = "Sayaka AntiCheat: 管理员手动封禁"
+                        + (reason.isBlank() ? "" : "（" + reason + "）")
+                        + " (处罚 ID " + punishmentId + ")";
+                execute(connection, "DELETE FROM sayaka_active_bans WHERE player_uuid=?",
+                        playerId.toString());
+                execute(connection, "INSERT INTO sayaka_active_bans"
+                                + "(player_uuid,punishment_id,player_name,reason_text,expires_at) VALUES(?,?,?,?,?)",
+                        playerId.toString(), punishmentId, playerName, banReason, expiresAt);
+                execute(connection, "UPDATE sayaka_players SET ban_count=? WHERE player_uuid=?",
+                        banNumber, playerId.toString());
+                execute(connection, "DELETE FROM sayaka_strikes WHERE player_uuid=?", playerId.toString());
+                addHistory(connection, playerId, now,
+                        "[手动封禁] Web 管理员封禁 " + hours + " 小时（第 " + banNumber + " 次，处罚 ID "
+                                + punishmentId + "）" + (reason.isBlank() ? "" : "，理由：" + reason));
+                trimHistory(connection, playerId);
+                connection.commit();
+                return Optional.of(punishment);
+            } catch (SQLException | RuntimeException error) {
+                connection.rollback();
+                throw error;
+            }
+        }
+    }
+
+    /**
+     * Moves the expiry of the currently active ban for the given punishment. The punishment row is
+     * updated along with the active ban so panel views stay consistent. Returns false when the
+     * punishment is not the player's active ban.
+     */
+    public boolean adjustActiveBanExpiry(String punishmentId, long newExpiresAt, String note, long now)
+            throws SQLException {
+        String id = canonicalId(punishmentId);
+        if (id == null) return false;
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try {
+                UUID playerId;
+                String playerName;
+                long bannedAt;
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "SELECT player_uuid,player_name,banned_at FROM sayaka_punishments WHERE punishment_id=?")) {
+                    statement.setString(1, id);
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (!result.next()) {
+                            connection.rollback();
+                            return false;
+                        }
+                        playerId = UUID.fromString(result.getString("player_uuid"));
+                        playerName = result.getString("player_name");
+                        bannedAt = result.getLong("banned_at");
+                    }
+                }
+                if (execute(connection,
+                        "UPDATE sayaka_active_bans SET expires_at=? "
+                                + "WHERE punishment_id=? AND player_uuid=? AND expires_at>?",
+                        newExpiresAt, id, playerId.toString(), now) == 0) {
+                    connection.rollback();
+                    return false;
+                }
+                int hours = (int) Math.max(1L, (newExpiresAt - bannedAt + 3_599_999L) / 3_600_000L);
+                execute(connection, "UPDATE sayaka_punishments SET expires_at=?,hours=? WHERE punishment_id=?",
+                        newExpiresAt, hours, id);
+                addHistory(connection, playerId, now,
+                        "[调整时长] Web 管理员将处罚 ID " + id + " 的解封时间调整为 "
+                                + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(new java.util.Date(newExpiresAt))
+                                + (note.isBlank() ? "" : "（" + note + "）"));
+                trimHistory(connection, playerId);
+                connection.commit();
+                return true;
+            } catch (SQLException | RuntimeException error) {
+                connection.rollback();
+                throw error;
+            }
+        }
+    }
+
+    /** Latest punishments and appeals merged into one time-ordered feed for the dashboard. */
+    public List<ActivityItem> recentActivity(int limit, long now) throws SQLException {
+        List<ActivityItem> items = new ArrayList<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT punishment_id,player_uuid,player_name,server_id,check_id,vl,hours,banned_at,expires_at "
+                        + "FROM sayaka_punishments ORDER BY banned_at DESC,punishment_id DESC LIMIT ?")) {
+            statement.setInt(1, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    items.add(new ActivityItem("punishment", result.getLong("banned_at"),
+                            UUID.fromString(result.getString("player_uuid")), result.getString("player_name"),
+                            result.getString("punishment_id"),
+                            result.getString("check_id") + " VL " + formatVl(result.getDouble("vl"))
+                                    + " · " + result.getString("server_id") + " · 封禁 "
+                                    + result.getInt("hours") + " 小时",
+                            result.getLong("expires_at") > now ? "active" : "expired"));
+                }
+            }
+        }
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT punishment_id,player_name,submitted_at,status FROM sayaka_appeals "
+                        + "ORDER BY submitted_at DESC,punishment_id DESC LIMIT ?")) {
+            statement.setInt(1, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    String punishmentId = result.getString("punishment_id");
+                    items.add(new ActivityItem("appeal", result.getLong("submitted_at"), null,
+                            result.getString("player_name"), punishmentId, "提交申诉 " + punishmentId,
+                            result.getString("status")));
+                }
+            }
+        }
+        items.sort((left, right) -> Long.compare(right.at(), left.at()));
+        return items.size() <= limit ? items : new ArrayList<>(items.subList(0, limit));
+    }
+
+    /** Extra dashboard statistics: top players, appeal outcomes, duration buckets and a 7x24 heatmap. */
+    public DashboardStats dashboardStats(long from, long to, long tzOffsetMillis) throws SQLException {
+        List<NamedCount> topPlayers = new ArrayList<>();
+        List<NamedCount> appealOutcomes = new ArrayList<>();
+        List<NamedCount> durations = new ArrayList<>();
+        List<HeatCell> heatmap = new ArrayList<>();
+        try (Connection connection = open()) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT MAX(player_name) AS player_name,COUNT(*) AS item_count FROM sayaka_punishments "
+                            + "WHERE banned_at>=? AND banned_at<? GROUP BY player_uuid "
+                            + "ORDER BY item_count DESC,player_name LIMIT 10")) {
+                bind(statement, from, to);
+                try (ResultSet result = statement.executeQuery()) {
+                    while (result.next()) {
+                        topPlayers.add(new NamedCount(result.getString("player_name"),
+                                result.getLong("item_count")));
+                    }
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT status,COUNT(*) AS item_count FROM sayaka_appeals "
+                            + "WHERE submitted_at>=? AND submitted_at<? GROUP BY status ORDER BY status")) {
+                bind(statement, from, to);
+                try (ResultSet result = statement.executeQuery()) {
+                    while (result.next()) {
+                        appealOutcomes.add(new NamedCount(result.getString("status"),
+                                result.getLong("item_count")));
+                    }
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT hours,COUNT(*) AS item_count FROM sayaka_punishments "
+                            + "WHERE banned_at>=? AND banned_at<? GROUP BY hours")) {
+                bind(statement, from, to);
+                try (ResultSet result = statement.executeQuery()) {
+                    long[] buckets = new long[5];
+                    while (result.next()) {
+                        int hours = result.getInt("hours");
+                        int bucket = hours <= 6 ? 0 : hours <= 24 ? 1 : hours <= 72 ? 2 : hours <= 168 ? 3 : 4;
+                        buckets[bucket] += result.getLong("item_count");
+                    }
+                    String[] labels = {"≤6 小时", "7-24 小时", "25-72 小时", "73-168 小时", ">168 小时"};
+                    for (int i = 0; i < labels.length; i++) durations.add(new NamedCount(labels[i], buckets[i]));
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT FLOOR((banned_at+?)/86400000) AS day_index,"
+                            + "FLOOR((banned_at+?)/3600000) AS hour_index,COUNT(*) AS item_count "
+                            + "FROM sayaka_punishments WHERE banned_at>=? AND banned_at<? "
+                            + "GROUP BY day_index,hour_index")) {
+                bind(statement, tzOffsetMillis, tzOffsetMillis, from, to);
+                try (ResultSet result = statement.executeQuery()) {
+                    while (result.next()) {
+                        long dayIndex = result.getLong("day_index");
+                        long hourIndex = result.getLong("hour_index");
+                        int day = (int) Math.floorMod(dayIndex + 3, 7);
+                        int hour = (int) Math.floorMod(hourIndex, 24);
+                        heatmap.add(new HeatCell(day, hour, result.getLong("item_count")));
+                    }
+                }
+            }
+        }
+        return new DashboardStats(topPlayers, appealOutcomes, durations, heatmap);
     }
 
     public void addWhitelistAudited(UUID playerId, String playerName, long now) throws SQLException {
