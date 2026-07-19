@@ -17,10 +17,15 @@ public abstract class Check implements Listener {
 
     protected final AntiCheatPlugin plugin;
     private final CheckType type;
+    /** "checks.<key>." 前缀只拼一次，热路径配置读取不再逐次拼接 */
+    private final String configPrefix;
+    private final String enabledKey;
 
     protected Check(AntiCheatPlugin plugin, CheckType type) {
         this.plugin = plugin;
         this.type = type;
+        this.configPrefix = "checks." + type.configKey() + ".";
+        this.enabledKey = configPrefix + "enabled";
     }
 
     public CheckType type() {
@@ -28,7 +33,7 @@ public abstract class Check implements Listener {
     }
 
     public boolean isEnabled() {
-        return plugin.config().getBoolean("checks." + type.configKey() + ".enabled", true);
+        return plugin.config().getBoolean(enabledKey, true);
     }
 
     /** 配置热重载钩子；需要缓存配置的检测可覆盖。 */
@@ -94,14 +99,14 @@ public abstract class Check implements Listener {
     // ---- 配置便捷读取（checks.<key>.<path>） ----
 
     protected double cfgD(String path, double def) {
-        return plugin.config().getDouble("checks." + type.configKey() + "." + path, def);
+        return plugin.config().getDouble(configPrefix + path, def);
     }
 
     protected int cfgI(String path, int def) {
-        return plugin.config().getInt("checks." + type.configKey() + "." + path, def);
+        return plugin.config().getInt(configPrefix + path, def);
     }
 
     protected boolean cfgB(String path, boolean def) {
-        return plugin.config().getBoolean("checks." + type.configKey() + "." + path, def);
+        return plugin.config().getBoolean(configPrefix + path, def);
     }
 }

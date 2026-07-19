@@ -10,11 +10,22 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
-/** Validated configuration copied away from Bukkit's mutable live config. */
+/**
+ * Validated configuration copied away from Bukkit's mutable live config.
+ *
+ * 构造时把整棵配置树摊平成单层 HashMap 并预计算执行等级/基岩档位：
+ * 检测在每个移动包上读 5-10 个配置项，YamlConfiguration 的逐级路径
+ * 解析在热路径上是可观的常数开销，摊平后每次读取只剩一次哈希查找。
+ * 所有集合在构造内建完（final 发布），任意线程读取安全。
+ */
 public final class ConfigSnapshot {
 
     public enum BedrockProfile {
@@ -29,10 +40,47 @@ public final class ConfigSnapshot {
         }
     }
 
-    private final YamlConfiguration values;
+    private final Map<String, Object> flat;
+    private final Set<String> sectionKeys;
+    private final Map<String, List<String>> stringLists;
+    private final Map<String, List<Integer>> integerLists;
+    private final EnumMap<CheckType, EnforcementMode> enforcements;
+    private final BedrockProfile bedrockProfile;
 
-    private ConfigSnapshot(YamlConfiguration values) {
-        this.values = values;
+    ConfigSnapshot(YamlConfiguration values) {
+        Map<String, Object> flatValues = new HashMap<>();
+        Set<String> sections = new HashSet<>();
+        Map<String, List<String>> stringListValues = new HashMap<>();
+        Map<String, List<Integer>> integerListValues = new HashMap<>();
+        for (Map.Entry<String, Object> entry : values.getValues(true).entrySet()) {
+            if (entry.getValue() instanceof ConfigurationSection) {
+                sections.add(entry.getKey());
+                continue;
+            }
+            flatValues.put(entry.getKey(), entry.getValue());
+            if (entry.getValue() instanceof List<?>) {
+                stringListValues.put(entry.getKey(),
+                        List.copyOf(values.getStringList(entry.getKey())));
+                integerListValues.put(entry.getKey(),
+                        List.copyOf(values.getIntegerList(entry.getKey())));
+            }
+        }
+        this.flat = flatValues;
+        this.sectionKeys = sections;
+        this.stringLists = stringListValues;
+        this.integerLists = integerListValues;
+
+        EnumMap<CheckType, EnforcementMode> modes = new EnumMap<>(CheckType.class);
+        for (CheckType type : CheckType.values()) {
+            Object raw = flatValues.get("checks." + type.configKey() + ".enforcement");
+            modes.put(type, EnforcementMode.parse(
+                    raw instanceof String text ? text : null, type.defaultEnforcement()));
+        }
+        this.enforcements = modes;
+
+        Object profile = flatValues.get("settings.bedrock-profile");
+        this.bedrockProfile = BedrockProfile.valueOf(
+                (profile instanceof String text ? text : "conservative").toUpperCase(Locale.ROOT));
     }
 
     public static LoadResult load(AntiCheatPlugin plugin) {
@@ -274,27 +322,58 @@ public final class ConfigSnapshot {
         }
     }
 
-    public boolean getBoolean(String path) { return values.getBoolean(path); }
-    public boolean getBoolean(String path, boolean fallback) { return values.getBoolean(path, fallback); }
-    public int getInt(String path) { return values.getInt(path); }
-    public int getInt(String path, int fallback) { return values.getInt(path, fallback); }
-    public long getLong(String path, long fallback) { return values.getLong(path, fallback); }
-    public double getDouble(String path) { return values.getDouble(path); }
-    public double getDouble(String path, double fallback) { return values.getDouble(path, fallback); }
-    public String getString(String path) { return values.getString(path); }
-    public String getString(String path, String fallback) { return values.getString(path, fallback); }
-    public List<String> getStringList(String path) { return List.copyOf(values.getStringList(path)); }
-    public List<Integer> getIntegerList(String path) { return List.copyOf(values.getIntegerList(path)); }
-    public boolean isList(String path) { return values.isList(path); }
-    public boolean contains(String path) { return values.contains(path); }
+    public boolean getBoolean(String path) { return getBoolean(path, false); }
+
+    public boolean getBoolean(String path, boolean fallback) {
+        Object value = flat.get(path);
+        return value instanceof Boolean bool ? bool : fallback;
+    }
+
+    public int getInt(String path) { return getInt(path, 0); }
+
+    public int getInt(String path, int fallback) {
+        Object value = flat.get(path);
+        return value instanceof Number number ? number.intValue() : fallback;
+    }
+
+    public long getLong(String path, long fallback) {
+        Object value = flat.get(path);
+        return value instanceof Number number ? number.longValue() : fallback;
+    }
+
+    public double getDouble(String path) { return getDouble(path, 0.0); }
+
+    public double getDouble(String path, double fallback) {
+        Object value = flat.get(path);
+        return value instanceof Number number ? number.doubleValue() : fallback;
+    }
+
+    public String getString(String path) { return getString(path, null); }
+
+    public String getString(String path, String fallback) {
+        Object value = flat.get(path);
+        return value != null ? value.toString() : fallback;
+    }
+
+    public List<String> getStringList(String path) {
+        return stringLists.getOrDefault(path, List.of());
+    }
+
+    public List<Integer> getIntegerList(String path) {
+        return integerLists.getOrDefault(path, List.of());
+    }
+
+    public boolean isList(String path) { return stringLists.containsKey(path); }
+
+    public boolean contains(String path) {
+        return flat.containsKey(path) || sectionKeys.contains(path);
+    }
 
     public EnforcementMode enforcement(CheckType type) {
-        String path = "checks." + type.configKey() + ".enforcement";
-        return EnforcementMode.parse(values.getString(path), type.defaultEnforcement());
+        return enforcements.get(type);
     }
 
     public BedrockProfile bedrockProfile() {
-        return BedrockProfile.valueOf(values.getString("settings.bedrock-profile", "conservative")
-                .toUpperCase(Locale.ROOT));
+        return bedrockProfile;
     }
 }

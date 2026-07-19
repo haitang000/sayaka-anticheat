@@ -69,7 +69,14 @@ public class PlayerData {
     private long lastMoveAt;
     private boolean collisionBelow = true;
     private boolean inWeb;
+    // 蜂蜜扫描要查 3×3×2 共 18 个方块，多数移动根本不会被消费方问到，
+    // 移动时只暂存位置，第一次查询才真正扫描
     private boolean nearHoney;
+    private boolean honeyResolved = true;
+    private org.bukkit.World honeyProbeWorld;
+    private int honeyProbeX;
+    private int honeyProbeY;
+    private int honeyProbeZ;
     private final Deque<MoveSample> speedWindow = new ArrayDeque<>();
 
     // ---- 宽限时间戳（毫秒，0 表示从未发生） ----
@@ -366,8 +373,25 @@ public class PlayerData {
     public boolean isInWeb() { return inWeb; }
     public void setInWeb(boolean inWeb) { this.inWeb = inWeb; }
 
-    public boolean isNearHoney() { return nearHoney; }
-    public void setNearHoney(boolean nearHoney) { this.nearHoney = nearHoney; }
+    public boolean isNearHoney() {
+        if (!honeyResolved) {
+            honeyResolved = true;
+            org.bukkit.World world = honeyProbeWorld;
+            honeyProbeWorld = null;
+            nearHoney = world != null && cn.haitang.anticheat.util.MoveUtil.isNearHoney(
+                    world, honeyProbeX, honeyProbeY, honeyProbeZ);
+        }
+        return nearHoney;
+    }
+
+    /** 暂存本次移动的蜂蜜扫描位置；实际扫描推迟到第一次 {@link #isNearHoney()} */
+    public void stageHoneyProbe(Location to) {
+        this.honeyProbeWorld = to.getWorld();
+        this.honeyProbeX = to.getBlockX();
+        this.honeyProbeY = to.getBlockY();
+        this.honeyProbeZ = to.getBlockZ();
+        this.honeyResolved = false;
+    }
 
     public Deque<MoveSample> getSpeedWindow() { return speedWindow; }
 
@@ -399,6 +423,8 @@ public class PlayerData {
         this.collisionBelow = true;
         this.inWeb = false;
         this.nearHoney = false;
+        this.honeyResolved = true;
+        this.honeyProbeWorld = null;
         this.speedWindow.clear();
         this.moveTimes.clear();
         this.rotationHistory.clear();

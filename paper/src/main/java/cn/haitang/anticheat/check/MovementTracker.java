@@ -92,7 +92,8 @@ public class MovementTracker implements Listener {
         }
 
         // ---- 地表材质宽限采样 ----
-        Material below = to.clone().subtract(0, 0.3, 0).getBlock().getType();
+        Material below = to.getWorld().getBlockAt(to.getBlockX(),
+                (int) Math.floor(to.getY() - 0.3), to.getBlockZ()).getType();
         String belowName = below.name();
         if (belowName.endsWith("ICE")) data.touchIce();
         if (below == Material.SOUL_SAND || below == Material.SOUL_SOIL) data.touchSoulSand();
@@ -105,7 +106,7 @@ public class MovementTracker implements Listener {
         if (player.hasPotionEffect(PotionEffectType.LEVITATION)) data.touchLevitation();
         if (player.hasPotionEffect(PotionEffectType.SLOW_FALLING)) data.touchSlowFall();
         data.setInWeb(MoveUtil.isInWeb(player));
-        data.setNearHoney(MoveUtil.isNearHoney(to));
+        data.stageHoneyProbe(to);
 
         // ---- 速度采样窗口 ----
         var window = data.getSpeedWindow();

@@ -113,9 +113,10 @@ public final class MoveUtil {
     public static boolean isNearHoney(Location loc) {
         World world = loc.getWorld();
         if (world == null) return false;
-        int bx = loc.getBlockX();
-        int by = loc.getBlockY();
-        int bz = loc.getBlockZ();
+        return isNearHoney(world, loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
+    }
+
+    public static boolean isNearHoney(World world, int bx, int by, int bz) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
                 for (int dy = 0; dy <= 1; dy++) {
@@ -131,9 +132,13 @@ public final class MoveUtil {
     /** 是否接触液体 / 气泡柱 */
     public static boolean touchingLiquid(Player player) {
         if (player.isInWater()) return true;
-        Material feet = player.getLocation().getBlock().getType();
+        Location loc = player.getLocation();
+        World world = loc.getWorld();
+        if (world == null) return false;
+        Material feet = loc.getBlock().getType();
         Material eye = player.getEyeLocation().getBlock().getType();
-        Material below = player.getLocation().clone().subtract(0, 0.1, 0).getBlock().getType();
+        Material below = world.getBlockAt(loc.getBlockX(),
+                (int) Math.floor(loc.getY() - 0.1), loc.getBlockZ()).getType();
         return isLiquidLike(feet) || isLiquidLike(eye) || isLiquidLike(below);
     }
 
