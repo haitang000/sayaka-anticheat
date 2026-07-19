@@ -10,11 +10,15 @@ import org.bukkit.entity.Player;
 /**
  * 非法数据包检测（数据包级）。
  *
- * 拦截原版客户端不可能产生的位置数据：NaN / Infinity / 绝对值超出世界边界
- * 数量级的坐标。此类包多用于崩服或触发异常区块加载，在进入服务端移动
- * 处理之前直接丢弃——确定性证据，无需缓冲。
+ * 拦截原版客户端不可能产生的数据：
+ * - 位置包：NaN / Infinity / 绝对值超出世界边界数量级的坐标，
+ *   多用于崩服或触发异常区块加载；
+ * - 攻击包：目标为自己实体 id 的自击包（原版射线不可能选中自己），
+ *   多用于触发插件异常或伤害结算漏洞。
+ * 均在进入服务端处理之前直接丢弃——确定性证据，无需缓冲。
  *
- * 入口由 {@link cn.haitang.anticheat.packet.PacketBridge} 在 Netty 线程调用：
+ * 入口由 {@link cn.haitang.anticheat.packet.PacketBridge} 与
+ * {@link cn.haitang.anticheat.packet.PacketTimeline} 在 Netty 线程调用：
  * 取消非法包当场完成，违规上报调度回主线程。
  */
 public class BadPacketsCheck extends Check {
@@ -29,6 +33,9 @@ public class BadPacketsCheck extends Check {
     public BadPacketsCheck(AntiCheatPlugin plugin) {
         super(plugin, CheckType.BAD_PACKETS);
         reloadConfiguration();
+        if (plugin.getPacketTimeline() != null) {
+            plugin.getPacketTimeline().setSelfAttackHandler(this::onSelfAttack);
+        }
     }
 
     @Override
@@ -51,6 +58,18 @@ public class BadPacketsCheck extends Check {
             if (isExempt(player)) return;
             flag(player, weight, detail);
         });
+    }
+
+    /** Netty 线程入口：返回 true 让 PacketTimeline 丢弃自击包，上报走主线程 */
+    public boolean onSelfAttack(Player player, int entityId) {
+        if (!packetEnabled) return false;
+        String detail = String.format("攻击自己的实体 id=%d", entityId);
+        double weight = flagWeight;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (isExempt(player)) return;
+            flag(player, weight, detail);
+        });
+        return true;
     }
 
     /** 合法客户端不可能产生的坐标：非有限值，或绝对值超出世界边界数量级 */

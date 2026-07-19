@@ -12,13 +12,19 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.block.BlockPlaceEvent;
 
 /**
- * 非法搭路检测（Scaffold / Tower / FastPlace），三条判定线：
+ * 非法搭路检测（Scaffold / Tower / FastPlace），四条判定线：
  * 1. 放置频率：任何放置持续超过每秒上限（原版按住右键 5/秒，快速点击也远低于上限）。
  * 2. 搭塔频率：空中垂直垫块超过原版跳跃节奏物理极限（≈1.7/秒）。
  * 3. 视角特征：在自己脚下延伸搭路必须低头（几何上俯视角至少 45°+），
  *    平视甚至抬头垫块是 Scaffold 挂最典型的特征。
+ * 4. 不可见面：被点击面的外法线必须朝向眼睛（射线只能落在面向自己的面上），
+ *    从方块"背面"放置只能来自伪造的放置包。眼睛位置滞后客户端 1-2 刻，
+ *    留平面余量并按缓冲累积；仅对完整不透明方块判定（栅栏等轮廓小于
+ *    整格的方块，其真实面平面不在整格边界上）。
  */
 public class ScaffoldCheck extends Check {
+
+    private static final String BUFFER_FACE = "scaffold.face";
 
     public ScaffoldCheck(AntiCheatPlugin plugin) {
         super(plugin, CheckType.SCAFFOLD);
@@ -38,6 +44,8 @@ public class ScaffoldCheck extends Check {
         // 同批只计第一个，其余不参与任何判定（真人和挂都做不到 25ms 内两次放置）
         var places = data.getPlaceTimes();
         if (!places.isEmpty() && now - places.peekLast() < 25) return;
+
+        checkInvisibleFace(event, player, data, block);
 
         // ---- 1. 放置频率（FastPlace，2 秒滚动窗口） ----
         places.addLast(now);
@@ -83,5 +91,54 @@ public class ScaffoldCheck extends Check {
         } else {
             data.buffer(type(), -0.5);
         }
+    }
+
+    /** ---- 4. 不可见面：从被点击方块的背面放置 ---- */
+    private void checkInvisibleFace(BlockPlaceEvent event, Player player,
+                                    PlayerData data, Block placed) {
+        if (!cfgB("face-check", true)) return;
+        // 位置失配窗口（传送/击退）内眼睛坐标不可信
+        if (data.teleportedWithin(1000) || data.velocityWithin(1000)) return;
+
+        Block against = event.getBlockAgainst();
+        // 只信整格不透明方块的面平面；替换放置（雪层/草丛）against==placed 时跳过
+        if (against == null || !against.getType().isOccluding()) return;
+        org.bukkit.block.BlockFace face = against.getFace(placed);
+        if (face == null || Math.abs(face.getModX()) + Math.abs(face.getModY())
+                + Math.abs(face.getModZ()) != 1) return;
+
+        Location eye = player.getEyeLocation();
+        double signedDistance = eyeToFacePlane(eye.getX(), eye.getY(), eye.getZ(),
+                against.getX(), against.getY(), against.getZ(), face);
+        double margin = cfgD("face-margin", 0.2);
+        if (signedDistance < -margin) {
+            double buffered = data.buffer(BUFFER_FACE, 1.0);
+            if (buffered >= cfgD("face-buffer-to-flag", 2.0)) {
+                data.resetBuffer(BUFFER_FACE);
+                flag(player, 2.0, String.format("从 %s 面背侧 %.2f 格放置", face, -signedDistance));
+                if (cfgB("cancel", true) && shouldMitigate(player)) event.setCancelled(true);
+            }
+        } else {
+            data.buffer(BUFFER_FACE, -0.25);
+        }
+    }
+
+    /**
+     * 眼睛到被点击面平面的有符号距离：正值在面外侧（可见），负值在背侧。
+     * 面法线只有一个非零分量，直接在该轴上算。
+     */
+    static double eyeToFacePlane(double eyeX, double eyeY, double eyeZ,
+                                 int againstX, int againstY, int againstZ,
+                                 org.bukkit.block.BlockFace face) {
+        if (face.getModX() != 0) {
+            double plane = againstX + (face.getModX() > 0 ? 1.0 : 0.0);
+            return (eyeX - plane) * face.getModX();
+        }
+        if (face.getModY() != 0) {
+            double plane = againstY + (face.getModY() > 0 ? 1.0 : 0.0);
+            return (eyeY - plane) * face.getModY();
+        }
+        double plane = againstZ + (face.getModZ() > 0 ? 1.0 : 0.0);
+        return (eyeZ - plane) * face.getModZ();
     }
 }

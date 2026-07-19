@@ -275,8 +275,9 @@ checks:
     enabled: true
     enforcement: punish
 
-  # 非法数据包（需要数据包引擎）：NaN/Infinity/远超世界边界的坐标，
-  # 多为崩服包或异常区块加载攻击，直接丢弃并按权重记 VL
+  # 非法数据包（需要数据包引擎）：NaN/Infinity/远超世界边界的坐标
+  # （崩服包/异常区块加载攻击），以及攻击自己实体 id 的自击包
+  # （原版射线不可能选中自己），均直接丢弃并按权重记 VL
   bad-packets:
     enabled: true
     enforcement: punish
@@ -648,8 +649,15 @@ checks:
     # 违规时是否取消该方块破坏
     cancel: true
     # 无挖掘起始包直接破坏的检测（Nuker）。
-    # 注意：McMMO 连锁挖掘等插件可能误报，默认关闭
-    nuker-detect: false
+    # McMMO/树砍类插件的批量破坏由一次真实挖掘级联触发，
+    # 挖掘进行中与完成后的宽限刻内不计数，可以安全默认开启；
+    # 若服内有"完成挖掘数十刻后仍代玩家破坏方块"的慢速动画类插件，
+    # 请调大宽限或关闭本项
+    nuker-detect: true
+    # 一次合法挖掘完成后多少刻内的无挖掘破坏视为插件级联
+    nuker-cascade-grace-ticks: 10
+    # 5 秒窗口内累计多少次无挖掘破坏判违规
+    nuker-breaks-to-flag: 4
 
   # 非法搭路（Scaffold/Tower/FastPlace）
   # 建筑法杖等插件同一瞬间批量放置的方块只计一次，不会误判
@@ -666,6 +674,12 @@ checks:
     # 违规时是否取消放置
     cancel: true
     buffer-to-flag: 3.0
+    # 不可见面判定：被点击面的外法线必须朝向眼睛，从方块背面放置
+    # 只能来自伪造的放置包。仅对完整不透明方块判定
+    face-check: true
+    # 眼睛位置滞后客户端 1-2 刻，允许越过面平面的余量（格）
+    face-margin: 0.2
+    face-buffer-to-flag: 2.0
 
   # 聊天刷屏（AntiSpam）：同时检测短时间高频消息和重复内容。
   # 聊天不受进服宽限、创造模式影响；可用 anticheat.antispam.bypass 单独豁免。

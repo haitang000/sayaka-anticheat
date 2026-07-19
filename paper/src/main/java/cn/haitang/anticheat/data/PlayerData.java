@@ -172,6 +172,8 @@ public class PlayerData {
     private long digStartAt;
     private int digExpectedTicks;
     private final Deque<Long> noDigBreaks = new ArrayDeque<>();
+    /** 最近一次"带完整挖掘过程"的破坏所在 tick：连锁挖掘插件的级联豁免锚点 */
+    private int lastLegitBreakTick = Integer.MIN_VALUE;
 
     // ---- 惩罚状态 ----
     public enum PunishmentState { IDLE, PENDING, COMMITTED }
@@ -718,6 +720,9 @@ public class PlayerData {
     }
 
     public Deque<Long> getNoDigBreaks() { return noDigBreaks; }
+
+    public int getLastLegitBreakTick() { return lastLegitBreakTick; }
+    public void setLastLegitBreakTick(int tick) { this.lastLegitBreakTick = tick; }
 
     // ---- 惩罚 ----
 

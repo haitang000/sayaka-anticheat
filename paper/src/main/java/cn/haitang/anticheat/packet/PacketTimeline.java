@@ -87,6 +87,7 @@ public final class PacketTimeline {
     private final BukkitTask drainTask;
     private volatile BiConsumer<Player, TimerEvidence> timerConsumer = (player, evidence) -> { };
     private volatile BiConsumer<Player, BlinkEvidence> blinkConsumer = (player, evidence) -> { };
+    private volatile BiPredicate<Player, Integer> selfAttackHandler = (player, entityId) -> false;
     private volatile BiPredicate<UUID, Integer> rawAttackConsumer = (playerId, entityId) -> false;
 
     public PacketTimeline(AntiCheatPlugin plugin) {
@@ -122,6 +123,12 @@ public final class PacketTimeline {
 
     public void setBlinkConsumer(BiConsumer<Player, BlinkEvidence> blinkConsumer) {
         this.blinkConsumer = blinkConsumer == null ? (player, evidence) -> { } : blinkConsumer;
+    }
+
+    /** 自击包（攻击自己实体 id）处理器：Netty 线程调用，返回 true 时丢弃该包 */
+    public void setSelfAttackHandler(BiPredicate<Player, Integer> selfAttackHandler) {
+        this.selfAttackHandler = selfAttackHandler == null
+                ? (player, entityId) -> false : selfAttackHandler;
     }
 
     public void setRawAttackConsumer(BiPredicate<UUID, Integer> rawAttackConsumer) {
@@ -297,6 +304,7 @@ public final class PacketTimeline {
                 WrapperPlayClientInteractEntity interact = new WrapperPlayClientInteractEntity(event);
                 if (interact.getAction() == WrapperPlayClientInteractEntity.InteractAction.ATTACK) {
                     timeline.miningState(false);
+                    if (dropSelfAttack(event, interact.getEntityId())) return;
                     if (rawAttackConsumer.test(playerId, interact.getEntityId())) {
                         event.setCancelled(true);
                         return;
@@ -308,6 +316,7 @@ public final class PacketTimeline {
             if (type == PacketType.Play.Client.ATTACK) {
                 timeline.miningState(false);
                 int entityId = new WrapperPlayClientAttack(event).getEntityId();
+                if (dropSelfAttack(event, entityId)) return;
                 if (rawAttackConsumer.test(playerId, entityId)) {
                     event.setCancelled(true);
                     return;
@@ -343,6 +352,15 @@ public final class PacketTimeline {
             } else if (type == PacketType.Play.Client.CLICK_WINDOW) {
                 timeline.add(seq, now, SampleType.INVENTORY);
             }
+        }
+
+        /** 攻击自己的实体 id：原版客户端的射线不可能选中自己，确定性恶意包，当场丢弃 */
+        private boolean dropSelfAttack(PacketReceiveEvent event, int entityId) {
+            if (entityId != event.getUser().getEntityId()) return false;
+            if (!(event.getPlayer() instanceof Player player)) return false;
+            if (!selfAttackHandler.test(player, entityId)) return false;
+            event.setCancelled(true);
+            return true;
         }
 
         @Override
