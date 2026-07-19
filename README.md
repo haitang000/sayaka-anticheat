@@ -35,7 +35,7 @@
 
 | 类别 | 检测项 |
 |---|---|
-| 移动 | Speed、Flight、GroundSpoof、Timer、FastLadder、Step、LiquidWalk、Rotation |
+| 移动 | Speed、Sprint、Flight、Glide、Elytra、GroundSpoof、Timer、FastLadder、Step、Phase、LiquidWalk、Rotation |
 | 战斗 | Reach、KillAura、AutoClicker、NoSwing、Criticals、Velocity |
 | 玩家行为 | AutoTotem、InventoryMove、NoSlow、FastUse、FastBow、ChestStealer |
 | 世界交互 | FastBreak、Scaffold |

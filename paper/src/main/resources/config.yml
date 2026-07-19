@@ -138,6 +138,22 @@ checks:
     # VL 达到 mitigate-vl 后是否回弹传送
     setback: true
 
+  # 非法疾跑（OmniSprint / 低饥饿疾跑）
+  # 疾跑加速收益由 speed 约束，这里只验证疾跑状态本身的合法性
+  sprint:
+    enabled: true
+    # 新检测默认先只警报；观察后可改 mitigate/punish
+    enforcement: alert
+    # 原版疾跑必须按前进键，移动方向与视角合成最多偏 45°；
+    # 快速转身的动量滞后由余量与连续计数吸收
+    max-move-angle: 100.0
+    # 低于该位移的移动不参与方向判定（米/移动包）
+    min-move-per-tick: 0.15
+    # 连续多少次反向疾跑移动才上报
+    backwards-buffer-to-flag: 4.0
+    # 饥饿值 ≤ 6 仍保持疾跑标记多少个移动包才上报（吸收状态包在途延迟）
+    hunger-buffer-to-flag: 12.0
+
   # 飞行 / 空中悬浮（Fly 类客户端）
   flight:
     enabled: true
@@ -175,6 +191,27 @@ checks:
     setback: true
     # Geyser 转换后的基岩版垂直物理可能不同，默认不参与此项检测
     exclude-bedrock: true
+
+  # 鞘翅飞行异常（ElytraFly：恒速平飞/爬升，无视滑翔物理）。
+  # 能量守恒判定：滑翔总能量（高度 + 速度²/2g）只会因阻力衰减，
+  # 俯冲拉起是动能与高度的等价交换，凭空的能量净增只能来自作弊客户端。
+  # 烟花助推/激流/服务端赋速/弹跳/液体/悬浮效果期间不采样
+  elytra:
+    enabled: true
+    enforcement: mitigate
+    # 一个评估窗口允许的最大能量净增（格）；测量抖动的安全余量
+    max-energy-gain: 2.5
+    # 评估窗口时长与最少采样数
+    window-ms: 2000
+    min-window-ms: 1500
+    min-samples: 8
+    # 相邻采样断流超过该毫秒数后重新累积（掉包/卡顿期间能量不可比）
+    sample-gap-reset-ms: 300
+    # 烟花助推后的能量注入宽限
+    boost-grace-ms: 4000
+    # 连续两个超限窗口才上报
+    buffer-to-flag: 2.0
+    setback: true
 
   # 落地欺骗（NoFall：客户端谎报"在地面"）
   ground-spoof:

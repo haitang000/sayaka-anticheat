@@ -37,6 +37,9 @@ public class PlayerData {
         }
     }
 
+    /** 滑翔采样：时间戳 + 三维坐标，供鞘翅能量守恒判定 */
+    public record GlideSample(long at, double x, double y, double z) { }
+
     private final UUID uuid;
     private final String name;
 
@@ -88,6 +91,8 @@ public class PlayerData {
     private long lastClimbAt;
     private long lastGlideAt;
     private long lastRiptideAt;
+    private long lastElytraBoostAt;
+    private final Deque<GlideSample> glideSamples = new ArrayDeque<>();
     private long lastLevitationAt;
     private long lastSlowFallAt;
 
@@ -529,6 +534,7 @@ public class PlayerData {
     public void touchClimb() { this.lastClimbAt = System.currentTimeMillis(); }
     public void touchGlide() { this.lastGlideAt = System.currentTimeMillis(); }
     public void touchRiptide() { this.lastRiptideAt = System.currentTimeMillis(); }
+    public void touchElytraBoost() { this.lastElytraBoostAt = System.currentTimeMillis(); }
     public void touchLevitation() { this.lastLevitationAt = System.currentTimeMillis(); }
     public void touchSlowFall() { this.lastSlowFallAt = System.currentTimeMillis(); }
 
@@ -551,6 +557,8 @@ public class PlayerData {
     public boolean climbedWithin(long ms) { return within(lastClimbAt, ms); }
     public boolean glidedWithin(long ms) { return within(lastGlideAt, ms); }
     public boolean riptideWithin(long ms) { return within(lastRiptideAt, ms); }
+    public boolean elytraBoostWithin(long ms) { return within(lastElytraBoostAt, ms); }
+    public Deque<GlideSample> getGlideSamples() { return glideSamples; }
     public boolean levitationWithin(long ms) { return within(lastLevitationAt, ms); }
     public boolean slowFallWithin(long ms) { return within(lastSlowFallAt, ms); }
 

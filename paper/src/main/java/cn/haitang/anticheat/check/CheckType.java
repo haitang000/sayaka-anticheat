@@ -5,8 +5,10 @@ package cn.haitang.anticheat.check;
  */
 public enum CheckType {
     SPEED("Speed", "移动速度异常", "speed", EnforcementMode.MITIGATE),
+    SPRINT("Sprint", "非法疾跑", "sprint", EnforcementMode.ALERT),
     FLIGHT("Flight", "非法飞行/悬浮", "flight", EnforcementMode.MITIGATE),
     GLIDE("Glide", "异常缓降", "glide", EnforcementMode.MITIGATE),
+    ELYTRA("Elytra", "鞘翅飞行异常", "elytra", EnforcementMode.MITIGATE),
     GROUND_SPOOF("GroundSpoof", "落地欺骗", "ground-spoof", EnforcementMode.MITIGATE),
     TIMER("Timer", "移动包速率异常", "timer", EnforcementMode.PUNISH),
     FAST_LADDER("FastLadder", "攀爬速度异常", "fast-ladder", EnforcementMode.MITIGATE),

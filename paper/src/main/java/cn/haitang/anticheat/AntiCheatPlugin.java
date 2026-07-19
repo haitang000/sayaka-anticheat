@@ -14,9 +14,11 @@ import cn.haitang.anticheat.check.combat.HitboxCheck;
 import cn.haitang.anticheat.check.combat.NoSwingCheck;
 import cn.haitang.anticheat.check.combat.ReachCheck;
 import cn.haitang.anticheat.check.combat.VelocityCheck;
+import cn.haitang.anticheat.check.movement.ElytraCheck;
 import cn.haitang.anticheat.check.movement.FastLadderCheck;
 import cn.haitang.anticheat.check.movement.FlightCheck;
 import cn.haitang.anticheat.check.movement.GlideCheck;
+import cn.haitang.anticheat.check.movement.SprintCheck;
 import cn.haitang.anticheat.check.movement.GroundSpoofCheck;
 import cn.haitang.anticheat.check.movement.LiquidWalkCheck;
 import cn.haitang.anticheat.check.movement.PhaseCheck;
@@ -136,8 +138,10 @@ public final class AntiCheatPlugin extends JavaPlugin {
         // 检测项注册（enabled 开关在事件内部实时判断，reload 即生效）
         flightCheck = new FlightCheck(this);
         checks.add(new SpeedCheck(this));
+        checks.add(new SprintCheck(this));
         checks.add(flightCheck);
         checks.add(new GlideCheck(this));
+        checks.add(new ElytraCheck(this));
         checks.add(new GroundSpoofCheck(this));
         checks.add(new TimerCheck(this));
         checks.add(new FastLadderCheck(this));
