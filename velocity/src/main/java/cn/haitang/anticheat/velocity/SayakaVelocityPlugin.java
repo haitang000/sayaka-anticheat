@@ -1,7 +1,9 @@
 package cn.haitang.anticheat.velocity;
 
-import cn.haitang.anticheat.shared.JdbcNetworkStore;
-import cn.haitang.anticheat.shared.NetworkModels.ActiveBan;
+import cn.haitang.anticheat.velocity.boot.CoreBridge;
+import cn.haitang.anticheat.velocity.boot.CoreClassLoader;
+import cn.haitang.anticheat.velocity.boot.CoreContext;
+import cn.haitang.anticheat.velocity.boot.HotReloader;
 import com.google.inject.Inject;
 import com.velocitypowered.api.event.EventTask;
 import com.velocitypowered.api.event.Subscribe;
@@ -12,30 +14,29 @@ import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
-import com.velocitypowered.api.proxy.ServerConnection;
-import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
-import com.velocitypowered.api.proxy.server.RegisteredServer;
-import com.velocitypowered.api.proxy.server.ServerPing;
-import com.velocitypowered.api.scheduler.ScheduledTask;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.event.ClickEvent;
-import net.kyori.adventure.text.event.HoverEvent;
 import org.slf4j.Logger;
 
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.SQLException;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
+import java.nio.file.StandardCopyOption;
+import java.sql.Driver;
+import java.sql.DriverManager;
+import java.util.Enumeration;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 宿主壳：Velocity 不支持运行时替换插件，本类与 boot 桥接包在代理重启前
+ * 永驻，因此只做两件事——把事件转发给当前内核、以及在热重载时换载内核
+ * （{@link VelocityCore} 承载全部业务）。
+ *
+ * 热重载流程：面板"下载并暂存"完成后点"热重载应用"，内核经
+ * {@link HotReloader} 请求宿主调度换载；宿主先从暂存 jar 的子优先
+ * 加载器构造新内核（未启动，端口未占用），再停旧内核、关闭旧加载器、
+ * 启动新内核。新内核启动失败时回退到宿主 jar 内嵌的内核，服务不失联。
+ */
 @Plugin(
         id = "sayaka-anticheat",
         name = "Sayaka AntiCheat Velocity",
@@ -43,20 +44,18 @@ import java.util.concurrent.TimeUnit;
         authors = {"haitang"}
 )
 public final class SayakaVelocityPlugin {
-    private static final MinecraftChannelIdentifier WEB_LOGIN_CHANNEL =
-            MinecraftChannelIdentifier.create("sayaka", "web");
+
+    /** 热重载跨版本查找的内核入口：类名与 create(CoreContext) 签名不可漂移 */
+    private static final String CORE_CLASS = "cn.haitang.anticheat.velocity.VelocityCore";
+
     private final ProxyServer proxy;
     private final Logger logger;
     private final Path dataDirectory;
-    private final Map<UUID, CacheEntry> banCache = new ConcurrentHashMap<>();
+    private final AtomicBoolean reloading = new AtomicBoolean();
 
-    private VelocitySettings settings;
-    private JdbcNetworkStore store;
-    private ProtectionState protection;
-    private VelocityUpdateManager updateManager;
-    private DashboardServer dashboard;
-    private ScheduledTask recoveryTask;
-    private volatile boolean databaseReady;
+    private volatile CoreBridge core;
+    /** 当前内核的加载器；内嵌内核（宿主自带类）时为 null */
+    private volatile CoreClassLoader coreLoader;
 
     @Inject
     public SayakaVelocityPlugin(ProxyServer proxy, Logger logger, @DataDirectory Path dataDirectory) {
@@ -67,196 +66,152 @@ public final class SayakaVelocityPlugin {
 
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) {
-        try {
-            settings = VelocitySettings.load(dataDirectory);
-            store = new JdbcNetworkStore(settings.database());
-        } catch (Exception error) {
-            logger.error("Sayaka Velocity 配置加载失败，插件未启动", error);
-            return;
-        }
-        protection = ProtectionState.fromSettings(settings);
-        updateManager = new VelocityUpdateManager(pluginVersion(), dataDirectory.resolve("updates"));
-        recoverServices();
-        proxy.getChannelRegistrar().register(WEB_LOGIN_CHANNEL);
-        recoveryTask = proxy.getScheduler().buildTask(this, this::recoverServices)
-                .repeat(30, TimeUnit.SECONDS).schedule();
-        logger.info("Sayaka Velocity 已启动，节点 ID: {}", settings.serverId());
+        startCore(VelocityCore.create(context()), null, "内嵌");
     }
 
     @Subscribe
     public EventTask onServerPreConnect(ServerPreConnectEvent event) {
-        String serverName = event.getOriginalServer().getServerInfo().getName();
-        if (store == null || !protection.enabledFor(serverName)) return null;
-        return EventTask.async(() -> lookupBan(event.getPlayer().getUniqueId(), true).ifPresent(ban -> {
-            event.setResult(ServerPreConnectEvent.ServerResult.denied());
-            event.getPlayer().disconnect(denial(ban));
-        }));
+        CoreBridge current = core;
+        return current == null ? null : current.onServerPreConnect(event);
     }
 
     @Subscribe
     public void onPluginMessage(PluginMessageEvent event) {
-        if (!event.getIdentifier().equals(WEB_LOGIN_CHANNEL)) return;
-        event.setResult(PluginMessageEvent.ForwardResult.handled());
-        if (!(event.getSource() instanceof ServerConnection connection)
-                || event.getTarget() != connection.getPlayer()) return;
-        byte[] data = event.getData();
-        if (data.length != 1 || data[0] != 1) return;
-        if (dashboard == null) {
-            connection.getPlayer().sendMessage(Component.text(
-                    "[Sayaka] Web 面板未启用或尚未启动，请检查 Velocity 控制台。", NamedTextColor.YELLOW));
-            return;
-        }
-        String url = dashboard.createOneTimeLoginUrl();
-        connection.getPlayer().sendMessage(Component.text("[Sayaka] ", NamedTextColor.DARK_RED)
-                .append(Component.text("点击打开管理后台", NamedTextColor.AQUA)
-                        .clickEvent(ClickEvent.openUrl(url))
-                        .hoverEvent(HoverEvent.showText(Component.text("链接在 2 分钟内有效且只能使用一次")))));
-        connection.getPlayer().sendMessage(Component.text(
-                "链接在 2 分钟内有效且只能使用一次。", NamedTextColor.DARK_GRAY));
+        CoreBridge current = core;
+        if (current != null) current.onPluginMessage(event);
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
-        proxy.getChannelRegistrar().unregister(WEB_LOGIN_CHANNEL);
-        if (dashboard != null) dashboard.stop();
-        if (recoveryTask != null) recoveryTask.cancel();
-        banCache.clear();
+        CoreBridge current = core;
+        core = null;
+        if (current != null) current.stop();
+        closeLoader(coreLoader);
+        coreLoader = null;
     }
 
-    private synchronized void recoverServices() {
-        if (store == null) return;
-        if (!databaseReady || !store.healthCheck()) {
+    private CoreContext context() {
+        return new CoreContext(this, proxy, logger, dataDirectory, this::scheduleApply);
+    }
+
+    /** {@link HotReloader} 实现：受理后延迟数秒执行，让面板线程先把响应发回浏览器 */
+    private void scheduleApply(Path stagedJar, String stagedVersion) throws IOException {
+        if (!Files.isRegularFile(stagedJar)) {
+            throw new IOException("暂存文件不存在: " + stagedJar);
+        }
+        if (!reloading.compareAndSet(false, true)) {
+            throw new IOException("已有一次热重载正在进行");
+        }
+        logger.info("Sayaka 热重载已调度：{} → {}", currentVersion(), stagedVersion);
+        proxy.getScheduler().buildTask(this, () -> swapCore(stagedJar, stagedVersion))
+                .delay(2, TimeUnit.SECONDS).schedule();
+    }
+
+    private void swapCore(Path stagedJar, String stagedVersion) {
+        try {
+            CoreClassLoader nextLoader;
+            CoreBridge next;
             try {
-                store.initialize();
-                databaseReady = true;
-                logger.info("Sayaka 群组数据库已连接");
-            } catch (SQLException error) {
-                databaseReady = false;
-                logger.warn("Sayaka 群组数据库不可用；缓存封禁继续生效，未知玩家放行: {}", error.getMessage());
+                nextLoader = new CoreClassLoader(stagedJar, getClass().getClassLoader());
+            } catch (IOException error) {
+                logger.error("Sayaka 热重载失败：无法打开暂存 jar，当前内核继续运行", error);
                 return;
             }
             try {
-                protection.loadRuntimeOverrides(store.protectionOverrides());
-            } catch (SQLException error) {
-                logger.warn("Sayaka 保护开关覆盖读取失败，暂用配置文件默认值: {}", error.getMessage());
+                next = createFromLoader(nextLoader);
+            } catch (ReflectiveOperationException | RuntimeException error) {
+                closeLoader(nextLoader);
+                logger.error("Sayaka 热重载失败：新内核不兼容当前宿主，当前内核继续运行。"
+                        + "如需升级请手动替换 jar 并重启代理", error);
+                return;
             }
-        }
-        if (settings.webEnabled() && dashboard == null) {
-            try {
-                dashboard = DashboardServer.start(store, networkControl(), updateManager, protection,
-                        banCache::remove, settings, logger);
-            } catch (Exception error) {
-                logger.warn("Sayaka Web 面板暂未启动，将在 30 秒后重试: {}", error.getMessage());
+
+            // 新内核已可构造，才停掉旧内核（面板端口此刻才释放）
+            CoreBridge previous = core;
+            CoreClassLoader previousLoader = coreLoader;
+            core = null;
+            if (previous != null) previous.stop();
+            closeLoader(previousLoader);
+            coreLoader = null;
+
+            if (startCore(next, nextLoader, stagedVersion)) {
+                persistStagedJar(stagedJar);
+            } else {
+                closeLoader(nextLoader);
+                logger.warn("Sayaka 正在回退到宿主内嵌内核");
+                startCore(VelocityCore.create(context()), null, "内嵌回退");
             }
+        } finally {
+            reloading.set(false);
         }
     }
 
-    private String pluginVersion() {
-        return proxy.getPluginManager().getPlugin("sayaka-anticheat")
-                .flatMap(container -> container.getDescription().getVersion())
-                .orElse("0.0.0");
-    }
-
-    private NetworkControl networkControl() {
-        return new NetworkControl() {
-            @Override
-            public int onlineCount() {
-                return proxy.getPlayerCount();
-            }
-
-            @Override
-            public List<OnlinePlayer> onlinePlayers() {
-                List<OnlinePlayer> players = new ArrayList<>();
-                for (var player : proxy.getAllPlayers()) {
-                    String server = player.getCurrentServer()
-                            .map(connection -> connection.getServerInfo().getName()).orElse("—");
-                    players.add(new OnlinePlayer(player.getUniqueId(), player.getUsername(),
-                            server, Math.max(-1L, player.getPing())));
-                }
-                players.sort(Comparator.comparing(OnlinePlayer::name, String.CASE_INSENSITIVE_ORDER));
-                return players;
-            }
-
-            @Override
-            public boolean kick(UUID playerId, String reason) {
-                return proxy.getPlayer(playerId).map(player -> {
-                    player.disconnect(Component.text(reason, NamedTextColor.RED));
-                    return true;
-                }).orElse(false);
-            }
-
-            @Override
-            public int broadcast(String message) {
-                Component component = Component.text("[公告] ", NamedTextColor.GOLD)
-                        .append(Component.text(message, NamedTextColor.YELLOW));
-                int delivered = 0;
-                for (var player : proxy.getAllPlayers()) {
-                    player.sendMessage(component);
-                    delivered++;
-                }
-                return delivered;
-            }
-
-            @Override
-            public List<ServerNode> servers() {
-                List<RegisteredServer> registered = new ArrayList<>(proxy.getAllServers());
-                List<CompletableFuture<ServerPing>> pings = registered.stream()
-                        .map(RegisteredServer::ping).toList();
-                long deadline = System.nanoTime() + Duration.ofMillis(1500).toNanos();
-                List<ServerNode> nodes = new ArrayList<>();
-                for (int i = 0; i < registered.size(); i++) {
-                    RegisteredServer server = registered.get(i);
-                    boolean reachable = false;
-                    long pingMillis = -1L;
-                    long start = System.nanoTime();
-                    try {
-                        long remaining = Math.max(1L, (deadline - start) / 1_000_000L);
-                        pings.get(i).get(remaining, TimeUnit.MILLISECONDS);
-                        reachable = true;
-                        pingMillis = (System.nanoTime() - start) / 1_000_000L;
-                    } catch (Exception unreachable) {
-                        if (unreachable instanceof InterruptedException) {
-                            Thread.currentThread().interrupt();
-                        }
-                    }
-                    nodes.add(new ServerNode(server.getServerInfo().getName(),
-                            server.getPlayersConnected().size(), reachable, pingMillis));
-                }
-                nodes.sort(Comparator.comparing(ServerNode::name, String.CASE_INSENSITIVE_ORDER));
-                return nodes;
-            }
-        };
-    }
-
-    private Optional<ActiveBan> lookupBan(UUID playerId, boolean forceRefresh) {
-        long now = System.currentTimeMillis();
-        CacheEntry cached = banCache.get(playerId);
-        if (!forceRefresh && cached != null && now - cached.loadedAt() < settings.banCacheMillis()) {
-            return unexpired(cached.ban(), now);
-        }
+    /**
+     * 把暂存 jar 覆盖到 plugins 中正在运行的 jar，让下次代理重启直接落在新版本。
+     * Linux 上打开的类加载器按 inode 持有旧文件，覆盖安全；Windows 文件被锁定时
+     * 覆盖失败，热重载仍已生效，仅提示手动替换。
+     */
+    private void persistStagedJar(Path stagedJar) {
         try {
-            Optional<ActiveBan> found = store.findActiveBan(playerId, now);
-            banCache.put(playerId, new CacheEntry(found.orElse(null), now));
-            return found;
-        } catch (SQLException error) {
-            logger.warn("查询玩家 {} 的群组封禁失败；使用最后一次成功缓存: {}", playerId, error.getMessage());
-            return cached == null ? Optional.empty() : unexpired(cached.ban(), now);
+            Path running = Path.of(getClass().getProtectionDomain()
+                    .getCodeSource().getLocation().toURI());
+            if (!Files.isRegularFile(running)) {
+                throw new IOException("未定位到宿主 jar: " + running);
+            }
+            Files.copy(stagedJar, running, StandardCopyOption.REPLACE_EXISTING);
+            logger.info("Sayaka 已把新版本同步到 {}，下次代理重启直接生效", running.getFileName());
+        } catch (Exception error) {
+            logger.warn("Sayaka 无法自动覆盖 plugins 中的旧 jar：{}。热重载已生效，"
+                    + "但代理重启会回到旧版本，请用暂存文件手动替换", error.getMessage());
         }
     }
 
-    private static Optional<ActiveBan> unexpired(ActiveBan ban, long now) {
-        return ban != null && ban.expiresAt() > now ? Optional.of(ban) : Optional.empty();
+    private boolean startCore(CoreBridge next, CoreClassLoader loader, String label) {
+        try {
+            next.start();
+            core = next;
+            coreLoader = loader;
+            logger.info("Sayaka Velocity 内核已上线（{}，版本 {}）", label, next.coreVersion());
+            return true;
+        } catch (Exception error) {
+            logger.error("Sayaka Velocity 内核启动失败（{}）", label, error);
+            return false;
+        }
     }
 
-    private static Component denial(ActiveBan ban) {
-        long millis = Math.max(0L, ban.expiresAt() - System.currentTimeMillis());
-        long minutes = Math.max(1L, Duration.ofMillis(millis).toMinutes());
-        return Component.text("你已被 Sayaka AntiCheat 临时封禁", NamedTextColor.RED)
-                .append(Component.newline())
-                .append(Component.text("剩余约 " + minutes + " 分钟", NamedTextColor.GRAY))
-                .append(Component.newline())
-                .append(Component.text("处罚 ID: " + ban.punishmentId(), NamedTextColor.DARK_GRAY));
+    private CoreBridge createFromLoader(CoreClassLoader loader) throws ReflectiveOperationException {
+        Class<?> coreClass = Class.forName(CORE_CLASS, true, loader);
+        Method factory = coreClass.getMethod("create", CoreContext.class);
+        return (CoreBridge) factory.invoke(null, context());
     }
 
-    private record CacheEntry(ActiveBan ban, long loadedAt) {}
+    private String currentVersion() {
+        CoreBridge current = core;
+        return current != null ? current.coreVersion() : "unknown";
+    }
+
+    private void closeLoader(CoreClassLoader loader) {
+        if (loader == null) return;
+        deregisterDrivers(loader);
+        try {
+            loader.close();
+        } catch (IOException error) {
+            logger.warn("旧内核类加载器关闭失败: {}", error.getMessage());
+        }
+    }
+
+    /** 注销旧内核 jar 里自动注册的 JDBC 驱动，避免旧加载器被 DriverManager 长期持有 */
+    private void deregisterDrivers(ClassLoader loader) {
+        Enumeration<Driver> drivers = DriverManager.getDrivers();
+        while (drivers.hasMoreElements()) {
+            Driver driver = drivers.nextElement();
+            if (driver.getClass().getClassLoader() == loader) {
+                try {
+                    DriverManager.deregisterDriver(driver);
+                } catch (Exception ignored) {
+                    // 注销失败只影响加载器回收，不影响功能
+                }
+            }
+        }
+    }
 }

@@ -63,6 +63,7 @@ final class DashboardServer {
     private final String indexHtml;
     private final String publicUrl;
     private final String serverId;
+    private final cn.haitang.anticheat.velocity.boot.HotReloader reloader;
     private final RateLimiter appealLimiter = new RateLimiter(20, 60_000L);
     private final OneTimeLoginTokens loginTokens = new OneTimeLoginTokens();
 
@@ -70,7 +71,8 @@ final class DashboardServer {
                             VelocityUpdateManager updateManager, ProtectionState protection,
                             Consumer<UUID> invalidateBanCache, HttpServer server,
                             ThreadPoolExecutor executor, AdminAuthService adminAuth, String indexHtml,
-                            String publicUrl, String serverId) {
+                            String publicUrl, String serverId,
+                            cn.haitang.anticheat.velocity.boot.HotReloader reloader) {
         this.store = store;
         this.control = control;
         this.updateManager = updateManager;
@@ -82,6 +84,7 @@ final class DashboardServer {
         this.indexHtml = indexHtml;
         this.publicUrl = publicUrl;
         this.serverId = serverId;
+        this.reloader = reloader;
     }
 
     static DashboardServer start(JdbcNetworkStore store, IntSupplier onlinePlayers,
@@ -107,13 +110,24 @@ final class DashboardServer {
                                  VelocityUpdateManager updateManager, ProtectionState protection,
                                  Consumer<UUID> invalidateBanCache, VelocitySettings settings,
                                  Logger logger) throws IOException {
-        return start(store, control, updateManager, protection, invalidateBanCache, settings, logger, null);
+        return start(store, control, updateManager, protection, invalidateBanCache, settings, logger,
+                null, null);
     }
 
     static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
                                  VelocityUpdateManager updateManager, ProtectionState protection,
                                  Consumer<UUID> invalidateBanCache, VelocitySettings settings,
                                  Logger logger, AdminAuthService injectedAuth) throws IOException {
+        return start(store, control, updateManager, protection, invalidateBanCache, settings, logger,
+                injectedAuth, null);
+    }
+
+    static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
+                                 VelocityUpdateManager updateManager, ProtectionState protection,
+                                 Consumer<UUID> invalidateBanCache, VelocitySettings settings,
+                                 Logger logger, AdminAuthService injectedAuth,
+                                 cn.haitang.anticheat.velocity.boot.HotReloader reloader)
+            throws IOException {
         String html;
         try (InputStream input = DashboardServer.class.getResourceAsStream("/web/index.html")) {
             if (input == null) throw new IOException("bundled web/index.html is missing");
@@ -131,7 +145,7 @@ final class DashboardServer {
                 ? new AdminAuthService(token, settings) : injectedAuth;
         DashboardServer dashboard = new DashboardServer(
                 store, control, updateManager, protection, invalidateBanCache, server, executor,
-                adminAuth, html, settings.webPublicUrl(), settings.serverId());
+                adminAuth, html, settings.webPublicUrl(), settings.serverId(), reloader);
         dashboard.register();
         server.start();
         logger.info("Sayaka 统一面板已启动: {}", dashboard.displayUrl());
@@ -201,6 +215,7 @@ final class DashboardServer {
         server.createContext("/api/admin/whitelist", wrap(admin(this::whitelist)));
         server.createContext("/api/admin/system/update/check", wrap(admin(this::updateCheck)));
         server.createContext("/api/admin/system/update/download", wrap(admin(this::updateDownload)));
+        server.createContext("/api/admin/system/update/apply", wrap(admin(this::updateApply)));
         server.createContext("/api/admin/system", wrap(admin(this::systemInfo)));
         server.createContext("/api/admin/network/players/kick", wrap(admin(this::kickPlayer)));
         server.createContext("/api/admin/network/players", wrap(admin(this::networkPlayers)));
@@ -623,6 +638,23 @@ final class DashboardServer {
         sendJson(exchange, 200, Map.of("ok", true, "update", updateMap()));
     }
 
+    /** 把已暂存的新版本热替换进正在运行的代理；实际换载由宿主延迟数秒执行 */
+    private void updateApply(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        requireUpdateManager();
+        if (reloader == null) throw new HttpError(503, "当前宿主不支持热重载，请手动替换 jar 并重启代理");
+        VelocityUpdateManager.Staged staged = updateManager.snapshot().staged();
+        if (staged == null) throw new HttpError(409, "请先下载并暂存更新");
+        try {
+            reloader.scheduleApply(java.nio.file.Path.of(staged.path()), staged.version());
+        } catch (IOException error) {
+            throw new HttpError(409, safeMessage(error));
+        }
+        sendJson(exchange, 200, Map.of("ok", true,
+                "message", "热重载已调度：面板将在数秒内重启到 " + staged.version() + "，请稍后刷新页面",
+                "update", updateMap()));
+    }
+
     private void requireUpdateManager() {
         if (updateManager == null) throw new HttpError(503, "更新功能未启用");
     }
@@ -648,6 +680,7 @@ final class DashboardServer {
         }
         VelocityUpdateManager.Snapshot snapshot = updateManager.snapshot();
         map.put("enabled", true);
+        map.put("hotReload", reloader != null);
         map.put("currentVersion", snapshot.currentVersion());
         map.put("lastCheckedAt", snapshot.lastCheckedAt());
         map.put("lastError", snapshot.lastError());

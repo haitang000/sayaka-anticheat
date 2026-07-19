@@ -1092,9 +1092,19 @@
         catch (error) { message.error(error.message); }
         finally { setDownloading(false); }
       };
+      const [applying, setApplying] = useState(false);
+      const apply = async () => {
+        setApplying(true);
+        try { const res = await api('/api/admin/system/update/apply', { method: 'POST', token });
+          message.success(res.message || '热重载已调度');
+          // 面板随内核重启，稍候再拉取新状态
+          setTimeout(() => { setApplying(false); load(); }, 8000);
+        } catch (error) { message.error(error.message); setApplying(false); }
+      };
       const update = data && data.update;
       const available = update && update.available;
       const staged = update && update.staged;
+      const hotReload = update && update.hotReload;
       return <Spin spinning={loading}>
         <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>系统与更新</Title>
           <Tooltip title="刷新"><Button icon={icon('ReloadOutlined')} onClick={load} /></Tooltip></div>
@@ -1124,7 +1134,11 @@
               message={'已下载 ' + staged.version + '（' + fmtBytes(staged.sizeBytes) + '）'}
               description={<div>
                 <Paragraph style={{ marginBottom: 6 }}>已保存到：<Text code copyable>{staged.path}</Text></Paragraph>
-                <Text type="secondary">用该文件替换 Velocity <Text code>plugins</Text> 目录中旧的插件 jar，然后重启代理即可生效（面板不会自动热替换正在运行的代理插件）。</Text>
+                {hotReload && <Space direction="vertical" size={6}>
+                  <Button type="primary" icon={icon('ThunderboltOutlined')} loading={applying} onClick={apply}>热重载应用（无需重启代理）</Button>
+                  <Text type="secondary">应用后面板会中断数秒并自动重启到新版本；封禁拦截在切换瞬间短暂放行。下次代理重启前请仍用暂存文件替换 <Text code>plugins</Text> 中的旧 jar，以免回到旧版本。</Text>
+                </Space>}
+                {!hotReload && <Text type="secondary">用该文件替换 Velocity <Text code>plugins</Text> 目录中旧的插件 jar，然后重启代理即可生效。</Text>}
               </div>} />}
           </>}
         </Card>
