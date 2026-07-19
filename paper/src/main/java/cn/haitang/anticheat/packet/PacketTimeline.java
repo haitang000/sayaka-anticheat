@@ -50,7 +50,9 @@ public final class PacketTimeline {
 
     public record Sample(long sequence, long nanos, SampleType type) { }
     public record TimerEvidence(int packets, double balanceMillis, double ratePerSecond) { }
+    public record BlinkEvidence(int cycles, long pauseMillis, int burstPackets) { }
     private record TimerSignal(UUID playerId, TimerEvidence evidence) { }
+    private record BlinkSignal(UUID playerId, BlinkEvidence evidence) { }
     private record AttackPacket(long sequence, long nanos, int entityId,
                                 double x, double y, double z, float yaw, float pitch,
                                 long precedingSwingSequence, int confirmedServerTick,
@@ -67,13 +69,24 @@ public final class PacketTimeline {
     private final int historyCapacity;
     private final int signalCapacity;
     private final int completionsPerTick;
+    /** Blink 识别参数（Netty 线程读取，启动时读配置一次，修改需重启） */
+    private final long blinkMinPauseMs;
+    private final long blinkMaxPauseMs;
+    private final long blinkBurstWindowMs;
+    private final int blinkMinBurstPackets;
+    private final int blinkMinLivePongs;
+    private final int blinkCyclesToSignal;
+    private final long blinkCycleWindowMs;
     private final Map<UUID, Timeline> timelines = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<TimerSignal> signals = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<BlinkSignal> blinkSignals = new ConcurrentLinkedQueue<>();
     private final AtomicInteger queuedSignals = new AtomicInteger();
+    private final AtomicInteger queuedBlinkSignals = new AtomicInteger();
     private final AtomicInteger transactionIds = new AtomicInteger(Integer.MIN_VALUE);
     private final PacketListenerCommon listener;
     private final BukkitTask drainTask;
     private volatile BiConsumer<Player, TimerEvidence> timerConsumer = (player, evidence) -> { };
+    private volatile BiConsumer<Player, BlinkEvidence> blinkConsumer = (player, evidence) -> { };
     private volatile BiPredicate<UUID, Integer> rawAttackConsumer = (playerId, entityId) -> false;
 
     public PacketTimeline(AntiCheatPlugin plugin) {
@@ -84,6 +97,20 @@ public final class PacketTimeline {
                 plugin.config().getInt("settings.packet-analysis.queue-capacity", 4096));
         this.completionsPerTick = Math.max(16,
                 plugin.config().getInt("settings.packet-analysis.completions-per-tick", 512));
+        this.blinkMinPauseMs = Math.max(200L,
+                plugin.config().getInt("checks.timer.blink.min-pause-ms", 500));
+        this.blinkMaxPauseMs = Math.max(this.blinkMinPauseMs,
+                plugin.config().getInt("checks.timer.blink.max-pause-ms", 5000));
+        this.blinkBurstWindowMs = Math.max(50L,
+                plugin.config().getInt("checks.timer.blink.burst-window-ms", 150));
+        this.blinkMinBurstPackets = Math.max(3,
+                plugin.config().getInt("checks.timer.blink.min-burst-packets", 6));
+        this.blinkMinLivePongs = Math.max(1,
+                plugin.config().getInt("checks.timer.blink.min-live-pongs", 2));
+        this.blinkCyclesToSignal = Math.max(2,
+                plugin.config().getInt("checks.timer.blink.cycles-to-alert", 4));
+        this.blinkCycleWindowMs = Math.max(5000L,
+                plugin.config().getInt("checks.timer.blink.cycle-window-ms", 30000));
         this.listener = PacketEvents.getAPI().getEventManager().registerListener(
                 new TimelineListener());
         this.drainTask = Bukkit.getScheduler().runTaskTimer(plugin, this::drainSignals, 1L, 1L);
@@ -91,6 +118,10 @@ public final class PacketTimeline {
 
     public void setTimerConsumer(BiConsumer<Player, TimerEvidence> timerConsumer) {
         this.timerConsumer = timerConsumer == null ? (player, evidence) -> { } : timerConsumer;
+    }
+
+    public void setBlinkConsumer(BiConsumer<Player, BlinkEvidence> blinkConsumer) {
+        this.blinkConsumer = blinkConsumer == null ? (player, evidence) -> { } : blinkConsumer;
     }
 
     public void setRawAttackConsumer(BiPredicate<UUID, Integer> rawAttackConsumer) {
@@ -163,6 +194,8 @@ public final class PacketTimeline {
         timelines.clear();
         signals.clear();
         queuedSignals.set(0);
+        blinkSignals.clear();
+        queuedBlinkSignals.set(0);
     }
 
     private void drainSignals() {
@@ -180,6 +213,15 @@ public final class PacketTimeline {
             }
             Player player = Bukkit.getPlayer(signal.playerId());
             if (player != null && player.isOnline()) timerConsumer.accept(player, signal.evidence());
+        }
+        for (int i = 0; i < completionsPerTick; i++) {
+            BlinkSignal signal = blinkSignals.poll();
+            if (signal == null) break;
+            queuedBlinkSignals.decrementAndGet();
+            // 服务端卡顿会打乱包到达节奏，本轮证据不可信
+            if (lagging) continue;
+            Player player = Bukkit.getPlayer(signal.playerId());
+            if (player != null && player.isOnline()) blinkConsumer.accept(player, signal.evidence());
         }
     }
 
@@ -211,6 +253,15 @@ public final class PacketTimeline {
         signals.offer(new TimerSignal(playerId, evidence));
     }
 
+    private void enqueueBlink(UUID playerId, BlinkEvidence evidence) {
+        int size = queuedBlinkSignals.incrementAndGet();
+        if (size > signalCapacity) {
+            queuedBlinkSignals.decrementAndGet();
+            return;
+        }
+        blinkSignals.offer(new BlinkSignal(playerId, evidence));
+    }
+
     private Timeline timeline(UUID playerId) {
         return timelines.computeIfAbsent(playerId, ignored -> new Timeline());
     }
@@ -233,6 +284,8 @@ public final class PacketTimeline {
                 WrapperPlayClientPlayerFlying flying = new WrapperPlayClientPlayerFlying(event);
                 TimerEvidence evidence = timeline.movement(seq, now, flying);
                 if (evidence != null) enqueueTimer(playerId, evidence);
+                BlinkEvidence blink = timeline.pollBlinkEvidence();
+                if (blink != null) enqueueBlink(playerId, blink);
                 return;
             }
             if (type == PacketType.Play.Client.ANIMATION) {
@@ -336,6 +389,10 @@ public final class PacketTimeline {
         private long lastSwingSequence = -1L;
         private long packetSequence;
         private final PacketTimerClock timerClock = new PacketTimerClock();
+        private final BlinkTracker blinkTracker = new BlinkTracker(
+                blinkMinPauseMs, blinkMaxPauseMs, blinkBurstWindowMs,
+                blinkMinBurstPackets, blinkMinLivePongs, blinkCyclesToSignal, blinkCycleWindowMs);
+        private BlinkEvidence pendingBlink;
         private long smoothedRttNanos;
         private long smoothedTransactionRttNanos;
         private int confirmedServerTick = -1;
@@ -356,9 +413,20 @@ public final class PacketTimeline {
                 pitch = packet.getLocation().getPitch();
             }
             addLocked(seq, now, packet.hasRotationChanged() ? SampleType.ROTATE : SampleType.MOVE);
+            BlinkTracker.Evidence blink = blinkTracker.movement(now);
+            if (blink != null) {
+                pendingBlink = new BlinkEvidence(
+                        blink.cycles(), blink.pauseMillis(), blink.burstPackets());
+            }
             PacketTimerClock.Evidence evidence = timerClock.accept(now);
             return evidence == null ? null : new TimerEvidence(evidence.packets(),
                     evidence.balanceMillis(), evidence.ratePerSecond());
+        }
+
+        synchronized BlinkEvidence pollBlinkEvidence() {
+            BlinkEvidence evidence = pendingBlink;
+            pendingBlink = null;
+            return evidence;
         }
 
         synchronized void swing(long seq, long now) {
@@ -502,10 +570,13 @@ public final class PacketTimeline {
             smoothedTransactionRttNanos = smoothedTransactionRttNanos == 0L ? sample
                     : (long) (smoothedTransactionRttNanos * 0.8 + sample * 0.2);
             confirmedServerTick = Math.max(confirmedServerTick, sent.serverTick());
+            blinkTracker.pong(now);
         }
 
         synchronized void resetTimer() {
             timerClock.reset();
+            blinkTracker.reset();
+            pendingBlink = null;
         }
 
         synchronized void add(long seq, long now, SampleType type) {

@@ -19,9 +19,10 @@ import org.bukkit.potion.PotionEffectType;
 /**
  * 使用物品移速检测（NoSlow）。
  *
- * 原版客户端在吃喝、拉弓/弩、举盾时会显著降速。这里只做保守检测：
- * 玩家已经持续使用核心物品一小段时间后，若 1.5 秒移动窗口内仍保持过高
- * 水平速度，则累计 VL；v1 不回弹、不取消物品使用。
+ * 原版客户端在吃喝、拉弓/弩、举盾时会显著降速。玩家已经持续使用核心
+ * 物品一小段时间后，若移动窗口内仍保持过高水平速度则累计 VL。
+ * 样本只取地面移动（空中惯性衰减慢，跳跃/坠落中使用物品不参与判定），
+ * 证据成立时按移动类通例回弹到最后合法落点。
  */
 public class NoSlowCheck extends Check {
 
@@ -83,10 +84,27 @@ public class NoSlowCheck extends Check {
                 flag(player, Math.min(over, 2.5),
                         String.format("%s 使用中 %.1f m/s > %.1f m/s",
                                 active.getType().name(), bps, cap));
+                if (cfgB("setback", true) && allowsMitigation(player)) {
+                    setback(event, data);
+                }
             }
         } else {
             data.buffer(type(), -0.75);
         }
+    }
+
+    private void setback(PlayerMoveEvent event, PlayerData data) {
+        Location target = data.getLastValidLocation();
+        Location from = event.getFrom();
+        if (target == null || target.getWorld() == null
+                || !target.getWorld().equals(from.getWorld())) {
+            target = from;
+        }
+        data.touchSetback();
+        data.resetBuffer(type());
+        data.getSpeedWindow().clear();
+        data.resetAirborneState(target.getY());
+        event.setTo(target.clone());
     }
 
     private boolean isTrackedUseItem(ItemStack item) {

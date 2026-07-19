@@ -30,6 +30,7 @@ public class TimerCheck extends Check {
         super(plugin, CheckType.TIMER);
         if (plugin.getPacketTimeline() != null) {
             plugin.getPacketTimeline().setTimerConsumer(this::onPacketEvidence);
+            plugin.getPacketTimeline().setBlinkConsumer(this::onBlinkEvidence);
         }
     }
 
@@ -85,6 +86,22 @@ public class TimerCheck extends Check {
                     "数据包时钟 %.1f/秒，余额 %.0fms（%d 包）",
                     evidence.ratePerSecond(), evidence.balanceMillis(), evidence.packets()));
         }
+    }
+
+    /**
+     * Blink/掉包器（憋移动包后一次性放出）：平均包速率不变，余额时钟看不到。
+     * 包级模型只统计"暂停期间事务 Pong 仍正常返回"的憋停-爆发循环——
+     * 真实网络抖动会把移动包和 Pong 一起拖住，客户端冻结时 Pong 同样停发。
+     * 多次循环才生成一次管理员辅助警报，不计 VL。
+     */
+    private void onBlinkEvidence(Player player, PacketTimeline.BlinkEvidence evidence) {
+        if (!cfgB("blink.enabled", true)) return;
+        if (isExempt(player) || player.isInsideVehicle()) return;
+        PlayerData data = data(player);
+        if (data.teleportedWithin(1_000)) return;
+        observe(player, String.format(
+                "憋包-爆发 %d 次循环（暂停≈%dms 后爆发 %d 包，Pong 期间正常，仅辅助证据）",
+                evidence.cycles(), evidence.pauseMillis(), evidence.burstPackets()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

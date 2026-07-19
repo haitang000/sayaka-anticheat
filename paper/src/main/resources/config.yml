@@ -181,6 +181,8 @@ checks:
     enabled: true
     enforcement: mitigate
     buffer-to-flag: 5.0
+    # 证据成立时回弹到最后合法落点，谎报的坠落轨迹直接作废
+    setback: true
 
   # 移动包速率（Timer 加速器）。
   # 数据包引擎工作时按包的真实到达时间测速，可覆盖任意倍速（含静止 Timer）
@@ -195,6 +197,25 @@ checks:
     # TPS 低于该值时暂停 Timer 判定并清空窗口；设为 0 可关闭此保护
     min-tps: 18.0
     buffer-to-flag: 2.0
+    blink:
+      # Blink/掉包器：客户端憋住移动包再一次性放出（假瞬移/拉扯战斗）。
+      # 平均包速率不变，仅凭速率测不到；本判定只统计"暂停期间事务 Pong
+      # 仍正常返回"的憋停-爆发循环——真实网络抖动会把移动包和 Pong 一起
+      # 拖住，客户端冻结（区块加载/GC）时 Pong 同样停发，都不会计入。
+      # 多次循环才生成一次管理员辅助警报，不计 VL。
+      # 除 enabled 外的参数在 Netty 线程使用，启动时读取一次，修改需重启
+      enabled: true
+      # 移动流暂停达到该毫秒数才观察后续爆发；超过 max 视为 AFK/切界面
+      min-pause-ms: 500
+      max-pause-ms: 5000
+      # 暂停结束后该毫秒窗口内到达的移动包算同一次爆发，及其最小包数
+      burst-window-ms: 150
+      min-burst-packets: 6
+      # 暂停期间至少收到多少个事务 Pong 才认定连接存活（每 100ms 发一个）
+      min-live-pongs: 2
+      # 滚动窗口内出现多少次存活憋停-爆发循环才警报一次
+      cycles-to-alert: 4
+      cycle-window-ms: 30000
 
   # 快速攀爬（FastLadder）
   fast-ladder:
@@ -567,8 +588,10 @@ checks:
   no-slow:
     enabled: true
     enforcement: mitigate
-    # 使用核心物品期间允许的最大水平速度 m/s；默认只累计 VL，不回弹/取消使用
+    # 使用核心物品期间允许的最大水平速度 m/s
     max-using-bps: 3.2
+    # 证据成立时回弹到最后合法落点（样本只取地面移动，跳跃/坠落不参与判定）
+    setback: true
     # 开始使用物品后的宽限毫秒（吸收使用前冲刺惯性）
     grace-ms: 300
     # 至少统计多长时间的移动样本才判定
