@@ -16,7 +16,9 @@
     .filter-search { width: min(320px, 100%); }
     .chart { height: 280px; min-width: 0; }
     .captcha-row { display: grid; grid-template-columns: minmax(0, 1fr) 160px 32px; gap: 8px; align-items: center; }
+    .appeal-captcha-row { margin-top: 12px; }
     .captcha-image { display: block; width: 160px; height: 57px; object-fit: cover; border: 1px solid #d9d9d9; border-radius: 6px; }
+    .captcha-placeholder { display: flex; align-items: center; justify-content: center; color: #8c8c8c; background: rgba(127, 127, 127, .08); }
     .player-link { padding: 0; height: auto; font-weight: 600; }
     .drawer-section { margin-top: 20px; }
     .drawer-section-title { display: block; margin-bottom: 9px; }
@@ -80,8 +82,8 @@
       REJECTED: { color: 'red', label: '已驳回' },
     };
 
-    async function api(path, { method = 'GET', body, token } = {}) {
-      const headers = {};
+    async function api(path, { method = 'GET', body, token, headers: customHeaders } = {}) {
+      const headers = { ...(customHeaders || {}) };
       if (body) headers['Content-Type'] = 'application/json';
       if (token) headers['X-Admin-Session'] = token;
       const response = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
@@ -167,29 +169,71 @@
       const [query, setQuery] = useState(initialId);
       const [loading, setLoading] = useState(false);
       const [result, setResult] = useState(null);
+      const [captcha, setCaptcha] = useState(null);
+      const [captchaAnswer, setCaptchaAnswer] = useState('');
+      const [captchaLoading, setCaptchaLoading] = useState(false);
+      const lookupInFlight = useRef(false);
       const [form] = Form.useForm();
 
+      const loadCaptcha = useCallback(async () => {
+        setCaptcha(null);
+        setCaptchaAnswer('');
+        setCaptchaLoading(true);
+        try {
+          setCaptcha(await api('/api/appeal/captcha'));
+        } catch (error) {
+          if (error.code === 'RATE_LIMITED') {
+            message.error('验证码请求过于频繁，请在 ' + error.retryAfterSeconds + ' 秒后重试');
+          } else {
+            message.error(error.message);
+          }
+        } finally { setCaptchaLoading(false); }
+      }, []);
+
+      useEffect(() => { loadCaptcha(); }, [loadCaptcha]);
+      useEffect(() => {
+        if (!captcha || !captcha.expiresInSeconds) return undefined;
+        const timer = setTimeout(loadCaptcha, Math.max(1000, captcha.expiresInSeconds * 1000));
+        return () => clearTimeout(timer);
+      }, [captcha, loadCaptcha]);
       const lookup = useCallback(async () => {
+        if (lookupInFlight.current) return;
         const value = query.trim();
         if (!value) { message.warning('请输入处罚 ID 或玩家名称'); return; }
+        if (!captcha) { message.warning('验证码尚未加载，请稍后重试'); return; }
+        const answer = captchaAnswer.trim();
+        if (answer.length !== 5) { message.warning('请输入 5 位验证码'); return; }
+        lookupInFlight.current = true;
         setLoading(true);
+        const challenge = captcha;
+        setCaptcha(null);
+        setCaptchaAnswer('');
         try {
-          const data = await api('/api/appeal/lookup?query=' + encodeURIComponent(value));
+          const data = await api('/api/appeal/lookup?query=' + encodeURIComponent(value), {
+            headers: {
+              'X-Captcha-Id': challenge.challengeId,
+              'X-Captcha-Answer': answer
+            }
+          });
           setResult(data);
           form.setFieldsValue({ reason: data.appeal ? data.appeal.reason : '', contact: '' });
         } catch (error) { setResult(null); message.error(error.message); }
-        finally { setLoading(false); }
-      }, [query, form]);
-
-      useEffect(() => { if (initialId) lookup(); }, []);
+        finally {
+          setLoading(false);
+          lookupInFlight.current = false;
+          loadCaptcha();
+        }
+      }, [query, captcha, captchaAnswer, form, loadCaptcha]);
 
       const submit = async (values) => {
         try {
-          await api('/api/appeal/submit', {
+          const data = await api('/api/appeal/submit', {
             method: 'POST', body: { id: result.punishment.id, ...values }
           });
           message.success('申诉已提交');
-          lookup();
+          setResult((current) => current
+            ? { ...current, appeal: data.appeal || current.appeal }
+            : current);
         } catch (error) { message.error(error.message); }
       };
 
@@ -200,11 +244,26 @@
           <Title level={4} style={{ marginTop: 0 }}>封禁申诉</Title>
           <Paragraph type="secondary">输入处罚 ID 或玩家名称，查看最近一次封禁的判定证据和申诉处理状态。</Paragraph>
           <Space.Compact style={{ width: '100%' }}>
-            <Input placeholder="处罚 ID 或玩家名称" value={query}
+            <Input placeholder="处罚 ID 或玩家名称" value={query} maxLength={64} disabled={loading}
               onChange={(event) => { setQuery(event.target.value); setResult(null); }}
               onPressEnter={lookup} allowClear />
-            <Button type="primary" icon={icon('SearchOutlined')} onClick={lookup} loading={loading}>查询</Button>
+            <Button type="primary" icon={icon('SearchOutlined')} onClick={lookup}
+              loading={loading}
+              disabled={!captcha || captchaLoading || captchaAnswer.trim().length !== 5}>查询</Button>
           </Space.Compact>
+          <div className="captcha-row appeal-captcha-row">
+            <Input className="captcha-input" placeholder="验证码" maxLength={5} autoComplete="off"
+              aria-label="查询验证码" value={captchaAnswer}
+              disabled={!captcha || captchaLoading}
+              onChange={(event) => setCaptchaAnswer(event.target.value.toUpperCase())}
+              onPressEnter={lookup} />
+            {captcha ? <img className="captcha-image" src={captcha.imageDataUrl} alt="验证码" />
+              : <div className="captcha-image captcha-placeholder" aria-busy={captchaLoading}>
+                {captchaLoading ? <Spin size="small" /> : icon('WarningOutlined')}
+              </div>}
+            <Tooltip title="刷新验证码"><Button aria-label="刷新验证码" icon={icon('ReloadOutlined')}
+              loading={captchaLoading} disabled={loading} onClick={loadCaptcha} /></Tooltip>
+          </div>
         </Card>
         {loading && <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div>}
         {result && <Card style={{ marginTop: 16 }}>

@@ -100,6 +100,8 @@ class DashboardServerTest {
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, response.statusCode());
             assertTrue(response.body().contains("Sayaka AntiCheat"));
+            assertTrue(response.body().contains("/api/appeal/captcha"));
+            assertTrue(response.body().contains("X-Captcha-Id"));
 
             String loginUrl = first.createOneTimeLoginUrl();
             assertTrue(loginUrl.startsWith("http://127.0.0.1:" + first.port() + "/#admin-login="));
@@ -244,17 +246,47 @@ class DashboardServerTest {
                 request(UUID.randomUUID(), "Appealer", "games"), System.currentTimeMillis()).punishment().id();
         VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
                 true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
+        AtomicLong captchaNow = new AtomicLong(1_000L);
+        CaptchaService appealCaptchas = new CaptchaService(captchaNow::get, new SecureRandom(),
+                () -> "ABCDE", (answer, random) -> new byte[] {1, 2, 3});
         DashboardServer dashboard = DashboardServer.start(store, () -> 0, settings,
-                LoggerFactory.getLogger("dashboard-player-appeal-test"));
+                LoggerFactory.getLogger("dashboard-player-appeal-test"), appealCaptchas);
         try {
             URI root = URI.create("http://127.0.0.1:" + dashboard.port());
             HttpClient client = HttpClient.newHttpClient();
-            HttpResponse<String> lookup = client.send(HttpRequest.newBuilder(
+
+            HttpResponse<String> legacyGet = client.send(HttpRequest.newBuilder(
                             root.resolve("/api/appeal/lookup?query=appealer")).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
+            assertEquals(403, legacyGet.statusCode());
+            assertEquals("CAPTCHA_REQUIRED", Json.parseObject(legacyGet.body()).get("code"));
+            HttpResponse<String> missingCaptcha = lookup(client, root, "appealer", null, null);
+            assertEquals(403, missingCaptcha.statusCode());
+            assertEquals("CAPTCHA_REQUIRED", Json.parseObject(missingCaptcha.body()).get("code"));
+
+            Map<String, Object> getChallenge = appealCaptcha(client, root);
+            HttpResponse<String> getLookup = lookupGet(client, root, "appealer",
+                    String.valueOf(getChallenge.get("challengeId")), "ABCDE");
+            assertEquals(200, getLookup.statusCode());
+
+            Map<String, Object> challenge = appealCaptcha(client, root);
+            HttpResponse<String> lookup = lookup(client, root, "appealer",
+                    String.valueOf(challenge.get("challengeId")), "abcde");
             assertEquals(200, lookup.statusCode());
             Map<?, ?> punishment = (Map<?, ?>) Json.parseObject(lookup.body()).get("punishment");
             assertEquals(id, punishment.get("id"));
+
+            HttpResponse<String> replay = lookup(client, root, "appealer",
+                    String.valueOf(challenge.get("challengeId")), "ABCDE");
+            assertEquals(403, replay.statusCode());
+            assertEquals("CAPTCHA_INVALID", Json.parseObject(replay.body()).get("code"));
+
+            Map<String, Object> missingChallenge = appealCaptcha(client, root);
+            HttpResponse<String> notFound = lookup(client, root, "missing-player",
+                    String.valueOf(missingChallenge.get("challengeId")), "ABCDE");
+            assertEquals(404, notFound.statusCode());
+            assertEquals(403, lookup(client, root, "appealer",
+                    String.valueOf(missingChallenge.get("challengeId")), "ABCDE").statusCode());
 
             HttpResponse<String> submit = client.send(HttpRequest.newBuilder(root.resolve("/api/appeal/submit"))
                             .header("Content-Type", "application/json")
@@ -262,6 +294,8 @@ class DashboardServerTest {
                                     "id", punishment.get("id"), "reason", "请重新检查这次处罚")))).build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, submit.statusCode());
+            Map<?, ?> submittedAppeal = (Map<?, ?>) Json.parseObject(submit.body()).get("appeal");
+            assertEquals("PENDING", submittedAppeal.get("status"));
             assertEquals(NetworkModels.AppealStatus.PENDING, store.getAppeal(id).orElseThrow().status());
         } finally {
             dashboard.stop();
@@ -523,6 +557,41 @@ class DashboardServerTest {
         assertTrue(String.valueOf(Json.parseObject(response.body()).get("imageDataUrl"))
                 .startsWith("data:image/png;base64,"));
         return Json.parseObject(response.body());
+    }
+
+    private static Map<String, Object> appealCaptcha(HttpClient client, URI root) throws Exception {
+        HttpResponse<String> response = client.send(HttpRequest.newBuilder(
+                        root.resolve("/api/appeal/captcha")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertEquals("no-store", response.headers().firstValue("Cache-Control").orElse(""));
+        assertTrue(String.valueOf(Json.parseObject(response.body()).get("imageDataUrl"))
+                .startsWith("data:image/png;base64,"));
+        return Json.parseObject(response.body());
+    }
+
+    private static HttpResponse<String> lookup(HttpClient client, URI root, String query,
+                                               String captchaId, String captchaAnswer)
+            throws Exception {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("query", query);
+        if (captchaId != null) body.put("captchaId", captchaId);
+        if (captchaAnswer != null) body.put("captchaAnswer", captchaAnswer);
+        return client.send(HttpRequest.newBuilder(root.resolve("/api/appeal/lookup"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(Json.write(body))).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static HttpResponse<String> lookupGet(HttpClient client, URI root, String query,
+                                                  String captchaId, String captchaAnswer)
+            throws Exception {
+        return client.send(HttpRequest.newBuilder(root.resolve(
+                                "/api/appeal/lookup?query=" + java.net.URLEncoder.encode(
+                                        query, java.nio.charset.StandardCharsets.UTF_8)))
+                        .header("X-Captcha-Id", captchaId)
+                        .header("X-Captcha-Answer", captchaAnswer)
+                        .GET().build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private static HttpResponse<String> get(HttpClient client, URI uri, String session) throws Exception {

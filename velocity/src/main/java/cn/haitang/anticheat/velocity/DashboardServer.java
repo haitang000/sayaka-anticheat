@@ -51,6 +51,8 @@ final class DashboardServer {
     private static final int MAX_BAN_HOURS = 8760;
     private static final int MAX_BROADCAST_LENGTH = 500;
     private static final long DAY_MILLIS = 86_400_000L;
+    private static final String CAPTCHA_ID_HEADER = "X-Captcha-Id";
+    private static final String CAPTCHA_ANSWER_HEADER = "X-Captcha-Answer";
 
     private final JdbcNetworkStore store;
     private final NetworkControl control;
@@ -60,6 +62,7 @@ final class DashboardServer {
     private final HttpServer server;
     private final ThreadPoolExecutor executor;
     private final AdminAuthService adminAuth;
+    private final CaptchaService appealCaptchas;
     private final String indexHtml;
     private final String publicUrl;
     private final String serverId;
@@ -70,7 +73,8 @@ final class DashboardServer {
     private DashboardServer(JdbcNetworkStore store, NetworkControl control,
                             VelocityUpdateManager updateManager, ProtectionState protection,
                             Consumer<UUID> invalidateBanCache, HttpServer server,
-                            ThreadPoolExecutor executor, AdminAuthService adminAuth, String indexHtml,
+                            ThreadPoolExecutor executor, AdminAuthService adminAuth,
+                            CaptchaService appealCaptchas, String indexHtml,
                             String publicUrl, String serverId,
                             cn.haitang.anticheat.velocity.boot.HotReloader reloader) {
         this.store = store;
@@ -81,6 +85,7 @@ final class DashboardServer {
         this.server = server;
         this.executor = executor;
         this.adminAuth = adminAuth;
+        this.appealCaptchas = appealCaptchas;
         this.indexHtml = indexHtml;
         this.publicUrl = publicUrl;
         this.serverId = serverId;
@@ -106,6 +111,13 @@ final class DashboardServer {
                 invalidateBanCache, settings, logger, injectedAuth);
     }
 
+    static DashboardServer start(JdbcNetworkStore store, IntSupplier onlinePlayers,
+                                 VelocitySettings settings, Logger logger,
+                                 CaptchaService injectedAppealCaptchas) throws IOException {
+        return start(store, controlFrom(onlinePlayers), null, ProtectionState.fromSettings(settings),
+                ignored -> {}, settings, logger, null, null, injectedAppealCaptchas);
+    }
+
     static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
                                  VelocityUpdateManager updateManager, ProtectionState protection,
                                  Consumer<UUID> invalidateBanCache, VelocitySettings settings,
@@ -128,6 +140,19 @@ final class DashboardServer {
                                  Logger logger, AdminAuthService injectedAuth,
                                  cn.haitang.anticheat.velocity.boot.HotReloader reloader)
             throws IOException {
+        return start(store, control, updateManager, protection, invalidateBanCache, settings, logger,
+                injectedAuth, reloader, null);
+    }
+
+    private static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
+                                         VelocityUpdateManager updateManager,
+                                         ProtectionState protection,
+                                         Consumer<UUID> invalidateBanCache,
+                                         VelocitySettings settings, Logger logger,
+                                         AdminAuthService injectedAuth,
+                                         cn.haitang.anticheat.velocity.boot.HotReloader reloader,
+                                         CaptchaService injectedAppealCaptchas)
+            throws IOException {
         String html;
         try (InputStream input = DashboardServer.class.getResourceAsStream("/web/index.html")) {
             if (input == null) throw new IOException("bundled web/index.html is missing");
@@ -144,9 +169,11 @@ final class DashboardServer {
         String token = generated ? UUID.randomUUID().toString().replace("-", "") : settings.adminToken();
         AdminAuthService adminAuth = injectedAuth == null
                 ? new AdminAuthService(token, settings) : injectedAuth;
+        CaptchaService appealCaptchas = injectedAppealCaptchas == null
+                ? new CaptchaService() : injectedAppealCaptchas;
         DashboardServer dashboard = new DashboardServer(
                 store, control, updateManager, protection, invalidateBanCache, server, executor,
-                adminAuth, html, settings.webPublicUrl(), settings.serverId(), reloader);
+                adminAuth, appealCaptchas, html, settings.webPublicUrl(), settings.serverId(), reloader);
         dashboard.register();
         server.start();
         logger.info("Sayaka 统一面板已启动: {}", dashboard.displayUrl());
@@ -190,6 +217,7 @@ final class DashboardServer {
     }
 
     private void register() {
+        server.createContext("/api/appeal/captcha", wrap(this::appealCaptcha));
         server.createContext("/api/appeal/lookup", wrap(this::appealLookup));
         server.createContext("/api/appeal/submit", wrap(this::appealSubmit));
         server.createContext("/api/admin/login/captcha", wrap(this::loginCaptcha));
@@ -272,11 +300,46 @@ final class DashboardServer {
         sendText(exchange, 200, indexHtml, "text/html; charset=utf-8");
     }
 
-    private void appealLookup(HttpExchange exchange) throws Exception {
+    private void appealCaptcha(HttpExchange exchange) throws IOException {
         requireMethod(exchange, "GET");
-        String query = queryParam(exchange, "query");
-        if (query == null || query.isBlank()) query = queryParam(exchange, "id");
-        if (query == null || query.isBlank()) throw new HttpError(400, "缺少处罚 ID 或玩家名称");
+        CaptchaService.CaptchaChallenge challenge = appealCaptchas.create(clientIp(exchange));
+        sendJson(exchange, 200, Map.of(
+                "challengeId", challenge.challengeId(),
+                "imageDataUrl", challenge.imageDataUrl(),
+                "expiresInSeconds", challenge.expiresInSeconds()));
+    }
+
+    private void appealLookup(HttpExchange exchange) throws Exception {
+        String method = exchange.getRequestMethod();
+        String query;
+        String captchaId;
+        String captchaAnswer;
+        if ("POST".equals(method)) {
+            Map<String, Object> json = readJson(exchange);
+            query = string(json.get("query")).trim();
+            if (query.isEmpty()) query = string(json.get("id")).trim();
+            captchaId = string(json.get("captchaId"));
+            captchaAnswer = string(json.get("captchaAnswer"));
+            if (captchaId.isBlank()) {
+                captchaId = exchange.getRequestHeaders().getFirst(CAPTCHA_ID_HEADER);
+            }
+            if (captchaAnswer.isBlank()) {
+                captchaAnswer = exchange.getRequestHeaders().getFirst(CAPTCHA_ANSWER_HEADER);
+            }
+        } else if ("GET".equals(method)) {
+            query = queryParam(exchange, "query");
+            if (query == null || query.isBlank()) query = queryParam(exchange, "id");
+            query = query == null ? "" : query.trim();
+            captchaId = exchange.getRequestHeaders().getFirst(CAPTCHA_ID_HEADER);
+            captchaAnswer = exchange.getRequestHeaders().getFirst(CAPTCHA_ANSWER_HEADER);
+            exchange.getResponseHeaders().set("Vary",
+                    CAPTCHA_ID_HEADER + ", " + CAPTCHA_ANSWER_HEADER);
+        } else {
+            throw new HttpError(405, "仅支持 GET 或 POST");
+        }
+        if (query.isEmpty()) throw new HttpError(400, "缺少处罚 ID 或玩家名称");
+        if (query.length() > MAX_QUERY_LENGTH) throw new HttpError(400, "搜索内容过长");
+        appealCaptchas.verify(clientIp(exchange), captchaId, captchaAnswer);
         Punishment punishment = store.getPunishment(query).orElse(null);
         if (punishment == null) {
             punishment = store.findLatestPunishmentByPlayerName(query)
@@ -305,7 +368,11 @@ final class DashboardServer {
         if (result == AppealSubmitResult.ALREADY_RESOLVED) {
             throw new HttpError(409, "该处罚的申诉已被管理员处理，无法再次提交");
         }
-        sendJson(exchange, 200, Map.of("ok", true, "message", "申诉已提交，请等待管理员处理"));
+        Appeal appeal = store.getAppeal(id).orElseThrow();
+        sendJson(exchange, 200, Map.of(
+                "ok", true,
+                "message", "申诉已提交，请等待管理员处理",
+                "appeal", appealMap(appeal, false)));
     }
 
     private void overview(HttpExchange exchange) throws Exception {
@@ -858,6 +925,19 @@ final class DashboardServer {
                 body.put("error", error.getMessage());
                 body.put("code", error.code());
                 body.put("captchaRequired", error.captchaRequired());
+                if (error.retryAfterSeconds() > 0) {
+                    body.put("retryAfterSeconds", error.retryAfterSeconds());
+                }
+                sendJson(exchange, error.status(), body);
+            } catch (CaptchaService.CaptchaFailure error) {
+                if (error.retryAfterSeconds() > 0) {
+                    exchange.getResponseHeaders().set("Retry-After",
+                            String.valueOf(error.retryAfterSeconds()));
+                }
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("error", error.getMessage());
+                body.put("code", error.code());
+                body.put("captchaRequired", true);
                 if (error.retryAfterSeconds() > 0) {
                     body.put("retryAfterSeconds", error.retryAfterSeconds());
                 }
