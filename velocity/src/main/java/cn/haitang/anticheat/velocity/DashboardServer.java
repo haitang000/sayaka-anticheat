@@ -139,6 +139,7 @@ final class DashboardServer {
                 settings.webThreads(), settings.webThreads(), 30L, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(256), new DashboardThreadFactory());
         executor.allowCoreThreadTimeOut(true);
+        server.setExecutor(executor);
         boolean generated = settings.adminToken() == null || settings.adminToken().isBlank();
         String token = generated ? UUID.randomUUID().toString().replace("-", "") : settings.adminToken();
         AdminAuthService adminAuth = injectedAuth == null

@@ -88,7 +88,11 @@ class DashboardServerTest {
         store.initialize();
         VelocitySettings dynamic = new VelocitySettings("velocity-test", databaseConfig,
                 true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
-        DashboardServer first = DashboardServer.start(store, () -> 0, dynamic,
+        AtomicReference<String> requestThread = new AtomicReference<>();
+        DashboardServer first = DashboardServer.start(store, () -> {
+            requestThread.set(Thread.currentThread().getName());
+            return 0;
+        }, dynamic,
                 LoggerFactory.getLogger("dashboard-test"));
         try {
             HttpResponse<String> response = HttpClient.newHttpClient().send(
@@ -112,6 +116,7 @@ class DashboardServerTest {
             HttpResponse<String> overview = clientGet(HttpClient.newHttpClient(),
                     URI.create("http://127.0.0.1:" + first.port() + "/api/admin/overview"), session);
             assertEquals(200, overview.statusCode());
+            assertTrue(requestThread.get().startsWith("sayaka-web-"));
             HttpResponse<String> reused = HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder(exchange).header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("ticket", ticket))))

@@ -16,9 +16,8 @@ import org.bukkit.entity.Player;
 /**
  * 数据包引擎桥接层：把 PacketEvents 的入站移动包分发给包级检测。
  *
- * {@link #onPacketReceive} 在 Netty 线程执行，这里只做三件事：
- * 向线程安全队列记录包到达时间（Timer 数据源）、纯数学的非法值判断、
- * 取消非法包。任何 Bukkit 状态读取与违规上报都由各检测调度回主线程，
+ * {@link #onPacketReceive} 在 Netty 线程执行，这里只做：
+ * 纯数学的非法值判断、取消非法包。任何 Bukkit 状态读取与违规上报都由各检测调度回主线程，
  * {@link PlayerData} 的其余字段不在这条线程上访问。
  */
 public class PacketBridge extends PacketListenerAbstract {
@@ -64,8 +63,6 @@ public class PacketBridge extends PacketListenerAbstract {
         // 尚未建档（join 事件还没处理）的连接直接忽略，不在 Netty 线程创建数据
         PlayerData data = plugin.getDataManager().getIfPresent(player.getUniqueId());
         if (data == null) return;
-
-        data.getPacketArrivals().add(System.currentTimeMillis());
 
         // 纯 idle 包不含位置与视角，无需解析包体
         if (event.getPacketType() == PacketType.Play.Client.PLAYER_FLYING) return;
