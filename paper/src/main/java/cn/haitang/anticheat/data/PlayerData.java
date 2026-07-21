@@ -89,6 +89,9 @@ public class PlayerData {
     private long impulseMinExpiresAt;
     private long serverLaunchExpiresAt;
     private boolean serverLaunchAirborne;
+    private boolean serverLaunchBaseTracked;
+    private double serverLaunchBaseY;
+    private double serverLaunchAscent;
     private long lastBounceAt;
     private long lastIceAt;
     private long lastSoulSandAt;
@@ -446,9 +449,12 @@ public class PlayerData {
      * of losing the exemption as soon as the first response is consumed.
      */
     void startImpulse(Vector velocity, long now) {
+        boolean chaining = hasActiveServerLaunch(now);
         if (!isFinite(velocity) || velocity.lengthSquared() < 1.0e-6) {
             clearImpulse();
-            clearServerLaunch();
+            // A neutralised velocity (anti-knockback, cancelled hit) must not cut short a launch
+            // that is already carrying the player through the air.
+            if (!chaining) clearServerLaunch();
             return;
         }
         this.lastVelocityAt = now;
@@ -458,8 +464,16 @@ public class PlayerData {
         this.impulseMinExpiresAt = now + 250L;
         this.impulseExpiresAt = now + Math.min(2_000L,
                 Math.max(450L, 600L + (long) (lastVelocityMagnitude * 450L)));
-        this.serverLaunchExpiresAt = now + estimateServerLaunchMs(velocity);
-        this.serverLaunchAirborne = false;
+        // A combo keeps re-launching an already airborne victim: the new trajectory starts from the
+        // height already gained, and a weak follow-up hit must never shorten the running allowance.
+        long allowance = now + estimateServerLaunchMs(velocity, chaining ? serverLaunchAscent : 0.0);
+        this.serverLaunchExpiresAt = chaining
+                ? Math.max(serverLaunchExpiresAt, allowance) : allowance;
+        if (!chaining) {
+            this.serverLaunchAirborne = false;
+            this.serverLaunchAscent = 0.0;
+            this.serverLaunchBaseTracked = false;
+        }
         this.speedWindow.clear();
     }
 
@@ -497,6 +511,8 @@ public class PlayerData {
         return hasActiveServerLaunch(System.currentTimeMillis());
     }
 
+    long getServerLaunchExpiresAt() { return serverLaunchExpiresAt; }
+
     boolean hasActiveServerLaunch(long now) {
         return serverLaunchExpiresAt != 0L && now < serverLaunchExpiresAt;
     }
@@ -506,9 +522,14 @@ public class PlayerData {
      *
      * @return true when a launch ended on this movement, so movement baselines can restart here
      */
-    public boolean updateServerLaunch(boolean collisionBelow, long now) {
+    public boolean updateServerLaunch(boolean collisionBelow, double currentY, long now) {
         if (serverLaunchExpiresAt == 0L) return false;
         if (!collisionBelow) serverLaunchAirborne = true;
+        if (!serverLaunchBaseTracked) {
+            serverLaunchBaseY = currentY;
+            serverLaunchBaseTracked = true;
+        }
+        serverLaunchAscent = Math.max(serverLaunchAscent, currentY - serverLaunchBaseY);
         if (now < serverLaunchExpiresAt && (!serverLaunchAirborne || !collisionBelow)) return false;
         clearServerLaunch();
         return true;
@@ -517,13 +538,25 @@ public class PlayerData {
     private void clearServerLaunch() {
         serverLaunchExpiresAt = 0L;
         serverLaunchAirborne = false;
+        serverLaunchBaseTracked = false;
+        serverLaunchBaseY = 0.0;
+        serverLaunchAscent = 0.0;
         speedWindow.clear();
     }
 
-    /** Estimate the vanilla-style flight/slowdown time with one second of collision tolerance. */
     static long estimateServerLaunchMs(Vector velocity) {
+        return estimateServerLaunchMs(velocity, 0.0);
+    }
+
+    /**
+     * Estimate the vanilla-style flight/slowdown time with one second of collision tolerance.
+     *
+     * @param ascent height already gained above the launch origin, so a re-launch mid-air budgets
+     *               the fall back down as well instead of only the new impulse's own arc
+     */
+    static long estimateServerLaunchMs(Vector velocity, double ascent) {
         double verticalVelocity = Math.max(0.0, velocity.getY());
-        double verticalPosition = 0.0;
+        double verticalPosition = Math.max(0.0, ascent);
         int verticalTicks = 0;
         while (verticalVelocity > 0.0 || verticalPosition > 0.0) {
             verticalPosition += verticalVelocity;

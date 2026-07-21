@@ -67,7 +67,7 @@ public class MovementTracker implements Listener {
 
         // ---- 滞空 / 悬浮计数 ----
         boolean collision = MoveUtil.hasCollisionBelow(to, GROUND_DEPTH);
-        boolean serverLaunchEnded = data.updateServerLaunch(collision, now);
+        boolean serverLaunchEnded = data.updateServerLaunch(collision, to.getY(), now);
         if (serverLaunchEnded) {
             // A timed-out launch may still be airborne. Restart Flight from the current position
             // instead of comparing it with the original pressure plate height.

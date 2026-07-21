@@ -115,10 +115,58 @@ class PlayerDataTest {
         assertTrue(data.velocityWithin(50L, 1_300L),
                 "Flight must stay exempt while the knocked-back player is airborne");
 
-        assertFalse(data.updateServerLaunch(false, 1_350L));
+        assertFalse(data.updateServerLaunch(false, 64.5, 1_350L));
         assertTrue(data.hasActiveServerLaunch(1_350L));
-        assertTrue(data.updateServerLaunch(true, 2_000L), "landing should finish the launch early");
+        assertTrue(data.updateServerLaunch(true, 64.0, 2_000L),
+                "landing should finish the launch early");
         assertFalse(data.hasActiveServerLaunch(2_000L));
+    }
+
+    @Test
+    void comboKeepsTheVictimExemptWhileBeingLaunchedHigher() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+        long now = 1_000L;
+        data.startImpulse(new Vector(0.3, 0.42, 0.0), now);
+        long firstHitExpiry = 0L;
+
+        // 10 hits at 4 CPS: the victim climbs while every hit re-launches from the height gained
+        double y = 64.0;
+        for (int hit = 0; hit < 10; hit++) {
+            for (int tick = 0; tick < 5; tick++) {
+                y += 0.4;
+                now += 50L;
+                assertFalse(data.updateServerLaunch(false, y, now),
+                        "the launch must survive the whole combo");
+                assertTrue(data.velocityWithin(3_000L, now),
+                        "Flight must stay exempt while the combo carries the victim upward");
+            }
+            data.startImpulse(new Vector(0.3, 0.42, 0.0), now);
+            if (hit == 0) firstHitExpiry = data.getServerLaunchExpiresAt();
+        }
+
+        assertTrue(data.getServerLaunchExpiresAt() > firstHitExpiry,
+                "a follow-up hit must extend, never shorten, the launch allowance");
+
+        // The victim now falls the ~20 blocks the combo gained and must stay exempt on the way down
+        while (y > 64.0) {
+            y -= 0.8;
+            now += 50L;
+            assertTrue(data.velocityWithin(3_000L, now),
+                    String.format("falling back from the combo must stay exempt (y=%.1f)", y));
+            data.updateServerLaunch(false, y, now);
+        }
+        assertTrue(data.updateServerLaunch(true, 64.0, now), "landing ends the launch");
+    }
+
+    @Test
+    void neutralisedKnockbackDoesNotCancelAnOngoingLaunch() {
+        PlayerData data = new PlayerData(UUID.randomUUID(), "player");
+        data.startImpulse(new Vector(0.3, 0.42, 0.0), 1_000L);
+
+        data.startImpulse(new Vector(0.0, 0.0, 0.0), 1_200L);
+
+        assertTrue(data.hasActiveServerLaunch(1_200L),
+                "an anti-knockback hit must not drop the exemption mid-air");
     }
 
     @Test
@@ -129,6 +177,16 @@ class PlayerDataTest {
         assertTrue(shortLaunch >= 1_000L);
         assertTrue(tallLaunch > shortLaunch);
         assertTrue(tallLaunch <= 15_000L);
+    }
+
+    @Test
+    void heightAlreadyGainedIsBudgetedIntoTheLaunchAllowance() {
+        Vector knockback = new Vector(0.3, 0.42, 0.0);
+        long fromGround = PlayerData.estimateServerLaunchMs(knockback, 0.0);
+        long fromAir = PlayerData.estimateServerLaunchMs(knockback, 20.0);
+
+        assertTrue(fromAir > fromGround, "the fall back from a combo must be part of the allowance");
+        assertTrue(fromAir <= 15_000L);
     }
 
     @Test
