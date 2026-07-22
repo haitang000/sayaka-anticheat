@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.util.MoveUtil;
 import org.bukkit.Location;
@@ -22,7 +23,7 @@ public class GlideCheck extends Check {
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         Location to = event.getTo();
-        if (to == null) return;
+        if (to == null || MovementTracker.isTeleport(event)) return;
 
         PlayerData data = data(player);
         if (isExempt(player) || isMovementExempt(player, data)) {

@@ -11,6 +11,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.potion.PotionEffectType;
 
 /**
@@ -35,6 +36,11 @@ public class MovementTracker implements Listener {
         Location from = event.getFrom();
         Location to = event.getTo();
         if (to == null) return;
+        // PlayerTeleportEvent 是 PlayerMoveEvent 的子类，本处理器同样会收到它。
+        // 传送位移是非物理的（末影珍珠/命令/插件），若在此累加滞空计数或塞入速度
+        // 采样窗口，会毒化后续判定；宽限与轨迹重置交由 ConnectionListener 在传送
+        // 真正落地（MONITOR，ignoreCancelled）时统一处理。
+        if (isTeleport(event)) return;
         PlayerData data = plugin.getDataManager().get(player);
 
         if (from.getWorld() == null || !from.getWorld().equals(to.getWorld())) {
@@ -166,5 +172,13 @@ public class MovementTracker implements Listener {
 
     public static boolean isPositionChange(double dx, double dy, double dz) {
         return Math.abs(dx) >= 1.0e-7 || Math.abs(dy) >= 1.0e-7 || Math.abs(dz) >= 1.0e-7;
+    }
+
+    /**
+     * 该移动事件是否为传送。PlayerTeleportEvent 继承自 PlayerMoveEvent，会被所有
+     * onMove 处理器收到；传送位移非物理，各移动检测须据此整体跳过，避免误判回弹。
+     */
+    public static boolean isTeleport(PlayerMoveEvent event) {
+        return event instanceof PlayerTeleportEvent;
     }
 }

@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.packet.PacketTimeline;
 import org.bukkit.entity.Player;
@@ -37,6 +38,7 @@ public class TimerCheck extends Check {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
         if (plugin.getPacketTimeline() != null) return;
+        if (MovementTracker.isTeleport(event)) return;
         Player player = event.getPlayer();
         if (isExempt(player)) return;
         PlayerData data = data(player);

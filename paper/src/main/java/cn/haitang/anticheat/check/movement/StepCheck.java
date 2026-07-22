@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.util.MoveUtil;
 import org.bukkit.Location;
@@ -10,7 +11,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.player.PlayerMoveEvent;
-import org.bukkit.event.player.PlayerTeleportEvent;
 
 /**
  * 异常跨越方块检测（Step）。
@@ -29,7 +29,7 @@ public class StepCheck extends Check {
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         Location to = event.getTo();
-        if (to == null || event instanceof PlayerTeleportEvent || isExempt(player)) return;
+        if (to == null || MovementTracker.isTeleport(event) || isExempt(player)) return;
         if (event.getFrom().getWorld() == null || !event.getFrom().getWorld().equals(to.getWorld())) return;
 
         PlayerData data = data(player);
@@ -44,8 +44,12 @@ public class StepCheck extends Check {
         double horizontal = Math.sqrt(dx * dx + dz * dz);
         double maxHeight = cfgD("max-height-per-move", 0.70);
         double minHorizontal = cfgD("min-horizontal-per-move", 0.03);
+        // 真正的 Step 会在同一个包内直接站定到高方块上（脚下有碰撞体）；而跳跃/击退的
+        // 上升弧线处于滞空（脚下无碰撞）。以此区分，避免网络合批把两个跳跃刻拼成一个
+        // dy>0.70 的滞空包被长期极慢的衰减攒成误判回弹。
+        boolean grounded = data.isCollisionBelow();
 
-        if (dy > maxHeight && horizontal >= minHorizontal) {
+        if (isStepViolation(dy, horizontal, grounded, maxHeight, minHorizontal)) {
             double severity = Math.min(2.0, dy / maxHeight);
             double buffered = data.buffer(type(), severity);
             if (buffered >= cfgD("buffer-to-flag", 2.5)) {
@@ -56,10 +60,19 @@ public class StepCheck extends Check {
                     setback(event, data);
                 }
             }
-        } else if (dy <= maxHeight) {
-            // 缓慢衰减，允许相邻两个方块之间的正常水平移动包存在。
+        } else if (dy <= maxHeight || !grounded) {
+            // 缓慢衰减，允许相邻两个方块之间的正常水平移动包存在；滞空上升弧线同样衰减。
             data.buffer(type(), -0.08);
         }
+    }
+
+    /**
+     * 是否为一次跨步违规：本包已站定在方块上（脚下有碰撞体）、上升超过自动跨步上限、
+     * 且带有水平位移（排除活塞等纯竖直推动）。原版自动跨步上限为 0.6 格。
+     */
+    static boolean isStepViolation(double dy, double horizontal, boolean grounded,
+                                   double maxHeight, double minHorizontal) {
+        return grounded && dy > maxHeight && horizontal >= minHorizontal;
     }
 
     private boolean isMovementExempt(Player player, PlayerData data) {

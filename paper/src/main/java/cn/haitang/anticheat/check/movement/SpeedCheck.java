@@ -37,7 +37,7 @@ public class SpeedCheck extends Check {
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         Location to = event.getTo();
-        if (to == null) return;
+        if (to == null || MovementTracker.isTeleport(event)) return;
         PlayerData data = data(player);
 
         if (isExempt(player) || isMovementExempt(player, data)) {

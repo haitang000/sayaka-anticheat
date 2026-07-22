@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -39,7 +40,7 @@ public class RotationCheck extends Check {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
         Location to = event.getTo();
-        if (to == null) return;
+        if (to == null || MovementTracker.isTeleport(event)) return;
         Player player = event.getPlayer();
         if (isExempt(player)) return;
         // 服务端设置视角（传送）的回包宽限

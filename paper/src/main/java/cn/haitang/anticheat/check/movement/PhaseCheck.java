@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.util.MoveUtil;
 import org.bukkit.Location;
@@ -14,7 +15,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.player.PlayerMoveEvent;
-import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.util.BoundingBox;
 
 /**
@@ -42,7 +42,7 @@ public class PhaseCheck extends Check {
         Player player = event.getPlayer();
         Location from = event.getFrom();
         Location to = event.getTo();
-        if (to == null || event instanceof PlayerTeleportEvent || isExempt(player)) return;
+        if (to == null || MovementTracker.isTeleport(event) || isExempt(player)) return;
         World world = from.getWorld();
         if (world == null || !world.equals(to.getWorld())) return;
 

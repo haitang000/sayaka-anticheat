@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
@@ -36,7 +37,7 @@ public class SprintCheck extends Check {
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         Location to = event.getTo();
-        if (to == null || isExempt(player)) return;
+        if (to == null || MovementTracker.isTeleport(event) || isExempt(player)) return;
         PlayerData data = data(player);
 
         if (!player.isSprinting()) {

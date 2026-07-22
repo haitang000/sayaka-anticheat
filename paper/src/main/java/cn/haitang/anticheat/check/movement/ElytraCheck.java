@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.movement;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import com.destroystokyo.paper.event.player.PlayerElytraBoostEvent;
 import org.bukkit.Location;
@@ -43,7 +44,7 @@ public class ElytraCheck extends Check {
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         Location to = event.getTo();
-        if (to == null) return;
+        if (to == null || MovementTracker.isTeleport(event)) return;
         PlayerData data = data(player);
         Deque<PlayerData.GlideSample> samples = data.getGlideSamples();
 

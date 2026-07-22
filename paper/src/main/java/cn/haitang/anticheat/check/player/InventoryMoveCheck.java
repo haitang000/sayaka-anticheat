@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check.player;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.CheckType;
+import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -45,7 +46,7 @@ public class InventoryMoveCheck extends Check {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
-        if (event.getTo() == null || isExempt(player)) return;
+        if (event.getTo() == null || MovementTracker.isTeleport(event) || isExempt(player)) return;
         PlayerData data = data(player);
         if (!data.isContainerOpen()) return;
 
