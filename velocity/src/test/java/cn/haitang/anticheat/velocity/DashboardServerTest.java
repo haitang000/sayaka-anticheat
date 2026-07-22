@@ -530,6 +530,74 @@ class DashboardServerTest {
         }
     }
 
+    @Test
+    void servesPanelWithAntiClickjackingHeaders() throws Exception {
+        String database = "dashboard_headers_" + UUID.randomUUID().toString().replace("-", "");
+        DatabaseConfig databaseConfig = new DatabaseConfig(
+                "jdbc:h2:mem:" + database + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
+                "sa", "");
+        JdbcNetworkStore store = new JdbcNetworkStore(databaseConfig);
+        store.initialize();
+        VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
+        DashboardServer dashboard = DashboardServer.start(store, () -> 0, settings,
+                LoggerFactory.getLogger("dashboard-headers-test"));
+        try {
+            URI root = URI.create("http://127.0.0.1:" + dashboard.port());
+            HttpResponse<String> response = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(root.resolve("/")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode());
+            assertEquals("DENY", response.headers().firstValue("X-Frame-Options").orElse(""));
+            assertEquals("nosniff", response.headers().firstValue("X-Content-Type-Options").orElse(""));
+            assertEquals("no-referrer", response.headers().firstValue("Referrer-Policy").orElse(""));
+            assertTrue(response.headers().firstValue("Content-Security-Policy").orElse("")
+                    .contains("frame-ancestors 'none'"));
+        } finally {
+            dashboard.stop();
+        }
+    }
+
+    @Test
+    void keysLoginRateLimitOnTheProxyAppendedHopNotTheSpoofableClientValue() throws Exception {
+        String database = "dashboard_xff_" + UUID.randomUUID().toString().replace("-", "");
+        DatabaseConfig databaseConfig = new DatabaseConfig(
+                "jdbc:h2:mem:" + database + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
+                "sa", "");
+        JdbcNetworkStore store = new JdbcNetworkStore(databaseConfig);
+        store.initialize();
+        VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
+                true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
+        AtomicLong now = new AtomicLong(1_000L);
+        // 抬高验证码阈值，让本用例只考察失败锁定这一条防线
+        AdminAuthService auth = new AdminAuthService("test-token", 10, 3,
+                600_000L, 43_200_000L, now::get, new SecureRandom(), () -> "ABCDE",
+                (answer, random) -> new byte[] {1, 2, 3});
+        DashboardServer dashboard = DashboardServer.start(store, () -> 0, ignored -> {}, settings,
+                LoggerFactory.getLogger("dashboard-xff-test"), auth);
+        try {
+            URI root = URI.create("http://127.0.0.1:" + dashboard.port());
+            HttpClient client = HttpClient.newHttpClient();
+            // 每发都伪造不同的最左侧 X-Forwarded-For，但可信反代追加的最后一跳固定为 9.9.9.9。
+            assertEquals(401, spoofedLogin(client, root, "1.1.1.1").statusCode());
+            assertEquals(401, spoofedLogin(client, root, "2.2.2.2").statusCode());
+            // 若限流键取最左侧（可伪造）值，第三发仍是 401（锁定被绕过）；取最后一跳则触发 429。
+            assertEquals(429, spoofedLogin(client, root, "3.3.3.3").statusCode());
+        } finally {
+            dashboard.stop();
+        }
+    }
+
+    private static HttpResponse<String> spoofedLogin(HttpClient client, URI root, String spoofed)
+            throws Exception {
+        return client.send(HttpRequest.newBuilder(root.resolve("/api/admin/login"))
+                        .header("Content-Type", "application/json")
+                        .header("X-Forwarded-For", spoofed + ", 9.9.9.9")
+                        .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("token", "wrong"))))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
     private static String login(HttpClient client, URI root, String token) throws Exception {
         HttpResponse<String> response = loginResponse(client, root, token, null, null);
         assertEquals(200, response.statusCode());

@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
+import java.util.logging.Level;
 
 /**
  * Runs immutable, Bukkit-free analysis on a bounded worker pool. Results are
@@ -64,8 +65,8 @@ public final class ParallelAnalysisExecutor {
             try {
                 analysis.run();
             } catch (Throwable error) {
-                enqueueCompletion(() -> plugin.getLogger().warning(
-                        "Parallel analysis failed: " + error.getMessage()));
+                enqueueCompletion(() -> plugin.getLogger().log(Level.WARNING,
+                        "Parallel analysis failed", error));
             }
         });
     }
@@ -76,8 +77,8 @@ public final class ParallelAnalysisExecutor {
                 T result = analysis.call();
                 enqueueCompletion(() -> mainThreadCompletion.accept(result));
             } catch (Throwable error) {
-                enqueueCompletion(() -> plugin.getLogger().warning(
-                        "Parallel analysis failed: " + error.getMessage()));
+                enqueueCompletion(() -> plugin.getLogger().log(Level.WARNING,
+                        "Parallel analysis failed", error));
             }
         });
     }
@@ -104,7 +105,7 @@ public final class ParallelAnalysisExecutor {
             try {
                 completion.run();
             } catch (Throwable error) {
-                plugin.getLogger().warning("Analysis completion failed: " + error.getMessage());
+                plugin.getLogger().log(Level.WARNING, "Analysis completion failed", error);
             } finally {
                 completed.increment();
             }

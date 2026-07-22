@@ -5,7 +5,6 @@ import cn.haitang.anticheat.check.CheckType;
 import cn.haitang.anticheat.check.EnforcementMode;
 import cn.haitang.anticheat.config.ConfigSnapshot;
 import cn.haitang.anticheat.data.PlayerData;
-import org.bukkit.configuration.Configuration;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
@@ -86,15 +85,6 @@ public class ViolationManager {
     }
 
     /** 根据本次上报前是否已有首次警告计算提前踢出阈值。 */
-    static double effectiveKickVl(Configuration config, int warningStage) {
-        double base = config.getDouble("punishment.kick-vl", 20.0);
-        double multiplier = 1.0;
-        if (warningStage >= 1) {
-            multiplier = config.getDouble("punishment.warned-kick-multipliers.warn-1", 0.90);
-        }
-        return base * Math.max(0.0, Math.min(1.0, multiplier));
-    }
-
     static double effectiveKickVl(ConfigSnapshot config, int warningStage) {
         double base = config.getDouble("punishment.kick-vl", 20.0);
         double multiplier = 1.0;
@@ -104,15 +94,6 @@ public class ViolationManager {
         return base * Math.max(0.01, Math.min(1.0, multiplier));
     }
 
-    static double punishmentThreshold(Configuration config, EnforcementMode enforcement,
-                                      int warningStage) {
-        return switch (enforcement) {
-            case PUNISH -> effectiveKickVl(config, warningStage);
-            case MITIGATE -> config.getDouble("punishment.mitigate-kick-vl", 100.0);
-            case ALERT -> Double.POSITIVE_INFINITY;
-        };
-    }
-
     static double punishmentThreshold(ConfigSnapshot config, EnforcementMode enforcement,
                                       int warningStage) {
         return switch (enforcement) {
@@ -120,13 +101,6 @@ public class ViolationManager {
             case MITIGATE -> config.getDouble("punishment.mitigate-kick-vl", 100.0);
             case ALERT -> Double.POSITIVE_INFINITY;
         };
-    }
-
-    static boolean shouldPunish(Configuration config, EnforcementMode enforcement,
-                                int warningStage, double vl) {
-        return enforcement != EnforcementMode.ALERT
-                && (warningStage >= 2
-                || vl >= punishmentThreshold(config, enforcement, warningStage));
     }
 
     static boolean shouldPunish(ConfigSnapshot config, EnforcementMode enforcement,
@@ -186,17 +160,6 @@ public class ViolationManager {
     }
 
     /** 读取 decay.per-check.<configKey> 的衰减速率覆盖；未配置的检测项用全局速率。 */
-    static Map<CheckType, Double> perCheckRates(Configuration config) {
-        Map<CheckType, Double> rates = new EnumMap<>(CheckType.class);
-        for (CheckType type : CheckType.values()) {
-            String path = "decay.per-check." + type.configKey();
-            if (config.contains(path)) {
-                rates.put(type, Math.max(0.0, config.getDouble(path)));
-            }
-        }
-        return rates;
-    }
-
     static Map<CheckType, Double> perCheckRates(ConfigSnapshot config) {
         Map<CheckType, Double> rates = new EnumMap<>(CheckType.class);
         for (CheckType type : CheckType.values()) {

@@ -13,6 +13,13 @@ import java.util.Map;
  */
 public final class Json {
 
+    /**
+     * 递归下降解析的最大嵌套深度。面板真实载荷都是浅层对象，
+     * 设上限是为了让「深嵌套」的恶意输入（如成千上万个 {@code [}）
+     * 触发受控的 {@link IllegalArgumentException} 而非 {@link StackOverflowError}。
+     */
+    static final int MAX_DEPTH = 64;
+
     private Json() {}
 
     // ---- 序列化 ----
@@ -118,6 +125,7 @@ public final class Json {
     private static final class Parser {
         private final String text;
         private int pos;
+        private int depth;
 
         Parser(String text) {
             this.text = text;
@@ -145,43 +153,59 @@ public final class Json {
         }
 
         private Map<String, Object> readObject() {
-            Map<String, Object> map = new java.util.LinkedHashMap<>();
-            pos++; // {
-            skipWhitespace();
-            if (peek() == '}') { pos++; return map; }
-            while (true) {
+            enterNesting();
+            try {
+                Map<String, Object> map = new java.util.LinkedHashMap<>();
+                pos++; // {
                 skipWhitespace();
-                if (peek() != '"') throw new IllegalArgumentException("对象键必须是字符串");
-                String key = readString();
-                skipWhitespace();
-                if (peek() != ':') throw new IllegalArgumentException("对象键后缺少冒号");
-                pos++;
-                skipWhitespace();
-                map.put(key, readValue());
-                skipWhitespace();
-                char next = peek();
-                if (next == ',') { pos++; continue; }
-                if (next == '}') { pos++; break; }
-                throw new IllegalArgumentException("对象中缺少逗号或右括号");
+                if (peek() == '}') { pos++; return map; }
+                while (true) {
+                    skipWhitespace();
+                    if (peek() != '"') throw new IllegalArgumentException("对象键必须是字符串");
+                    String key = readString();
+                    skipWhitespace();
+                    if (peek() != ':') throw new IllegalArgumentException("对象键后缺少冒号");
+                    pos++;
+                    skipWhitespace();
+                    map.put(key, readValue());
+                    skipWhitespace();
+                    char next = peek();
+                    if (next == ',') { pos++; continue; }
+                    if (next == '}') { pos++; break; }
+                    throw new IllegalArgumentException("对象中缺少逗号或右括号");
+                }
+                return map;
+            } finally {
+                depth--;
             }
-            return map;
         }
 
         private List<Object> readArray() {
-            List<Object> list = new ArrayList<>();
-            pos++; // [
-            skipWhitespace();
-            if (peek() == ']') { pos++; return list; }
-            while (true) {
+            enterNesting();
+            try {
+                List<Object> list = new ArrayList<>();
+                pos++; // [
                 skipWhitespace();
-                list.add(readValue());
-                skipWhitespace();
-                char next = peek();
-                if (next == ',') { pos++; continue; }
-                if (next == ']') { pos++; break; }
-                throw new IllegalArgumentException("数组中缺少逗号或右括号");
+                if (peek() == ']') { pos++; return list; }
+                while (true) {
+                    skipWhitespace();
+                    list.add(readValue());
+                    skipWhitespace();
+                    char next = peek();
+                    if (next == ',') { pos++; continue; }
+                    if (next == ']') { pos++; break; }
+                    throw new IllegalArgumentException("数组中缺少逗号或右括号");
+                }
+                return list;
+            } finally {
+                depth--;
             }
-            return list;
+        }
+
+        private void enterNesting() {
+            if (++depth > MAX_DEPTH) {
+                throw new IllegalArgumentException("JSON 嵌套层级过深（上限 " + MAX_DEPTH + "）");
+            }
         }
 
         private String readString() {

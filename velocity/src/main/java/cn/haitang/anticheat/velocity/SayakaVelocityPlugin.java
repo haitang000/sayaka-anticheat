@@ -37,10 +37,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 加载器构造新内核（未启动，端口未占用），再停旧内核、关闭旧加载器、
  * 启动新内核。新内核启动失败时回退到宿主 jar 内嵌的内核，服务不失联。
  */
+// 版本号须与根 pom 的 <revision> 保持一致：@Plugin 的 version 是编译期常量，
+// 无法用 Maven 属性注入，是全项目唯一需要手工同步版本号的位置。
 @Plugin(
         id = "sayaka-anticheat",
         name = "Sayaka AntiCheat Velocity",
-        version = "2.1.0.8-beta.2",
+        version = "2.1.0.8-beta.3",
         authors = {"haitang"}
 )
 public final class SayakaVelocityPlugin {

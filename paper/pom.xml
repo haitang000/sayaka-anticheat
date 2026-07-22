@@ -6,7 +6,7 @@
     <parent>
         <groupId>cn.haitang</groupId>
         <artifactId>sayaka-anticheat-parent</artifactId>
-        <version>2.1.0.8-beta.2</version>
+        <version>${revision}</version>
     </parent>
 
     <artifactId>sayaka-anticheat-paper</artifactId>
@@ -49,6 +49,24 @@
     </dependencies>
 
     <build>
+        <!-- 仅对 plugin.yml 开启过滤，把 ${project.version} 注入版本号；
+             其余资源（config.yml 等可能含 ${} 占位）原样拷贝，避免被误替换。 -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>plugin.yml</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>plugin.yml</exclude>
+                </excludes>
+            </resource>
+        </resources>
         <finalName>Sayaka-AntiCheat-Paper-${project.version}</finalName>
         <plugins>
             <plugin>

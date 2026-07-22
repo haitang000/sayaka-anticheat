@@ -81,4 +81,19 @@ class JsonTest {
         assertEquals(List.of(), Json.parse("[]"));
         assertFalse(Json.parseObject("{\"a\":[]}").isEmpty());
     }
+
+    @Test
+    void nestingUpToTheLimitStillParses() {
+        String json = "[".repeat(Json.MAX_DEPTH) + "]".repeat(Json.MAX_DEPTH);
+        assertTrue(Json.parse(json) instanceof List<?>);
+    }
+
+    @Test
+    void deeplyNestedInputIsRejectedWithoutStackOverflow() {
+        String json = "[".repeat(Json.MAX_DEPTH + 1) + "]".repeat(Json.MAX_DEPTH + 1);
+        assertThrows(IllegalArgumentException.class, () -> Json.parse(json));
+
+        String brackets = "[".repeat(20_000);
+        assertThrows(IllegalArgumentException.class, () -> Json.parse(brackets));
+    }
 }

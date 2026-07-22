@@ -30,6 +30,7 @@ import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import javax.xml.XMLConstants;
@@ -140,7 +141,7 @@ public final class UpdateManager {
                         () -> beginHotReload(sender, installed, stagedArtifact));
                 staged = true;
             } catch (Exception error) {
-                plugin.getLogger().warning("Update failed: " + error.getMessage());
+                plugin.getLogger().log(Level.WARNING, "Update failed", error);
                 sendSync(sender, "update-failed", Map.of("error", safeMessage(error)));
             } finally {
                 if (!staged) installing.set(false);
@@ -169,7 +170,7 @@ public final class UpdateManager {
                 sendSync(sender, "update-current", Map.of("version", currentVersion()));
             }
         } catch (Exception error) {
-            plugin.getLogger().warning("Unable to check GitHub releases: " + error.getMessage());
+            plugin.getLogger().log(Level.WARNING, "Unable to check GitHub releases", error);
             if (sender != null) sendSync(sender, "update-check-failed", Map.of("error", safeMessage(error)));
         } finally {
             checking.set(false);

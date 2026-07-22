@@ -1052,7 +1052,15 @@ final class DashboardServer {
         var remote = exchange.getRemoteAddress().getAddress();
         if (remote.isLoopbackAddress()) {
             String forwarded = exchange.getRequestHeaders().getFirst("X-Forwarded-For");
-            if (forwarded != null && !forwarded.isBlank()) return forwarded.split(",", 2)[0].trim();
+            if (forwarded != null && !forwarded.isBlank()) {
+                // 只信任本地可信反代（回环）在链尾追加的那一跳。最左侧的条目由客户端提供、
+                // 可任意伪造；若拿它当限流键，攻击者只需轮换伪造 IP 即可绕过登录锁定与验证码门槛。
+                String[] hops = forwarded.split(",");
+                for (int i = hops.length - 1; i >= 0; i--) {
+                    String hop = hops[i].trim();
+                    if (!hop.isEmpty()) return hop;
+                }
+            }
         }
         return remote.getHostAddress();
     }
@@ -1066,9 +1074,15 @@ final class DashboardServer {
 
     private static void sendText(HttpExchange exchange, int status, String value, String contentType)
             throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", contentType);
+        var headers = exchange.getResponseHeaders();
+        headers.set("Content-Type", contentType);
         if (contentType.startsWith("text/html")) {
-            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            headers.set("X-Content-Type-Options", "nosniff");
+            // 面板的管理动作靠 JS 附带 X-Admin-Session 头触发，点击劫持可诱导管理员点到解封/踢人等按钮，
+            // 因此禁止任何站点把面板嵌入 iframe，并避免 Referer 外泄。
+            headers.set("X-Frame-Options", "DENY");
+            headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+            headers.set("Referrer-Policy", "no-referrer");
         }
         sendBytes(exchange, status, value.getBytes(StandardCharsets.UTF_8));
     }
@@ -1171,6 +1185,7 @@ final class DashboardServer {
     }
 
     private static final class RateLimiter {
+        private static final int MAX_KEYS = 10_000;
         private final int limit;
         private final long windowMillis;
         private final Map<String, Window> windows = new java.util.concurrent.ConcurrentHashMap<>();
@@ -1182,6 +1197,11 @@ final class DashboardServer {
 
         private boolean allow(String key) {
             long now = System.currentTimeMillis();
+            // 公网可达的申诉接口按 IP 建窗；过期窗口从不清理会让 map 随不同 IP 无限增长（内存耗尽 DoS）。
+            // 命中上限时顺手清掉已过期的窗口，把内存占用限制在活跃 IP 规模。
+            if (windows.size() >= MAX_KEYS) {
+                windows.values().removeIf(window -> now - window.startedAt >= windowMillis);
+            }
             Window window = windows.compute(key, (ignored, old) ->
                     old == null || now - old.startedAt >= windowMillis
                             ? new Window(now, 1) : new Window(old.startedAt, old.count + 1));

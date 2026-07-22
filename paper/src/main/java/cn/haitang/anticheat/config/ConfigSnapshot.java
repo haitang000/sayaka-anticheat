@@ -47,7 +47,11 @@ public final class ConfigSnapshot {
     private final EnumMap<CheckType, EnforcementMode> enforcements;
     private final BedrockProfile bedrockProfile;
 
-    ConfigSnapshot(YamlConfiguration values) {
+    /**
+     * 直接包装一组原始配置值，<strong>不做校验、不合并内置默认</strong>。
+     * 正式加载请走 {@link #load(AntiCheatPlugin)}；此构造仅供内部构建与单元测试。
+     */
+    public ConfigSnapshot(YamlConfiguration values) {
         Map<String, Object> flatValues = new HashMap<>();
         Set<String> sections = new HashSet<>();
         Map<String, List<String>> stringListValues = new HashMap<>();
