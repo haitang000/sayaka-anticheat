@@ -20,7 +20,7 @@
     <properties>
         <!-- 单一版本号来源（CI-friendly ${revision}）。发布改版本只需改这一处 +
              velocity 的 @Plugin(version) 注解常量（编译期常量无法用属性注入）。 -->
-        <revision>2.1.0.8-beta.3</revision>
+        <revision>2.1.0.8-beta.4</revision>
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>

@@ -14,7 +14,7 @@ import java.util.UUID;
 
 /**
  * 消息出口：
- * 1. 给违规玩家的递进式警告（标题 + 聊天 + 音效）
+ * 1. 给违规玩家的递进式警告（聊天 + 音效）
  * 2. 给管理员的实时警报（anticheat.alerts 权限，可 /sac alerts 开关）
  * 3. 惩罚时的全服公告
  */
@@ -75,10 +75,6 @@ public class AlertManager {
 
         String keyBase = stage >= 2 ? "warn-2" : "warn-1";
         Map<String, String> ph = Map.of("check", type.display());
-        player.sendTitle(
-                plugin.getMessages().get(keyBase + "-title", ph),
-                plugin.getMessages().get(keyBase + "-subtitle", ph),
-                5, 50, 10);
         for (String line : plugin.getMessages().getList(keyBase + "-chat", ph)) {
             player.sendMessage(line);
         }
