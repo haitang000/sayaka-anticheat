@@ -398,14 +398,37 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage("  §e/sac update [check] §7- 安装更新并热重载（check 仅检查）");
     }
 
+    /**
+     * 补全某个子命令所需的权限。
+     *
+     * <p>onCommand 侧本来就有 denyIfNoPerm 门控，但补全过去完全不校验，于是任何能敲
+     * {@code /sac } 的玩家都能看到管理子命令列表、在线玩家名单，以及
+     * {@code /sac whitelist remove <TAB>} 列出的**整份反作弊白名单**——
+     * 也就是哪些账号会被反作弊忽略，对作弊者是现成情报。
+     */
+    private static String permissionFor(String subCommand) {
+        return switch (subCommand.toLowerCase()) {
+            case "alerts" -> AlertManager.PERM_ALERTS;
+            case "whitelist" -> PERM_WHITELIST;
+            case "unban" -> PERM_UNBAN;
+            default -> PERM_ADMIN;
+        };
+    }
+
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
         if (args.length == 1) {
             for (String sub : List.of("status", "history", "punishment", "reset", "whitelist", "unban", "web", "alerts", "reload", "update")) {
-                if (sub.startsWith(args[0].toLowerCase())) out.add(sub);
+                if (sub.startsWith(args[0].toLowerCase()) && sender.hasPermission(permissionFor(sub))) {
+                    out.add(sub);
+                }
             }
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("update")) {
+            return out;
+        }
+        if (!sender.hasPermission(permissionFor(args[0]))) return out;
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("update")) {
             if ("check".startsWith(args[1].toLowerCase())) out.add("check");
         } else if (args.length == 2 && args[0].equalsIgnoreCase("whitelist")) {
             for (String action : List.of("add", "remove", "list")) {

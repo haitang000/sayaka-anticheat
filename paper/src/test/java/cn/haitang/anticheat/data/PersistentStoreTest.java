@@ -378,7 +378,7 @@ class PersistentStoreTest {
     }
 
     @Test
-    void failedAsyncWriteDoesNotSpinAndCanBeRetriedAfterAnotherMutation() {
+    void failedAsyncWriteBacksOffAndIsNotResetByFurtherMutations() throws Exception {
         AtomicInteger submissions = new AtomicInteger();
         PersistentStore store = new PersistentStore(dataFile, logger, task -> {
             submissions.incrementAndGet();
@@ -391,8 +391,16 @@ class PersistentStoreTest {
         assertEquals(1, submissions.get());
         assertTrue(store.isDirty());
 
-        store.addHistory(UUID.randomUUID(), "new evidence resets retry delay");
+        // 新的改动不得清除退避。否则线上每隔几毫秒就有一次改动，退避永远不生效，
+        // 磁盘满/只读时插件会每个保存周期都重做整份 YAML 序列化并刷一条警告。
+        store.addHistory(UUID.randomUUID(), "further evidence must not clear the backoff");
         store.saveAsync();
-        assertEquals(2, submissions.get());
+        assertEquals(1, submissions.get(), "退避期内不应重复提交");
+        assertTrue(store.isDirty());
+
+        // 退避到期后必须自行恢复重试，不能把保存永久卡死。
+        Thread.sleep(1_300L);
+        store.saveAsync();
+        assertEquals(2, submissions.get(), "退避到期后应重新尝试保存");
     }
 }

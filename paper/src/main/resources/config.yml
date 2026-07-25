@@ -107,10 +107,13 @@ punishment:
   announce: true
   # 惩罚时额外执行的控制台命令，占位符: %player% %check% %hours% %punishment-id%
   commands:
+    # 可用占位符：%player% %uuid% %check% %hours% %punishment-id%
+    # 玩家名含空格等字符时（离线模式 / 代理转发 / 基岩玩家）会被拼进控制台命令的参数位，
+    # 因此这类名字会跳过钩子并记一条警告；需要覆盖全部玩家时请改用 %uuid%。
     on-kick: []
     #  例: - "eco take %player% 100"
     on-tempban: []
-    #  例: - "lp user %player% parent add suspect"
+    #  例: - "lp user %uuid% parent add suspect"
 
 # ---------------- 各项检测 ----------------
 checks:
