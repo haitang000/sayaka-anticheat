@@ -405,7 +405,7 @@ public final class PacketTimeline {
         private float yaw;
         private float pitch;
         private long lastSwingSequence = -1L;
-        private long packetSequence;
+        private final PacketSequencer sequencer = new PacketSequencer();
         private final PacketTimerClock timerClock = new PacketTimerClock();
         private final BlinkTracker blinkTracker = new BlinkTracker(
                 blinkMinPauseMs, blinkMaxPauseMs, blinkBurstWindowMs,
@@ -416,7 +416,7 @@ public final class PacketTimeline {
         private int confirmedServerTick = -1;
 
         synchronized long nextSequence() {
-            return ++packetSequence;
+            return sequencer.next();
         }
 
         synchronized TimerEvidence movement(long seq, long now,
@@ -533,7 +533,9 @@ public final class PacketTimeline {
         synchronized void impulse(long now, Vector3d velocity) {
             impulses.addLast(new Impulse(now, velocity.x, velocity.y, velocity.z));
             while (impulses.size() > 8) impulses.removeFirst();
-            addLocked(++packetSequence, now, SampleType.VELOCITY);
+            // 服务端下发的包不推进客户端包序，只标记该冲量落在客户端第几个包之后。
+            // 理由见 PacketSequencer 的类注释。
+            addLocked(sequencer.current(), now, SampleType.VELOCITY);
         }
 
         synchronized boolean wasImpulseSent(long armedAtNanos, Vector expected) {
