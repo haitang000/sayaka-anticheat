@@ -158,6 +158,9 @@ public class VelocityCheck extends Check {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
                 if (dx == 0 && dz == 0) continue;
+                // 未加载：按贴墙处理（该判定用于豁免击退，宽松方向是 true），
+                // 同时避免在主线程上强制同步加载区块
+                if (!MoveUtil.isChunkLoaded(world, bx + dx, bz + dz)) return true;
                 for (int dy = 0; dy <= 1; dy++) {
                     if (world.getBlockAt(bx + dx, by + dy, bz + dz).getType().isSolid()) {
                         return true;

@@ -30,9 +30,7 @@ jobs:
           cache: maven
 
       - name: Build and verify
-        run: |
-          chmod +x mvnw
-          ./mvnw --batch-mode --no-transfer-progress clean verify
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
 
       - name: Verify release artifacts
         shell: bash

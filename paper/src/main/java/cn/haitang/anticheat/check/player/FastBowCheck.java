@@ -49,6 +49,11 @@ public class FastBowCheck extends Check {
                 || startedAt == 0 || event.getForce() < cfgD("minimum-force", 0.95)) {
             return;
         }
+        // 卡顿时积压的包会被一次性排空，蓄力时间差趋近 0，合法玩家会被判"秒满弓"
+        if (serverLagging()) {
+            data.resetBuffer(type());
+            return;
+        }
 
         long elapsed = System.currentTimeMillis() - startedAt;
         long minimum = cfgI("full-charge-min-ms", 850);

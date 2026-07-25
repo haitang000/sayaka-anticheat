@@ -99,8 +99,8 @@ public class PunishmentExecutor implements Listener {
                 if (!screen.contains(punishment.id())) screen += "\n\n§8处罚 ID: §f" + punishment.id();
                 player.kickPlayer(screen);
                 plugin.getAlertManager().announce("broadcast-ban", ph);
-                runHookCommands("punishment.commands.on-tempban", player.getName(), type,
-                        punishment.hours(), punishment.id());
+                runHookCommands("punishment.commands.on-tempban", player.getName(),
+                        player.getUniqueId(), type, punishment.hours(), punishment.id());
             }
             if (data != null) commitNetwork(data);
             plugin.getLogger().info("已建立群组临时封禁: " + punishment.playerName()
@@ -119,7 +119,8 @@ public class PunishmentExecutor implements Listener {
         player.kickPlayer(plugin.getMessages().get("kick-screen", ph));
         if (data != null) commitNetwork(data);
         plugin.getAlertManager().announce("broadcast-kick", ph);
-        runHookCommands("punishment.commands.on-kick", player.getName(), type, 0, "");
+        runHookCommands("punishment.commands.on-kick", player.getName(),
+                player.getUniqueId(), type, 0, "");
     }
 
     private void fallbackNetworkKick(UUID playerId, CheckType type, double vl, int strikesToTempban) {
@@ -189,7 +190,8 @@ public class PunishmentExecutor implements Listener {
                 String.format("[踢出] %s VL %.1f (strike %d/%d)", type.display(), vl, strikes, maxStrikes));
         commit(data);
         plugin.getAlertManager().announce("broadcast-kick", ph);
-        runHookCommands("punishment.commands.on-kick", player.getName(), type, 0, "");
+        runHookCommands("punishment.commands.on-kick", player.getName(),
+                player.getUniqueId(), type, 0, "");
         plugin.getLogger().info(String.format("已踢出 %s：%s VL %.1f（strike %d/%d）",
                 player.getName(), type.id(), vl, strikes, maxStrikes));
     }
@@ -254,7 +256,8 @@ public class PunishmentExecutor implements Listener {
                         type.display(), hours, banCount + 1, punishmentId));
         commit(data);
         plugin.getAlertManager().announce("broadcast-ban", ph);
-        runHookCommands("punishment.commands.on-tempban", player.getName(), type, hours, punishmentId);
+        runHookCommands("punishment.commands.on-tempban", player.getName(),
+                player.getUniqueId(), type, hours, punishmentId);
         try {
             player.kickPlayer(screen);
         } catch (RuntimeException error) {
@@ -272,13 +275,42 @@ public class PunishmentExecutor implements Listener {
                 player.getName(), type.id(), vl, hours, banCount + 1, punishmentId));
     }
 
-    private void runHookCommands(String configPath, String playerName, CheckType type, int hours,
-                                 String punishmentId) {
-        for (String cmd : plugin.config().getStringList(configPath)) {
-            String parsed = cmd.replace("%player%", playerName)
-                    .replace("%check%", type.id())
-                    .replace("%hours%", String.valueOf(hours))
-                    .replace("%punishment-id%", punishmentId);
+    /**
+     * 玩家名进入控制台命令前的白名单。
+     *
+     * <p>{@code dispatchCommand} 不解释 {@code ;} / {@code &&}，所以无法串起另一条命令，
+     * 但**空格可以注入参数**。正版在线模式玩家名限定 {@code [A-Za-z0-9_]{3,16}}，
+     * 而离线模式、代理转发和 Geyser/基岩玩家名常含 {@code .} 甚至空格；
+     * 配了 {@code lp user %player% parent add suspect} 时，名为
+     * {@code x parent set admin x} 的玩家就会把自己提权。
+     */
+    private static final java.util.regex.Pattern SAFE_NAME =
+            java.util.regex.Pattern.compile("[A-Za-z0-9_.]{1,16}");
+
+    static boolean isSafeHookName(String playerName) {
+        return playerName != null && SAFE_NAME.matcher(playerName).matches();
+    }
+
+    static String buildHookCommand(String template, String playerName, UUID playerId,
+                                   CheckType type, int hours, String punishmentId) {
+        return template.replace("%player%", playerName)
+                .replace("%uuid%", playerId == null ? "" : playerId.toString())
+                .replace("%check%", type.id())
+                .replace("%hours%", String.valueOf(hours))
+                .replace("%punishment-id%", punishmentId);
+    }
+
+    private void runHookCommands(String configPath, String playerName, UUID playerId,
+                                 CheckType type, int hours, String punishmentId) {
+        List<String> templates = plugin.config().getStringList(configPath);
+        if (templates.isEmpty()) return;
+        if (!isSafeHookName(playerName)) {
+            plugin.getLogger().warning("跳过 " + configPath + " 的钩子命令：玩家名含不安全字符，"
+                    + "无法安全拼进控制台命令（可改用 %uuid% 占位符）: " + playerName);
+            return;
+        }
+        for (String cmd : templates) {
+            String parsed = buildHookCommand(cmd, playerName, playerId, type, hours, punishmentId);
             Bukkit.getScheduler().runTask(plugin, () ->
                     Bukkit.dispatchCommand(Bukkit.getConsoleSender(), parsed));
         }

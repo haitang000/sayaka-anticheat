@@ -8,8 +8,10 @@ import java.util.regex.Pattern;
 
 final class AntiAdsDetector {
 
+    // 邀请码前的斜杠必须存在：写成 `/?` 会让 "discord.gghelp" 这类普通聊天也匹配，
+    // 而 group(1) 里没有斜杠，下面按斜杠切主机名时就会 substring(0, -1) 抛异常。
     private static final Pattern DISCORD_INVITE = Pattern.compile(
-            "(?<![a-z0-9.-])((?:discord(?:app)?\\.com/invite|discord\\.gg)/?[a-z0-9-]+)");
+            "(?<![a-z0-9.-])((?:discord(?:app)?\\.com/invite|discord\\.gg)/[a-z0-9-]+)");
     private static final Pattern IPV4 = Pattern.compile(
             "(?<![0-9.])((?:[0-9]{1,3}\\.){3}[0-9]{1,3})(?::([0-9]{2,5}))?(?![0-9.])");
     private static final Pattern DOMAIN = Pattern.compile(
@@ -25,7 +27,8 @@ final class AntiAdsDetector {
         Matcher invite = DISCORD_INVITE.matcher(message);
         while (invite.find()) {
             String value = invite.group(1);
-            String host = value.substring(0, value.indexOf('/'));
+            int slash = value.indexOf('/');
+            String host = slash < 0 ? value : value.substring(0, slash);
             if (!isAllowed(host, allowedHosts)) return new Match("Discord 邀请", value);
         }
 

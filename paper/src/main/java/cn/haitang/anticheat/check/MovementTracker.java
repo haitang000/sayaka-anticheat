@@ -98,12 +98,16 @@ public class MovementTracker implements Listener {
         }
 
         // ---- 地表材质宽限采样 ----
-        Material below = to.getWorld().getBlockAt(to.getBlockX(),
-                (int) Math.floor(to.getY() - 0.3), to.getBlockZ()).getType();
-        String belowName = below.name();
-        if (belowName.endsWith("ICE")) data.touchIce();
-        if (below == Material.SOUL_SAND || below == Material.SOUL_SOIL) data.touchSoulSand();
-        if (below == Material.SLIME_BLOCK || Tag.BEDS.isTagged(below)) data.touchBounce();
+        // 区块未加载时跳过采样：这里跑在每个移动包上，强制同步加载会卡住主线程。
+        // 少采一次只是少给一次宽限，不会造成误判。
+        if (MoveUtil.isChunkLoaded(to.getWorld(), to.getBlockX(), to.getBlockZ())) {
+            Material below = to.getWorld().getBlockAt(to.getBlockX(),
+                    (int) Math.floor(to.getY() - 0.3), to.getBlockZ()).getType();
+            String belowName = below.name();
+            if (belowName.endsWith("ICE")) data.touchIce();
+            if (below == Material.SOUL_SAND || below == Material.SOUL_SOIL) data.touchSoulSand();
+            if (below == Material.SLIME_BLOCK || Tag.BEDS.isTagged(below)) data.touchBounce();
+        }
 
         if (MoveUtil.touchingLiquid(player)) data.touchLiquid();
         if (MoveUtil.isClimbing(player)) data.touchClimb();

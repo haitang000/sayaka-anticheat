@@ -67,6 +67,12 @@ public class AutoTotemCheck extends Check {
         PlayerData data = data(player);
         long popAt = data.getLastTotemPopAt();
         if (popAt == 0) return;
+        // 卡顿时图腾破碎与换手会在同一毫秒内被处理，反应时间趋近 0
+        if (serverLagging()) {
+            data.resetBuffer(type());
+            data.clearLastTotemPopAt();
+            return;
+        }
         long elapsed = System.currentTimeMillis() - popAt;
         long minReact = cfgI("min-react-ms", 75);
 

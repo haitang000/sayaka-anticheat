@@ -8,6 +8,7 @@ import com.github.retrooper.packetevents.event.PacketListenerCommon;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
 import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import com.github.retrooper.packetevents.event.PacketSendEvent;
+import com.github.retrooper.packetevents.event.UserDisconnectEvent;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
 import com.github.retrooper.packetevents.protocol.player.DiggingAction;
@@ -53,14 +54,56 @@ public final class PacketTimeline {
     public record BlinkEvidence(int cycles, long pauseMillis, int burstPackets) { }
     private record TimerSignal(UUID playerId, TimerEvidence evidence) { }
     private record BlinkSignal(UUID playerId, BlinkEvidence evidence) { }
-    private record AttackPacket(long sequence, long nanos, int entityId,
-                                double x, double y, double z, float yaw, float pitch,
-                                long precedingSwingSequence, int confirmedServerTick,
-                                boolean claimed) {
-        AttackPacket claimedCopy() {
-            return new AttackPacket(sequence, nanos, entityId, x, y, z, yaw, pitch,
-                    precedingSwingSequence, confirmedServerTick, true);
+    /**
+     * 一个攻击包。{@code claimed} 必须可就地翻转。
+     *
+     * <p>过去它是 record，认领时用 {@code remove} + {@code addLast(claimedCopy())} 表示状态变化，
+     * 这会把已认领的条目挪到队尾，破坏 deque 的「旧→新」顺序——而
+     * {@link Timeline#claimAttack} 的反向扫描正依赖该顺序取最近一次攻击，
+     * 队列超限时的 {@code removeFirst()} 也会因此淘汰掉较新的未认领攻击。
+     */
+    private static final class AttackPacket {
+        private final long sequence;
+        private final long nanos;
+        private final int entityId;
+        private final double x;
+        private final double y;
+        private final double z;
+        private final float yaw;
+        private final float pitch;
+        private final long precedingSwingSequence;
+        private final int confirmedServerTick;
+        private boolean claimed;
+
+        AttackPacket(long sequence, long nanos, int entityId,
+                     double x, double y, double z, float yaw, float pitch,
+                     long precedingSwingSequence, int confirmedServerTick, boolean claimed) {
+            this.sequence = sequence;
+            this.nanos = nanos;
+            this.entityId = entityId;
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.yaw = yaw;
+            this.pitch = pitch;
+            this.precedingSwingSequence = precedingSwingSequence;
+            this.confirmedServerTick = confirmedServerTick;
+            this.claimed = claimed;
         }
+
+        long sequence() { return sequence; }
+        long nanos() { return nanos; }
+        int entityId() { return entityId; }
+        double x() { return x; }
+        double y() { return y; }
+        double z() { return z; }
+        float yaw() { return yaw; }
+        float pitch() { return pitch; }
+        long precedingSwingSequence() { return precedingSwingSequence; }
+        int confirmedServerTick() { return confirmedServerTick; }
+        boolean claimed() { return claimed; }
+
+        void claim() { this.claimed = true; }
     }
     private record Impulse(long nanos, double x, double y, double z) { }
     private record Transaction(long sentNanos, int serverTick) { }
@@ -278,6 +321,19 @@ public final class PacketTimeline {
             super(PacketListenerPriority.NORMAL);
         }
 
+        /**
+         * 唯一对**所有**连接状态都会触发的清理点。
+         *
+         * <p>{@code ConnectionListener.onQuit} 只覆盖真正进服过的玩家；
+         * 在 LOGIN/CONFIGURATION 阶段断开、或被 {@code PlayerLoginEvent} 拒绝的连接
+         * 不会有 {@code PlayerQuitEvent}，其 Timeline 会永久驻留。
+         */
+        @Override
+        public void onUserDisconnect(UserDisconnectEvent event) {
+            UUID playerId = event.getUser().getUUID();
+            if (playerId != null) remove(playerId);
+        }
+
         @Override
         public void onPacketReceive(PacketReceiveEvent event) {
             UUID playerId = event.getUser().getUUID();
@@ -369,7 +425,13 @@ public final class PacketTimeline {
             if (playerId == null) return;
             PacketTypeCommon type = event.getPacketType();
             long now = System.nanoTime();
-            Timeline timeline = timeline(playerId);
+            // 发送路径只更新已有状态，绝不 computeIfAbsent 新建：
+            // 1) PlayerQuitEvent 先于断线/踢出包下发，之后每个出站包都会为一个再也不会被
+            //    清理的 UUID 重建 Timeline；
+            // 2) LOGIN/CONFIGURATION 阶段 UUID 已非 null，但这些连接若未进服就断开，
+            //    永远不会触发 PlayerQuitEvent，其条目将永久驻留——机器人反复连断即可 OOM。
+            Timeline timeline = timelines.get(playerId);
+            if (timeline == null) return;
             if (type == PacketType.Play.Server.ENTITY_VELOCITY) {
                 WrapperPlayServerEntityVelocity velocity = new WrapperPlayServerEntityVelocity(event);
                 if (velocity.getEntityId() == event.getUser().getEntityId()) {
@@ -405,7 +467,7 @@ public final class PacketTimeline {
         private float yaw;
         private float pitch;
         private long lastSwingSequence = -1L;
-        private long packetSequence;
+        private final PacketSequencer sequencer = new PacketSequencer();
         private final PacketTimerClock timerClock = new PacketTimerClock();
         private final BlinkTracker blinkTracker = new BlinkTracker(
                 blinkMinPauseMs, blinkMaxPauseMs, blinkBurstWindowMs,
@@ -416,7 +478,7 @@ public final class PacketTimeline {
         private int confirmedServerTick = -1;
 
         synchronized long nextSequence() {
-            return ++packetSequence;
+            return sequencer.next();
         }
 
         synchronized TimerEvidence movement(long seq, long now,
@@ -507,8 +569,8 @@ public final class PacketTimeline {
                 AttackPacket attack = copy.get(i);
                 if (attack.claimed() || attack.entityId() != entityId
                         || attack.nanos() < notBeforeNanos) continue;
-                attacks.remove(attack);
-                attacks.addLast(attack.claimedCopy());
+                // 就地翻转，不动 deque 顺序：反向扫描与超限淘汰都依赖「旧→新」不变式
+                attack.claim();
                 return new CombatAttackContext.PacketAttack(attack.sequence(), attack.nanos(),
                         attack.entityId(), attack.x(), attack.y(), attack.z(), attack.yaw(),
                         attack.pitch(), attack.precedingSwingSequence(),
@@ -533,7 +595,9 @@ public final class PacketTimeline {
         synchronized void impulse(long now, Vector3d velocity) {
             impulses.addLast(new Impulse(now, velocity.x, velocity.y, velocity.z));
             while (impulses.size() > 8) impulses.removeFirst();
-            addLocked(++packetSequence, now, SampleType.VELOCITY);
+            // 服务端下发的包不推进客户端包序，只标记该冲量落在客户端第几个包之后。
+            // 理由见 PacketSequencer 的类注释。
+            addLocked(sequencer.current(), now, SampleType.VELOCITY);
         }
 
         synchronized boolean wasImpulseSent(long armedAtNanos, Vector expected) {

@@ -177,7 +177,14 @@ final class DashboardServer {
         dashboard.register();
         server.start();
         logger.info("Sayaka 统一面板已启动: {}", dashboard.displayUrl());
-        if (generated) logger.warn("未设置 SAYAKA_ADMIN_TOKEN，本次临时管理令牌: {}", token);
+        if (generated) {
+            // 绝不要把令牌本身写进日志：config.toml 默认 admin-token = "${SAYAKA_ADMIN_TOKEN}"，
+            // 未设置环境变量时返回空串，所以默认部署必然走到这里。日志会轮转上盘、
+            // 被日志聚合收走、被服主贴到论坛求助——等于公开可用的管理凭据。
+            logger.warn("未设置 SAYAKA_ADMIN_TOKEN，已生成一次性临时管理令牌（不写入日志）。"
+                    + "请在任一 Paper 后端执行 /sac web 获取一次性登录链接，"
+                    + "或设置 SAYAKA_ADMIN_TOKEN 后重启。");
+        }
         return dashboard;
     }
 

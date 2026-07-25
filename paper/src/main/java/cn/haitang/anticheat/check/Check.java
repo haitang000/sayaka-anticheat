@@ -74,6 +74,24 @@ public abstract class Check implements Listener {
         return System.currentTimeMillis() - data.getJoinAt() < graceMs;
     }
 
+    /**
+     * 服务端是否卡到不能再信任墙钟时间差。
+     *
+     * <p>大量检测拿 {@code System.currentTimeMillis()} 的差值去比对由数据包驱动的事件
+     * （拉弓、用物品、挖掘、放置、容器操作、图腾换手）。服务端一旦停顿
+     * （GC、同步区块加载、{@code /reload}），积压的客户端包会在同一毫秒内被一次性排空，
+     * 起止事件的时间差趋近于 0，合法玩家就会被判成"快得不可能"。
+     *
+     * <p>阈值优先取本检测的 {@code min-tps}，未配置时回落到 {@code settings.min-tps}。
+     * 配 0 或负数表示关闭该门控。
+     */
+    protected boolean serverLagging() {
+        double minTps = cfgD("min-tps", plugin.config().getDouble("settings.min-tps", 18.0));
+        if (minTps <= 0) return false;
+        double[] tps = plugin.getServer().getTPS();
+        return tps.length > 0 && tps[0] < minTps;
+    }
+
     protected PlayerData data(Player player) {
         return plugin.getDataManager().get(player);
     }

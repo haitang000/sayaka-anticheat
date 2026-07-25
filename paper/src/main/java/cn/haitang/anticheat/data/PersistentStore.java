@@ -570,8 +570,10 @@ public class PersistentStore {
     }
 
     private void markDirty() {
+        // 不要在这里清 nextRetryAt：那会抹掉 write() 失败时算出的指数退避。
+        // 线上几毫秒内必然有下一次改动，退避会因此永远不生效，
+        // 磁盘满或只读时插件就会每个保存周期都重做整份 YAML 序列化 + 写入并刷警告。
         revision++;
-        nextRetryAt = 0L;
     }
 
     boolean isDirty() {

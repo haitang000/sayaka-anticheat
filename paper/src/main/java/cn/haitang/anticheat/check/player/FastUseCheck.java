@@ -52,6 +52,12 @@ public class FastUseCheck extends Check {
             data.clearItemUse();
             return;
         }
+        // 卡顿时积压的包会被一次性排空，起止时间差趋近 0，合法玩家会被判"用得太快"
+        if (serverLagging()) {
+            data.clearItemUse();
+            data.resetBuffer(type());
+            return;
+        }
 
         long elapsed = System.currentTimeMillis() - startedAt;
         long minimum = minimumUseMs(type);
