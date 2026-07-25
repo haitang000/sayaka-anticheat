@@ -44,6 +44,12 @@ settings:
   exempt-ops: false
   # 玩家进服后的宽限秒数（避免登录瞬移/区块加载误判）
   join-grace-seconds: 5
+  # TPS 低于此值时，依赖墙钟时间差的检测（FastUse/FastBow/FastBreak/AutoTotem/
+  # ChestStealer/Scaffold 等）暂停判定并清空各自的时间窗口。
+  # 服务端停顿时积压的客户端包会在同一毫秒内被一次性排空，起止时间差趋近 0，
+  # 合法玩家会被判成"快得不可能"。设为 0 关闭该门控；
+  # 个别检测可用自身的 checks.<检测>.min-tps 覆盖。
+  min-tps: 18.0
   # normal = 与 Java 玩家相同；conservative = 只警报不处罚；exempt = 完全豁免
   bedrock-profile: conservative
   packet-analysis:

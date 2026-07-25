@@ -36,6 +36,14 @@ public class ScaffoldCheck extends Check {
         if (isExempt(player)) return;
         if (player.isFlying() || player.getAllowFlight()) return;
         PlayerData data = data(player);
+        // 卡顿时积压的放置包会在同一毫秒内被排空，放置频率与垫塔节奏都会虚高；
+        // 位置同样不可信，故整条路径都跳过并清掉时间窗口。
+        if (serverLagging()) {
+            data.getPlaceTimes().clear();
+            data.getTowerTimes().clear();
+            data.resetBuffer(type());
+            return;
+        }
         long now = System.currentTimeMillis();
         Block block = event.getBlockPlaced();
         Location loc = player.getLocation();

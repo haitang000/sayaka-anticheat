@@ -54,6 +54,13 @@ public class ChestStealerCheck extends Check {
         ItemStack current = event.getCurrentItem();
         if (current == null || current.isEmpty()) return;
 
+        // 卡顿时积压的容器操作会在同一毫秒内被排空，看起来就像"一秒取空箱子"
+        if (serverLagging()) {
+            data.getContainerActionTimes().clear();
+            data.resetBuffer(type());
+            return;
+        }
+
         long now = System.currentTimeMillis();
         var actions = data.getContainerActionTimes();
         actions.addLast(now);

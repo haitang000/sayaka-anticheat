@@ -59,6 +59,15 @@ public class FastBreakCheck extends Check {
         PlayerData data = data(player);
         Block block = event.getBlock();
 
+        // 卡顿时挖掘起止包会被一次性排空，耗时趋近 0；固定的 2 tick 余量扛不住秒级停顿。
+        // 同时清掉挖掘上下文与 Nuker 计数，避免停顿前后的事件被拼成一次"瞬破"。
+        if (serverLagging()) {
+            data.clearDig();
+            data.getNoDigBreaks().clear();
+            data.setLastLegitBreakTick(org.bukkit.Bukkit.getCurrentTick());
+            return;
+        }
+
         String digKey = data.getDigKey();
         if (digKey != null && digKey.equals(key(block))) {
             long elapsedMs = System.currentTimeMillis() - data.getDigStartAt();
