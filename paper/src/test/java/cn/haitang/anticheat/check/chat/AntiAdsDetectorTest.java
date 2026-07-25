@@ -22,6 +22,20 @@ class AntiAdsDetectorTest {
     }
 
     @Test
+    void discordLikeWordsWithoutAnInviteSlashDoNotCrash() {
+        // "discord.gg" 后面不带斜杠的普通聊天曾让 substring(0, indexOf('/')) 抛
+        // StringIndexOutOfBoundsException，异常会穿出异步聊天事件处理链。
+        assertNull(detector.find("join discord.gghelp now", List.of(), TLDS));
+        assertNull(detector.find("discord.ggg", List.of(), TLDS));
+        assertNull(detector.find("聊聊 discordapp.community 吧", List.of(), TLDS));
+
+        // 真正的邀请链接仍然要被识别
+        assertEquals("Discord 邀请", detector.find("discord.gg/AbC123", List.of(), TLDS).kind());
+        assertEquals("Discord 邀请",
+                detector.find("discordapp.com/invite/xyz789", List.of(), TLDS).kind());
+    }
+
+    @Test
     void detectsCommonDotObfuscationAndFullWidthText() {
         AntiAdsDetector.Match bracketed = detector.find("play[dot]bad[dot]com", List.of(), TLDS);
         AntiAdsDetector.Match spaced = detector.find("play 点 bad 点 cn", List.of(), TLDS);
