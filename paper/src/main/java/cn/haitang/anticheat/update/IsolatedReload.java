@@ -16,7 +16,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.Iterator;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -52,15 +52,33 @@ public final class IsolatedReload {
         Path target = Path.of(targetJar);
         Path backup = Path.of(backupJar);
         PluginManager pluginManager = Bukkit.getPluginManager();
-        boolean unloaded = false;
+        Plugin previous = pluginManager.getPlugin(pluginName);
+        // 三级进度标记决定失败时如何把服务端恢复到可用状态：只禁用过 -> 重新启用同一实例；
+        // 已移出注册表 -> 从旧 jar 重新加载；已换 jar -> 先还原文件再从旧 jar 重新加载。
+        boolean disabled = false;
+        boolean unregistered = false;
+        boolean jarSwapped = false;
         try {
-            Plugin plugin = pluginManager.getPlugin(pluginName);
-            if (plugin != null) {
-                unloadPlugin(pluginManager, plugin, pluginName);
-                unloaded = true;
+            if (previous != null) {
+                ClassLoader classLoader = previous.getClass().getClassLoader();
+                pluginManager.disablePlugin(previous);
+                disabled = true;
+
+                detach(pluginManager, previous, pluginName);
+                // 注册表必须确实腾空，否则新 jar 的 loadPlugin 会因重名失败；此时旧插件的类加载器
+                // 尚未关闭，仍可安全地重新启用旧实例，所以要在关闭加载器与换 jar 之前校验。
+                if (pluginManager.getPlugin(pluginName) != null) {
+                    throw new IllegalStateException("could not remove " + pluginName
+                            + " from the plugin registry");
+                }
+                unregistered = true;
+
+                closeClassLoader(classLoader);
+                System.gc();
             }
 
             replaceJar(current, staged, target, backup);
+            jarSwapped = true;
 
             Plugin loaded = loadAndEnable(pluginManager, target.toFile());
             if (loaded == null || !loaded.isEnabled()
@@ -74,31 +92,59 @@ public final class IsolatedReload {
             return null;
         } catch (Throwable error) {
             String message = describe(error);
-            Bukkit.getLogger().severe("[Sayaka AntiCheat] In-place hot reload failed: " + message);
-            if (unloaded) {
-                restoreJar(current, staged, target, backup);
-                try {
-                    loadAndEnable(pluginManager, current.toFile());
-                } catch (Throwable rollbackError) {
-                    Bukkit.getLogger().severe("[Sayaka AntiCheat] Failed to reload the previous "
-                            + pluginName + " jar: " + describe(rollbackError));
-                }
-            }
+            severe("In-place hot reload failed: " + message);
+            // 新版本可能已半加载：先把它彻底摘掉并释放 jar 句柄，Windows 上否则无法还原文件。
+            Plugin lingering = pluginManager.getPlugin(pluginName);
+            if (lingering != null && lingering != previous) discard(pluginManager, lingering, pluginName);
+            if (jarSwapped) restoreJar(current, staged, target, backup);
+            recover(pluginManager, previous, pluginName, current, disabled, unregistered);
             if (sender != null) sender.sendMessage(failedPrefix + message + failedSuffix);
             return message;
         }
     }
 
-    /** 复刻 PlugManX 的卸载流程：禁用、注销监听器/命令、移出插件注册表、关闭类加载器。 */
-    private static void unloadPlugin(PluginManager pluginManager, Plugin plugin, String pluginName) {
-        ClassLoader classLoader = plugin.getClass().getClassLoader();
+    /**
+     * 复刻 PlugManX 的解绑流程：注销监听器与命令，并移出插件注册表。各步骤彼此独立地容错——
+     * 单个服务端内部结构不合预期不应让整次重载半途而废（真正的成功判据是调用方随后的注册表校验）。
+     */
+    private static void detach(PluginManager pluginManager, Plugin plugin, String pluginName) {
+        quietly("unregister event listeners", () -> HandlerList.unregisterAll(plugin));
+        quietly("unregister commands", () -> unregisterCommands(pluginManager, plugin));
+        quietly("remove from plugin registries", () -> removeFromRegistries(pluginManager, plugin, pluginName));
+    }
 
-        pluginManager.disablePlugin(plugin);
-        HandlerList.unregisterAll(plugin);
-        unregisterCommands(pluginManager, plugin);
-        removeFromRegistries(pluginManager, plugin, pluginName);
+    /** 把一个半加载的插件实例彻底摘除（禁用 + 解绑 + 关闭加载器），用于失败回滚前的清场。 */
+    private static void discard(PluginManager pluginManager, Plugin plugin, String pluginName) {
+        ClassLoader classLoader = plugin.getClass().getClassLoader();
+        quietly("disable the half-loaded " + pluginName, () -> pluginManager.disablePlugin(plugin));
+        detach(pluginManager, plugin, pluginName);
         closeClassLoader(classLoader);
         System.gc();
+    }
+
+    /** 失败后尽力让旧版本重新跑起来：只被禁用过就直接启用，已摘除则从旧 jar 重新加载。 */
+    private static void recover(PluginManager pluginManager, Plugin previous, String pluginName,
+                                Path current, boolean disabled, boolean unregistered) {
+        if (!disabled) return;
+        try {
+            if (!unregistered && pluginManager.getPlugin(pluginName) == previous) {
+                pluginManager.enablePlugin(previous);
+            } else {
+                loadAndEnable(pluginManager, current.toFile());
+            }
+        } catch (Throwable rollbackError) {
+            severe("Failed to reload the previous "
+                    + pluginName + " jar: " + describe(rollbackError));
+        }
+    }
+
+    private static void quietly(String step, Runnable action) {
+        try {
+            action.run();
+        } catch (Throwable error) {
+            warn("Hot reload could not " + step + ": "
+                    + describe(error));
+        }
     }
 
     private static Plugin loadAndEnable(PluginManager pluginManager, java.io.File jar) throws Exception {
@@ -110,18 +156,114 @@ public final class IsolatedReload {
     }
 
     private static void unregisterCommands(PluginManager pluginManager, Plugin plugin) {
-        CommandMap commandMap = readField(pluginManager, "commandMap", CommandMap.class);
+        CommandMap commandMap = commandMap(pluginManager);
         if (commandMap == null) return;
         @SuppressWarnings("unchecked")
         Map<String, Command> known = readField(commandMap, "knownCommands", Map.class);
         if (known == null) return;
-        for (Iterator<Map.Entry<String, Command>> it = known.entrySet().iterator(); it.hasNext(); ) {
-            Command command = it.next().getValue();
-            if (command instanceof PluginCommand pluginCommand && pluginCommand.getPlugin() == plugin) {
+        List<String> stale = removeOwnedCommands(known, commandMap, plugin);
+        if (!stale.isEmpty()) {
+            warn("Hot reload could not drop stale command"
+                    + " mappings " + String.join(", ", stale)
+                    + "; they will keep pointing at the old plugin until the server restarts.");
+        }
+    }
+
+    /**
+     * 从命令表里摘掉属于 {@code plugin} 的所有条目，返回未能摘掉的标签。
+     *
+     * <p>现代 Paper 的 {@code SimpleCommandMap.knownCommands} 不再是 {@code HashMap}，而是一个由
+     * Brigadier 调度器支撑、经构造器注入的视图 Map：它实现了 {@code get/put/remove/clear}
+     * （Paper 自身就在用），但 {@code entrySet().iterator()} 未实现 {@code remove()}——直接在迭代器上
+     * 删除会命中 {@code Iterator} 的默认方法并抛出 {@code UnsupportedOperationException("remove")}。
+     * 因此这里先只读收集标签，再逐个调用 {@code remove(key)}，最后才让命令自身注销。
+     */
+    static List<String> removeOwnedCommands(Map<String, Command> known, CommandMap commandMap, Plugin plugin) {
+        List<String> labels = new ArrayList<>();
+        List<Command> owned = new ArrayList<>();
+        quietly("scan the command map", () -> {
+            for (Map.Entry<String, Command> entry : known.entrySet()) {
+                collect(known, plugin, entry.getKey(), labels, owned);
+            }
+        });
+        // 视图 Map 万一连遍历都不支持（或值不是 PluginCommand），再按 plugin.yml 声明的标签逐个探测；
+        // 两条路径都只删除归属校验通过的条目，不会误伤别的插件抢注的同名命令。
+        quietly("probe the declared command labels", () -> {
+            for (String declared : declaredLabels(plugin)) {
+                collect(known, plugin, declared, labels, owned);
+            }
+        });
+
+        List<String> stale = new ArrayList<>();
+        for (String label : labels) {
+            try {
+                known.remove(label);
+            } catch (RuntimeException ignored) {
+                // 视图 Map 也可能拒绝 remove；记为残留，由调用方告警
+            }
+            if (ownedBy(known.get(label), plugin)) stale.add(label);
+        }
+        for (Command command : owned) {
+            try {
                 command.unregister(commandMap);
-                it.remove();
+            } catch (RuntimeException ignored) {
+                // 注销只是让命令允许被重新注册，失败不影响新版本加载
             }
         }
+        return stale;
+    }
+
+    private static void collect(Map<String, Command> known, Plugin plugin, String label,
+                               List<String> labels, List<Command> owned) {
+        Command command = known.get(label);
+        if (!ownedBy(command, plugin)) return;
+        if (!labels.contains(label)) labels.add(label);
+        if (!containsSame(owned, command)) owned.add(command);
+    }
+
+    /** plugin.yml 声明的命令名与别名，连同 {@code 插件名:标签} 回退前缀形式。 */
+    private static List<String> declaredLabels(Plugin plugin) {
+        List<String> labels = new ArrayList<>();
+        String prefix = plugin.getDescription().getName().toLowerCase(java.util.Locale.ROOT) + ":";
+        for (Map.Entry<String, Map<String, Object>> entry : plugin.getDescription().getCommands().entrySet()) {
+            addLabel(labels, prefix, entry.getKey());
+            Object aliases = entry.getValue() == null ? null : entry.getValue().get("aliases");
+            if (aliases instanceof List<?> list) {
+                for (Object alias : list) addLabel(labels, prefix, String.valueOf(alias));
+            } else if (aliases instanceof String alias) {
+                addLabel(labels, prefix, alias);
+            }
+        }
+        return labels;
+    }
+
+    private static void addLabel(List<String> labels, String prefix, String name) {
+        String label = name.toLowerCase(java.util.Locale.ROOT).trim();
+        if (label.isEmpty()) return;
+        labels.add(label);
+        labels.add(prefix + label);
+    }
+
+    private static boolean ownedBy(Command command, Plugin plugin) {
+        return command instanceof PluginCommand pluginCommand && pluginCommand.getPlugin() == plugin;
+    }
+
+    private static boolean containsSame(List<Command> commands, Command command) {
+        for (Command existing : commands) {
+            if (existing == command) return true;
+        }
+        return false;
+    }
+
+    /** 优先使用 Paper API 暴露的命令表；纯 Spigot 或异常情况下回退到插件管理器的内部字段。 */
+    private static CommandMap commandMap(PluginManager pluginManager) {
+        try {
+            CommandMap fromApi = Bukkit.getServer().getCommandMap();
+            if (fromApi != null) return fromApi;
+        } catch (Throwable ignored) {
+            // 老服务端没有该 API，走反射回退
+        }
+        return readField(pluginManager, "commandMap", CommandMap.class);
     }
 
     /**
@@ -140,13 +282,18 @@ public final class IsolatedReload {
 
     private static void removeFrom(Object holder, Plugin plugin, String pluginName) {
         List<?> plugins = readField(holder, "plugins", List.class);
-        if (plugins != null) plugins.removeIf(entry -> entry == plugin);
+        // 两个注册表各自容错：其一是不可变/视图集合时，另一个仍应被清理干净。
+        if (plugins != null) {
+            quietly("drop the plugin list entry", () -> plugins.removeIf(entry -> entry == plugin));
+        }
 
         Map<?, ?> lookupNames = readField(holder, "lookupNames", Map.class);
         if (lookupNames != null) {
-            lookupNames.values().removeIf(entry -> entry == plugin);
-            lookupNames.remove(pluginName);
-            lookupNames.remove(pluginName.toLowerCase(java.util.Locale.ROOT));
+            quietly("drop the plugin name lookups", () -> {
+                lookupNames.values().removeIf(entry -> entry == plugin);
+                lookupNames.remove(pluginName);
+                lookupNames.remove(pluginName.toLowerCase(java.util.Locale.ROOT));
+            });
         }
     }
 
@@ -176,7 +323,7 @@ public final class IsolatedReload {
             if (Files.exists(target)) moveReplacing(target, staged);
             if (Files.exists(backup)) moveReplacing(backup, current);
         } catch (Exception error) {
-            Bukkit.getLogger().severe("[Sayaka AntiCheat] Failed to restore the previous plugin jar: "
+            severe("Failed to restore the previous plugin jar: "
                     + describe(error));
         }
     }
@@ -232,6 +379,23 @@ public final class IsolatedReload {
             closeable.close();
         } catch (Exception ignored) {
             // Windows 上偶发的句柄延迟释放不应中断重载
+        }
+    }
+
+    private static void severe(String message) {
+        log(java.util.logging.Level.SEVERE, message);
+    }
+
+    private static void warn(String message) {
+        log(java.util.logging.Level.WARNING, message);
+    }
+
+    /** 日志本身也可能失败（回滚阶段服务端状态未必完好），绝不能让它盖掉真正的错误。 */
+    private static void log(java.util.logging.Level level, String message) {
+        try {
+            Bukkit.getLogger().log(level, "[Sayaka AntiCheat] " + message);
+        } catch (Throwable ignored) {
+            // 无从记录时静默放弃
         }
     }
 

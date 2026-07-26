@@ -50,7 +50,7 @@ public final class PluginReloader {
     public static boolean isSupported() {
         try {
             PluginManager pluginManager = Bukkit.getPluginManager();
-            if (!hasField(pluginManager, "commandMap") || workerBytes() == null) return false;
+            if (!hasCommandMap(pluginManager) || workerBytes() == null) return false;
             // 现代 Paper 的 SimplePluginManager 只是门面，真正的注册表在 PaperPluginInstanceManager；
             // 此时必须能够到达该实例管理器，否则卸载会静默失败。纯 Spigot 无此门面，回退校验自身的
             // plugins 字段即可。
@@ -116,6 +116,16 @@ public final class PluginReloader {
         } catch (Exception error) {
             return null;
         }
+    }
+
+    /** 命令表可以来自 Paper API，也可以来自插件管理器内部字段；任一可用即可注销旧命令。 */
+    private static boolean hasCommandMap(PluginManager pluginManager) {
+        try {
+            if (Bukkit.getServer().getCommandMap() != null) return true;
+        } catch (Throwable ignored) {
+            // 老服务端没有该 API，回退检查内部字段
+        }
+        return hasField(pluginManager, "commandMap");
     }
 
     private static boolean reachablePaperInstanceManager(PluginManager pluginManager) {
