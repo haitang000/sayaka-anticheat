@@ -69,6 +69,11 @@ public abstract class Check implements Listener {
             if (disabledWorld.equalsIgnoreCase(worldName)) return true;
         }
         if (player.hasMetadata("NPC")) return true;
+        // 第三方通过 SayakaApi.registerExemptionChecker 注册的自定义豁免
+        for (java.util.function.Predicate<Player> checker
+                : plugin.getExemptionCheckers()) {
+            if (checker.test(player)) return true;
+        }
 
         long graceMs = plugin.config().getInt("settings.join-grace-seconds", 5) * 1000L;
         return System.currentTimeMillis() - data.getJoinAt() < graceMs;

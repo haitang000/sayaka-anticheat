@@ -24,6 +24,7 @@ public enum CheckType {
     NO_SWING("NoSwing", "无挥臂攻击", "no-swing", EnforcementMode.PUNISH),
     CRITICALS("Criticals", "虚假暴击", "criticals", EnforcementMode.MITIGATE),
     VELOCITY("Velocity", "拒绝击退", "velocity", EnforcementMode.PUNISH),
+    AUTO_BLOCK("AutoBlock", "自动格挡攻击", "auto-block", EnforcementMode.ALERT),
     AUTO_TOTEM("AutoTotem", "自动图腾", "auto-totem", EnforcementMode.ALERT),
     INVENTORY_MOVE("InventoryMove", "开容器移动", "inventory-move", EnforcementMode.ALERT),
     NO_SLOW("NoSlow", "使用物品移速异常", "no-slow", EnforcementMode.MITIGATE),
@@ -33,7 +34,8 @@ public enum CheckType {
     FAST_BREAK("FastBreak", "挖掘速度异常", "fast-break", EnforcementMode.MITIGATE),
     SCAFFOLD("Scaffold", "非法搭路", "scaffold", EnforcementMode.MITIGATE),
     ANTI_SPAM("AntiSpam", "聊天刷屏", "anti-spam", EnforcementMode.ALERT),
-    ANTI_ADS("AntiAds", "聊天广告", "anti-ads", EnforcementMode.ALERT);
+    ANTI_ADS("AntiAds", "聊天广告", "anti-ads", EnforcementMode.ALERT),
+    COMMAND_SPAM("CommandSpam", "命令刷屏", "command-spam", EnforcementMode.ALERT);
 
     private final String id;
     private final String display;

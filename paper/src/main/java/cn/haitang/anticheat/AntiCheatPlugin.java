@@ -1,12 +1,16 @@
 package cn.haitang.anticheat;
 
 import cn.haitang.anticheat.alert.AlertManager;
+import cn.haitang.anticheat.api.SayakaApi;
+import cn.haitang.anticheat.api.SayakaApiImpl;
 import cn.haitang.anticheat.check.Check;
 import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.check.chat.AntiAdsCheck;
 import cn.haitang.anticheat.check.chat.AntiSpamCheck;
 import cn.haitang.anticheat.check.chat.ChatExemptionCache;
+import cn.haitang.anticheat.check.chat.CommandSpamCheck;
 import cn.haitang.anticheat.check.combat.AimCheck;
+import cn.haitang.anticheat.check.combat.AutoBlockCheck;
 import cn.haitang.anticheat.check.combat.AutoClickerCheck;
 import cn.haitang.anticheat.check.combat.CriticalsCheck;
 import cn.haitang.anticheat.check.combat.CombatAttackContext;
@@ -62,6 +66,8 @@ import com.github.retrooper.packetevents.event.PacketListenerCommon;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Predicate;
 
 /**
  * Sayaka AntiCheat 主类。
@@ -70,10 +76,16 @@ import java.util.List;
  *   事件 → MovementTracker(状态) → 各 Check(检测) → ViolationManager(VL 累加)
  *        → AlertManager(警告/警报) / PunishmentExecutor(踢出/封禁)
  *        → PersistentStore(strike 与封禁档案持久化)
+ * 第三方插件通过 ServicesManager 的 {@link SayakaApi} 与 PlayerFlagEvent /
+ * PlayerPunishEvent 集成。
  */
 public final class AntiCheatPlugin extends JavaPlugin {
 
     public static final String WEB_LOGIN_CHANNEL = "sayaka:web";
+
+    private final List<Predicate<org.bukkit.entity.Player>> exemptionCheckers =
+            new CopyOnWriteArrayList<>();
+    private SayakaApiImpl api;
 
     private PlayerDataManager dataManager;
     private PersistentStore store;
@@ -161,6 +173,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
         checks.add(new NoSwingCheck(this));
         checks.add(new CriticalsCheck(this));
         checks.add(new VelocityCheck(this));
+        checks.add(new AutoBlockCheck(this));
         checks.add(new AutoTotemCheck(this));
         checks.add(new InventoryMoveCheck(this));
         checks.add(new NoSlowCheck(this));
@@ -171,6 +184,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
         checks.add(new ScaffoldCheck(this));
         checks.add(new AntiSpamCheck(this));
         checks.add(new AntiAdsCheck(this));
+        checks.add(new CommandSpamCheck(this));
 
         packetBridge = new PacketBridge(this, rotationCheck, badPacketsCheck, aimCheck);
         packetBridgeRegistration = PacketEvents.getAPI().getEventManager()
@@ -178,6 +192,9 @@ public final class AntiCheatPlugin extends JavaPlugin {
         packetBridge.setEngineRunning(true);
 
         PluginManager pm = getServer().getPluginManager();
+        api = new SayakaApiImpl(this);
+        getServer().getServicesManager().register(SayakaApi.class, api, this,
+                org.bukkit.plugin.ServicePriority.Normal);
         chatExemptions = new ChatExemptionCache(this);
         pm.registerEvents(chatExemptions, this);
         pm.registerEvents(combatAttackContext, this);
@@ -213,6 +230,10 @@ public final class AntiCheatPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         getServer().getMessenger().unregisterOutgoingPluginChannel(this, WEB_LOGIN_CHANNEL);
+        if (api != null) {
+            getServer().getServicesManager().unregister(SayakaApi.class, api);
+            api = null;
+        }
         if (presetSync != null) presetSync.stop();
         if (updateManager != null) updateManager.shutdown();
         if (saveTask != null) saveTask.cancel();
@@ -248,6 +269,20 @@ public final class AntiCheatPlugin extends JavaPlugin {
     public File getPluginJarFile() { return getFile(); }
 
     public boolean isNetworkMode() { return store instanceof NetworkPersistentStore; }
+
+    public boolean addExemptionChecker(Predicate<org.bukkit.entity.Player> checker) {
+        if (checker == null || exemptionCheckers.contains(checker)) return false;
+        return exemptionCheckers.add(checker);
+    }
+
+    public boolean removeExemptionChecker(Predicate<org.bukkit.entity.Player> checker) {
+        return exemptionCheckers.remove(checker);
+    }
+
+    /** 第三方注册的豁免判定器：任一返回 true 即完全豁免（主线程调用，按 tick 缓存） */
+    public List<Predicate<org.bukkit.entity.Player>> getExemptionCheckers() {
+        return exemptionCheckers;
+    }
 
     private PersistentStore createStore() {
         if (!runtimeConfig.getBoolean("network.enabled", false)) return new PersistentStore(this);

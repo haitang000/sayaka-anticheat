@@ -14,10 +14,11 @@
 | 类别 | 检测项 |
 |---|---|
 | 移动 | Speed、Sprint、Flight、Glide、Elytra、GroundSpoof、Timer、FastLadder、Step、Phase、LiquidWalk、Rotation |
-| 战斗 | Reach、KillAura、AutoClicker、NoSwing、Criticals、Velocity |
+| 战斗 | Reach、KillAura、AutoClicker、NoSwing、Criticals、Velocity、AutoBlock |
 | 玩家行为 | AutoTotem、InventoryMove、NoSlow、FastUse、FastBow、ChestStealer |
 | 世界交互 | FastBreak、Scaffold |
-| 聊天 | AntiSpam、AntiAds |
+| 聊天 | AntiSpam、AntiAds、CommandSpam |
+| 数据包 | BadPackets（非法坐标 / 自击包 / 物品 NBT 与数量校验） |
 
 内置误判防护覆盖鞘翅/攀爬/液体/击退/传送/进服宽限等常见场景，兼容技能插件位移、区域保护击退削弱等第三方行为。
 
@@ -61,6 +62,29 @@
 | `/sac update [check]` | 热更新插件（`check` 仅检查） | `anticheat.admin` |
 
 插件每 30 分钟检查一次 GitHub Release，支持免 PlugManX 热更新（失败自动回滚旧 JAR）。Velocity 端采用"宿主 + 可热替换内核"架构，同样支持免重启换载。`anticheat.bypass` 完全绕过检测（默认无人持有）。
+
+## 第三方插件 API
+
+`sayaka-anticheat-api` 模块只依赖 Paper API，供其他插件编译与运行时集成：
+
+```java
+// 1. 通过 ServicesManager 获取服务
+SayakaApi api = Bukkit.getServicesManager().load(SayakaApi.class);
+double vl = api.getVl(player, "KillAura");       // 查询单项 VL
+api.registerExemptionChecker(p -> p.hasPermission("vip.fly")); // 自定义豁免
+
+// 2. 监听违规与处罚事件（可取消）
+@EventHandler
+public void onFlag(PlayerFlagEvent event) {      // 取消 = 否决本次记录/警报/处罚
+    if (event.getCheckId().equals("KillAura")) event.setCancelled(true);
+}
+@EventHandler
+public void onPunish(PlayerPunishEvent event) {  // 取消 = 免除本次踢出/封禁
+    if (event.getPlayer().hasPermission("staff.immune")) event.setCancelled(true);
+}
+```
+
+接口能力：单项/综合 VL 查询、违规明细、strike 计数、白名单与豁免判定、`/sac reset` 等价的重置方法、已启用检测项列表。
 
 ## 扩展新检测
 

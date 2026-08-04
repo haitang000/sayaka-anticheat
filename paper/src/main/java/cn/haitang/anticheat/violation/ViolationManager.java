@@ -44,6 +44,13 @@ public class ViolationManager {
         PlayerData data = plugin.getDataManager().get(player);
         if (data.isPunishing()) return;
 
+        // 第三方 API：可在 VL 累加前否决本次违规（不记录、不警报、不处罚）
+        cn.haitang.anticheat.api.PlayerFlagEvent flagEvent =
+                new cn.haitang.anticheat.api.PlayerFlagEvent(player, type.id(), type.display(),
+                        data.getVl(type) + weight, weight, detail);
+        org.bukkit.Bukkit.getPluginManager().callEvent(flagEvent);
+        if (flagEvent.isCancelled()) return;
+
         double vl = data.addVl(type, weight);
         double totalVl = data.getTotalVl();
         data.addViolation(new PlayerData.ViolationRecord(

@@ -26,6 +26,11 @@
     <dependencies>
         <dependency>
             <groupId>cn.haitang</groupId>
+            <artifactId>sayaka-anticheat-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.haitang</groupId>
             <artifactId>sayaka-anticheat-shared</artifactId>
             <version>${project.version}</version>
         </dependency>

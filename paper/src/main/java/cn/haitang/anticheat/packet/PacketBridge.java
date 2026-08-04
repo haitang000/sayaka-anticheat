@@ -9,7 +9,11 @@ import com.github.retrooper.packetevents.event.PacketListenerAbstract;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
 import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
+import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.world.Location;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientCreativeInventoryAction;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerBlockPlacement;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerFlying;
 import org.bukkit.entity.Player;
 
@@ -58,14 +62,26 @@ public class PacketBridge extends PacketListenerAbstract {
     @Override
     public void onPacketReceive(PacketReceiveEvent event) {
         if (!enabled) return;
-        if (!WrapperPlayClientPlayerFlying.isFlying(event.getPacketType())) return;
         if (!(event.getPlayer() instanceof Player player)) return;
         // 尚未建档（join 事件还没处理）的连接直接忽略，不在 Netty 线程创建数据
         PlayerData data = plugin.getDataManager().getIfPresent(player.getUniqueId());
         if (data == null) return;
 
+        PacketTypeCommon type = event.getPacketType();
+        if (type == PacketType.Play.Client.CREATIVE_INVENTORY_ACTION) {
+            ItemStack item = new WrapperPlayClientCreativeInventoryAction(event).getItemStack();
+            badPacketsCheck.onItemPacket(event, player, item, "创造物品");
+            return;
+        }
+        if (type == PacketType.Play.Client.PLAYER_BLOCK_PLACEMENT) {
+            new WrapperPlayClientPlayerBlockPlacement(event).getItemStack()
+                    .ifPresent(item -> badPacketsCheck.onItemPacket(event, player, item, "放置物品"));
+            return;
+        }
+        if (!WrapperPlayClientPlayerFlying.isFlying(type)) return;
+
         // 纯 idle 包不含位置与视角，无需解析包体
-        if (event.getPacketType() == PacketType.Play.Client.PLAYER_FLYING) return;
+        if (type == PacketType.Play.Client.PLAYER_FLYING) return;
 
         WrapperPlayClientPlayerFlying wrapper = new WrapperPlayClientPlayerFlying(event);
         Location location = wrapper.getLocation();

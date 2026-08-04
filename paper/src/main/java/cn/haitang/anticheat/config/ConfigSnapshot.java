@@ -348,7 +348,12 @@ public final class ConfigSnapshot {
                 "checks.scaffold.buffer-to-flag",
                 "checks.anti-spam.flood-window-ms", "checks.anti-spam.max-messages",
                 "checks.anti-spam.duplicate-window-ms", "checks.anti-spam.max-duplicates",
-                "checks.anti-ads.flag-weight")) {
+                "checks.anti-ads.flag-weight",
+                "checks.auto-block.buffer-to-flag", "checks.auto-block.flag-weight",
+                "checks.command-spam.flood-window-ms", "checks.command-spam.max-commands",
+                "checks.command-spam.duplicate-window-ms", "checks.command-spam.max-duplicates",
+                "checks.bad-packets.max-nbt-depth", "checks.bad-packets.max-nbt-size",
+                "checks.bad-packets.max-stack-size")) {
             positive(config, errors, path);
         }
         return errors;

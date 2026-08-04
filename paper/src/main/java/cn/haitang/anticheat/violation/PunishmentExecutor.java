@@ -45,6 +45,14 @@ public class PunishmentExecutor implements Listener {
         if (plugin.getStore().isWhitelisted(player.getUniqueId())) return;
         PlayerData data = plugin.getDataManager().get(player);
         if (data.isPunishing()) return;
+
+        // 第三方 API：可在处罚落地前否决（玩家保留，VL 不清空）
+        cn.haitang.anticheat.api.PlayerPunishEvent punishEvent =
+                new cn.haitang.anticheat.api.PlayerPunishEvent(
+                        player, type.id(), type.display(), vl);
+        Bukkit.getPluginManager().callEvent(punishEvent);
+        if (punishEvent.isCancelled()) return;
+
         data.setPunishmentState(PlayerData.PunishmentState.PENDING);
         UUID playerId = player.getUniqueId();
         if (plugin.getStore() instanceof NetworkPersistentStore networkStore) {

@@ -336,11 +336,23 @@ checks:
 
   # 非法数据包（需要数据包引擎）：NaN/Infinity/远超世界边界的坐标
   # （崩服包/异常区块加载攻击），以及攻击自己实体 id 的自击包
-  # （原版射线不可能选中自己），均直接丢弃并按权重记 VL
+  # （原版射线不可能选中自己），均直接丢弃并按权重记 VL。
+  # 物品包（创造物品/放置物品）还会校验数量与 NBT：原版客户端发不出
+  # 超限数量、超过 512 层嵌套的 NBT 深度、或体积爆炸级的 NBT 炸弹，
+  # 命中即丢弃该包（如放置包被丢弃等于取消放置）
   bad-packets:
     enabled: true
     enforcement: punish
     flag-weight: 5.0
+    # 是否启用物品数据校验
+    check-items: true
+    # NBT 最大嵌套深度（原版读取上限即 512，合法客户端实际远低于此）
+    max-nbt-depth: 512
+    # NBT 体积估算上限（序列化文本量级；100 页成书约 10 万字符仍远低于此）
+    max-nbt-size: 262144
+    # 物品最大堆叠数（原版最高 64）
+    max-stack-size: 64
+    item-flag-weight: 5.0
 
   # 攻击距离（Reach）
   reach:
@@ -721,6 +733,22 @@ checks:
     cancel: true
     exclude-bedrock: true
 
+  # 自动格挡攻击（AutoBlock）：格挡状态下的挥臂/命中。
+  # 1.9+ 战斗机制下举盾（格挡）时左键不会产生任何挥臂或攻击包，必须先松开
+  # 右键才能攻击；格挡状态下出现战斗动作只可能来自同时按左右键的作弊客户端
+  # （攻击不被打断、伤害照常打出）
+  auto-block:
+    enabled: true
+    # 新检测默认先只警报；观察后可改 mitigate/punish
+    enforcement: alert
+    # 连续多少次格挡状态下的挥臂/命中才上报（吸收松手与点击同刻的竞态）
+    buffer-to-flag: 2.5
+    flag-weight: 2.0
+    # 证据成立且达到拦截 VL 时取消格挡状态下的命中
+    cancel-hits: true
+    # Geyser 转换后的基岩版格挡/攻击时序可能不同，默认不检测基岩版玩家
+    exclude-bedrock: true
+
   # 快速挖掘（FastBreak/Nuker）
   fast-break:
     enabled: true
@@ -815,6 +843,26 @@ checks:
       - pro
       - link
 
+  # 命令刷屏（CommandSpam）：短时间高频执行命令，或窗口内重复刷同一命令。
+  # 聊天不受进服宽限、创造模式影响；可用 anticheat.commandspam.bypass 单独豁免。
+  # 若服内使用 /msg /r 等高频聊天型命令插件，请按需调大窗口与上限
+  command-spam:
+    enabled: true
+    enforcement: alert
+    # 该窗口内最多允许执行的命令数；默认第 7 条开始拦截
+    flood-window-ms: 2000
+    max-commands: 6
+    # 归一化后窗口内第几次重复开始拦截
+    duplicate-window-ms: 15000
+    max-duplicates: 3
+    # 太短的命令（如 /ok）不参与重复检测，但仍参与频率检测
+    min-duplicate-length: 5
+    # 限制 VL/警报频率；冷却期间仍会拦截命令
+    flag-cooldown-ms: 1000
+    flood-weight: 1.0
+    duplicate-weight: 1.5
+    cancel: true
+
 # ---------------- 文本 ----------------
 # 颜色代码用 & ，占位符视上下文可用:
 # %player% %check% %vl% %ping% %detail% %strikes% %max-strikes% %hours% %time% %punishment-id%
@@ -890,3 +938,4 @@ messages:
   alerts-off: "&7已关闭违规警报。"
   anti-spam-blocked: "&c消息发送过快或内容重复，请稍后再试。"
   anti-ads-blocked: "&c消息包含未获准的服务器地址、域名或邀请链接。"
+  command-spam-blocked: "&c命令执行过快或重复，请稍后再试。"

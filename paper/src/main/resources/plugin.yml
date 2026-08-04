@@ -34,3 +34,6 @@ permissions:
   anticheat.antiads.bypass:
     description: 单独绕过聊天广告检测
     default: false
+  anticheat.commandspam.bypass:
+    description: 单独绕过命令刷屏检测
+    default: false

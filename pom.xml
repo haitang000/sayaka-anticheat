@@ -12,6 +12,7 @@
     <name>Sayaka AntiCheat</name>
 
     <modules>
+        <module>api</module>
         <module>shared</module>
         <module>paper</module>
         <module>velocity</module>
