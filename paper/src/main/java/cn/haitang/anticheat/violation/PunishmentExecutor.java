@@ -15,7 +15,6 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerKickEvent;
 
-import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -32,7 +31,8 @@ public class PunishmentExecutor implements Listener {
 
     public static final String BAN_SOURCE = "Sayaka AntiCheat";
 
-    private static final SimpleDateFormat TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+    private static final java.time.format.DateTimeFormatter TIME =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final AntiCheatPlugin plugin;
     private final Map<UUID, Boolean> kickOutcomes = new ConcurrentHashMap<>();
@@ -101,7 +101,7 @@ public class PunishmentExecutor implements Listener {
                 Map<String, String> ph = Map.of(
                         "player", player.getName(), "check", type.display(),
                         "vl", String.format("%.1f", vl), "hours", String.valueOf(punishment.hours()),
-                        "time", TIME.format(new Date(punishment.expiresAt())),
+                        "time", TIME.format(java.time.Instant.ofEpochMilli(punishment.expiresAt())),
                         "punishment-id", punishment.id());
                 String screen = plugin.getMessages().get("ban-screen", ph);
                 if (!screen.contains(punishment.id())) screen += "\n\n§8处罚 ID: §f" + punishment.id();
@@ -193,6 +193,10 @@ public class PunishmentExecutor implements Listener {
             return;
         }
 
+        // 兜底：极少数平台行为下 PlayerKickEvent 可能不触发，条目会残留。
+        // 1 tick 后若仍在，说明事件确实没来，清掉防止集合泄漏。
+        Bukkit.getScheduler().runTaskLater(plugin, () -> kickOutcomes.remove(playerId), 1L);
+
         plugin.getStore().addStrike(playerId, player.getName());
         plugin.getStore().addHistory(playerId,
                 String.format("[踢出] %s VL %.1f (strike %d/%d)", type.display(), vl, strikes, maxStrikes));
@@ -218,7 +222,7 @@ public class PunishmentExecutor implements Listener {
                 "check", type.display(),
                 "vl", String.format("%.1f", vl),
                 "hours", String.valueOf(hours),
-                "time", TIME.format(expiry),
+                "time", TIME.format(expiry.toInstant()),
                 "punishment-id", punishmentId
         );
         String screen = plugin.getMessages().get("ban-screen", ph);

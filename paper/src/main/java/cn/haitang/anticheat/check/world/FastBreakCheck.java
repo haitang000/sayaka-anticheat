@@ -73,9 +73,10 @@ public class FastBreakCheck extends Check {
             long elapsedMs = System.currentTimeMillis() - data.getDigStartAt();
             long elapsedTicks = elapsedMs / 50;
             int expectedTicks = data.getDigExpectedTicks();
-            // 宽限：网络延迟折算 + lenience 比例 + 2 tick 固定余量
+            // 宽限：网络延迟折算 + lenience 比例 + 2 tick 固定余量。
+            // 快速方块 + 高 ping 时可能为负（等于不拦），clamp 到 0 让语义明确。
             long pingTicks = Math.min(player.getPing(), 300) / 50;
-            double minTicks = expectedTicks * cfgD("lenience", 0.6) - 2 - pingTicks;
+            double minTicks = Math.max(0, expectedTicks * cfgD("lenience", 0.6) - 2 - pingTicks);
             data.clearDig();
             data.setLastLegitBreakTick(org.bukkit.Bukkit.getCurrentTick());
 

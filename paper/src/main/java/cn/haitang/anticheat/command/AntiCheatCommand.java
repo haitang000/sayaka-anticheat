@@ -293,6 +293,11 @@ public class AntiCheatCommand implements TabExecutor {
                     sendHelp(sender);
                     return;
                 }
+                if (!PLAYER_NAME.matcher(args[2]).matches()) {
+                    sender.sendMessage(plugin.getMessages().prefixed("invalid-player-name",
+                            Map.of("player", args[2])));
+                    return;
+                }
                 PersistentStore.WhitelistEntry entry = plugin.getStore().findWhitelistByName(args[2]);
                 Player online = Bukkit.getPlayerExact(args[2]);
                 if (entry == null && online != null && plugin.getStore().isWhitelisted(online.getUniqueId())) {
