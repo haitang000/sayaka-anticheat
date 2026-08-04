@@ -34,8 +34,11 @@ final class AimQuantumAnalyzer {
     /** 候选量子扫描范围与几何步长；下界略低于最小合法量子 */
     static final double CANDIDATE_MIN = 0.009;
     static final double CANDIDATE_MAX = 0.72;
-    static final double COARSE_RATIO = 1.005;
-    static final double REFINE_RATIO = 1.0005;
+    // 步长兼顾扫描次数与谱峰分辨率：1.02 粗扫约 220 次、1.001 精扫约 220 次，
+    // 每窗口合计约 440 次 combScore（原 1.005/1.0005 约 1760 次，Netty 线程尖峰源）。
+    // 合法输入得分≈1、合成视角≈0，谱峰宽度远大于 2% 步长，不会漏峰。
+    static final double COARSE_RATIO = 1.02;
+    static final double REFINE_RATIO = 1.001;
     /** 单个增量允许的最大量子倍数；配合 COMB_MAX 限定相位漂移 */
     static final int MAX_MULTIPLE = 80;
     /** 超过该幅度的增量来自整臂甩枪，对两类测试都无信息量 */
