@@ -333,7 +333,10 @@ public final class UpdateManager {
     }
 
     private Path stage(Release release) throws IOException, InterruptedException {
-        Path updateDirectory = Bukkit.getUpdateFolderFile().toPath();
+        // 暂存目录用插件数据目录而非 Bukkit 的 update 文件夹：
+        // Paper 1.20.6+ 的 FileProviderSource.checkUpdate 会扫描 update 文件夹，
+        // 发现同名插件 jar 就覆盖正在加载的 jar，导致热加载永远加载出旧版本。
+        Path updateDirectory = plugin.getDataFolder().toPath().resolve("updates");
         Files.createDirectories(updateDirectory);
         String artifactFileName = artifactFileName(release);
         Path staged = updateDirectory.resolve(artifactFileName);
@@ -440,7 +443,11 @@ public final class UpdateManager {
     private void performHotReload(CommandSender sender, Release release, Path stagedArtifact) {
         Path currentArtifact = plugin.getPluginJarFile().toPath().toAbsolutePath();
         Path targetArtifact = currentArtifact.resolveSibling(artifactFileName(release));
-        Path backupArtifact = stagedArtifact.resolveSibling(currentArtifact.getFileName() + ".rollback");
+        // backup 必须放在 plugins 目录（current 的同级），不能放 update 文件夹：
+        // Paper 1.20.6+ 的 FileProviderSource.checkUpdate 会扫描 update 文件夹，
+        // 发现同名插件 jar 就会用它覆盖正在加载的 jar——旧 jar 若留在 update 文件夹，
+        // 热加载时 loadPlugin 会被 checkUpdate 用旧 jar 覆盖新 jar，永远加载出旧版本。
+        Path backupArtifact = currentArtifact.resolveSibling(currentArtifact.getFileName() + ".rollback");
 
         // 全部面向用户的成功/失败文案在卸载前渲染好，交给隔离工人发送——工人运行时本插件的
         // 类加载器已关闭，无法再安全地做字符串拼接或加载新类。失败文案按占位符切成前后缀。

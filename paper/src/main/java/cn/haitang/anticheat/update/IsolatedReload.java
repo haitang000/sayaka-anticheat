@@ -87,6 +87,12 @@ public final class IsolatedReload {
             replaceJar(current, staged, target, backup);
             jarSwapped = true;
 
+            // Paper 1.20.6+ 的 loadPlugin 会走 FileProviderSource.checkUpdate：扫描 Bukkit
+            // update 文件夹，发现与目标插件同名的 jar 就用它覆盖目标文件。若 update 文件夹
+            // 里有历史残留（或本次暂存遗漏），会再次把新 jar 覆盖成旧版。加载前先清掉
+            // update 文件夹里所有 Sayaka 同名 jar，确保 loadPlugin 读到的就是 target。
+            purgeUpdateFolder(pluginName);
+
             Plugin loaded = loadAndEnable(pluginManager, target.toFile());
             if (loaded == null || !loaded.isEnabled()
                     || !expectedVersion.equals(loaded.getDescription().getVersion())) {
@@ -313,6 +319,30 @@ public final class IsolatedReload {
             closeQuietly(urlClassLoader);
         } else if (classLoader instanceof Closeable closeable) {
             closeQuietly(closeable);
+        }
+    }
+
+    /**
+     * 清空 Bukkit update 文件夹里与指定插件同名的 jar，防止 Paper 的 checkUpdate
+     * 在 loadPlugin 时用旧 jar 覆盖新 jar。静默容错：文件夹不存在/不可读时跳过。
+     */
+    private static void purgeUpdateFolder(String pluginName) {
+        try {
+            java.io.File updateFolder = Bukkit.getUpdateFolderFile();
+            if (updateFolder == null || !updateFolder.isDirectory()) return;
+            java.io.File[] files = updateFolder.listFiles();
+            if (files == null) return;
+            String prefix = pluginName.toLowerCase(java.util.Locale.ROOT);
+            for (java.io.File file : files) {
+                String name = file.getName();
+                if (!name.toLowerCase(java.util.Locale.ROOT).contains(prefix)) continue;
+                if (!name.endsWith(".jar") && !name.endsWith(".rollback")) continue;
+                if (!file.delete()) {
+                    warn("Hot reload could not remove stale update file " + file.getName());
+                }
+            }
+        } catch (Throwable ignored) {
+            // update 文件夹清理是尽力而为，失败不影响主流程
         }
     }
 
