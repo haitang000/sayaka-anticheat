@@ -1,5 +1,13 @@
 server-id = "velocity"
 
+[updates]
+# 更新源镜像地址（留空 = GitHub 官方源）。用于 GitHub 不可达或 API 限频的机房，
+# 例如: mirror-base = "https://updates.example.com"
+# 镜像必须原样提供 <镜像地址>/haitang000/sayaka-anticheat/releases.atom
+# 与 <镜像地址>/haitang000/sayaka-anticheat/releases/download/<标签>/<文件名> 两个路径。
+# 注意：镜像属于管理员显式信任的源，请只配置自己维护的可信镜像。
+mirror-base = ""
+
 [database]
 jdbc-url = "jdbc:mariadb://127.0.0.1:3306/sayaka"
 username = "sayaka"

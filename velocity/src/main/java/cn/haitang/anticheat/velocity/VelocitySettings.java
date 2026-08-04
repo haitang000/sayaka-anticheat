@@ -31,7 +31,8 @@ record VelocitySettings(
         boolean protectionDefaultEnabled,
         Map<String, Boolean> serverProtection,
         String presetDefault,
-        Map<String, String> serverPresets
+        Map<String, String> serverPresets,
+        String updateMirrorBase
 ) {
     VelocitySettings {
         serverProtection = Map.copyOf(serverProtection);
@@ -42,7 +43,7 @@ record VelocitySettings(
                      int webPort, String webPublicUrl, String adminToken, int webThreads,
                      long banCacheMillis) {
         this(serverId, database, webEnabled, webBind, webPort, webPublicUrl, adminToken, webThreads,
-                banCacheMillis, 3, 10, 600_000L, 43_200_000L, true, Map.of(), "balanced", Map.of());
+                banCacheMillis, 3, 10, 600_000L, 43_200_000L, true, Map.of(), "balanced", Map.of(), "");
     }
 
     VelocitySettings(String serverId, DatabaseConfig database, boolean webEnabled, String webBind,
@@ -51,7 +52,7 @@ record VelocitySettings(
                      long loginWindowMillis, long sessionIdleMillis) {
         this(serverId, database, webEnabled, webBind, webPort, webPublicUrl, adminToken, webThreads,
                 banCacheMillis, captchaAfterFailures, loginFailureLimit, loginWindowMillis,
-                sessionIdleMillis, true, Map.of(), "balanced", Map.of());
+                sessionIdleMillis, true, Map.of(), "balanced", Map.of(), "");
     }
 
     static VelocitySettings load(Path dataDirectory) throws IOException {
@@ -88,6 +89,8 @@ record VelocitySettings(
         }
         String publicUrl = toml.getString("web.public-url", () -> "").trim();
         if (!publicUrl.isEmpty()) validatePublicUrl(publicUrl);
+        String mirrorBase = toml.getString("updates.mirror-base", () -> "").trim();
+        if (!mirrorBase.isEmpty()) validateMirrorBase(mirrorBase);
         return new VelocitySettings(
                 toml.getString("server-id", () -> "velocity"),
                 new DatabaseConfig(
@@ -108,7 +111,8 @@ record VelocitySettings(
                 protectionDefaultEnabled,
                 serverProtection,
                 presetDefault,
-                serverPresets);
+                serverPresets,
+                mirrorBase);
     }
 
     boolean protectionEnabledFor(String serverName) {
@@ -196,6 +200,19 @@ record VelocitySettings(
             }
         } catch (IllegalArgumentException error) {
             throw new IOException("web.public-url must be a valid URL", error);
+        }
+    }
+
+    /** 镜像地址：留空 = GitHub 官方源；非空必须是 https 绝对地址（无 query/fragment）。 */
+    private static void validateMirrorBase(String value) throws IOException {
+        try {
+            URI uri = URI.create(value);
+            if (uri.getScheme() == null || !uri.getScheme().equalsIgnoreCase("https")
+                    || uri.getHost() == null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+                throw new IOException("updates.mirror-base must be an https origin URL");
+            }
+        } catch (IllegalArgumentException error) {
+            throw new IOException("updates.mirror-base must be a valid URL", error);
         }
     }
 

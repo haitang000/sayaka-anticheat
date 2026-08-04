@@ -88,7 +88,8 @@ public final class VelocityCore implements CoreBridge {
         store = new JdbcNetworkStore(settings.database());
         protection = ProtectionState.fromSettings(settings);
         presets = PresetState.fromSettings(settings);
-        updateManager = new VelocityUpdateManager(coreVersion, dataDirectory.resolve("updates"));
+        updateManager = new VelocityUpdateManager(coreVersion,
+                dataDirectory.resolve("updates"), settings.updateMirrorBase());
         recoverServices();
         proxy.getChannelRegistrar().register(WEB_LOGIN_CHANNEL);
         proxy.getChannelRegistrar().register(PRESET_CHANNEL);

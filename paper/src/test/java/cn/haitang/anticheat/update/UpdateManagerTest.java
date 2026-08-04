@@ -65,16 +65,13 @@ class UpdateManagerTest {
     }
 
     @Test
-    void selectsArtifactMatchingTheCurrentServerPlatform() throws Exception {
+    void resolvesDeterministicDownloadUrlFromTag() throws Exception {
         UpdateManager.Release candidate = release("v2.1.0.3-beta.3");
-        String json = releaseJson(
-                "Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar",
-                "Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar");
 
-        UpdateManager.Release paper = UpdateManager.releaseWithPlatformAsset(candidate,
-                input(json), UpdateManager.ServerPlatform.PAPER);
-        UpdateManager.Release velocity = UpdateManager.releaseWithPlatformAsset(candidate,
-                input(json), UpdateManager.ServerPlatform.VELOCITY);
+        UpdateManager.Release paper = UpdateManager.resolveReleaseAsset(
+                candidate, UpdateManager.ServerPlatform.PAPER, "");
+        UpdateManager.Release velocity = UpdateManager.resolveReleaseAsset(
+                candidate, UpdateManager.ServerPlatform.VELOCITY, "");
 
         assertEquals("https://github.com/haitang000/sayaka-anticheat/releases/download/"
                 + "v2.1.0.3-beta.3/Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar",
@@ -85,20 +82,33 @@ class UpdateManagerTest {
     }
 
     @Test
-    void rejectsMissingOrUntrustedPlatformArtifact() {
+    void resolvesDeterministicDownloadUrlFromMirrorBase() throws Exception {
         UpdateManager.Release candidate = release("v2.1.0.3-beta.3");
-        String missingPaper = releaseJson("Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar");
-        String untrustedPaper = """
-                {"tag_name":"v2.1.0.3-beta.3","assets":[{
-                  "name":"Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar",
-                  "browser_download_url":"https://example.com/Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar"
-                }]}
-                """;
 
-        assertThrows(IOException.class, () -> UpdateManager.releaseWithPlatformAsset(candidate,
-                input(missingPaper), UpdateManager.ServerPlatform.PAPER));
-        assertThrows(IOException.class, () -> UpdateManager.releaseWithPlatformAsset(candidate,
-                input(untrustedPaper), UpdateManager.ServerPlatform.PAPER));
+        UpdateManager.Release paper = UpdateManager.resolveReleaseAsset(
+                candidate, UpdateManager.ServerPlatform.PAPER, "https://updates.example.com/");
+        UpdateManager.Release velocity = UpdateManager.resolveReleaseAsset(
+                candidate, UpdateManager.ServerPlatform.VELOCITY, "https://updates.example.com");
+
+        assertEquals("https://updates.example.com/haitang000/sayaka-anticheat/releases/download/"
+                + "v2.1.0.3-beta.3/Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar",
+                paper.download().orElseThrow().toString());
+        assertEquals("https://updates.example.com/haitang000/sayaka-anticheat/releases/download/"
+                + "v2.1.0.3-beta.3/Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar",
+                velocity.download().orElseThrow().toString());
+    }
+
+    @Test
+    void normalizesMirrorBaseAndRejectsUnsafeValues() {
+        assertEquals("https://github.com", UpdateManager.normalizeMirrorBase(""));
+        assertEquals("https://github.com", UpdateManager.normalizeMirrorBase("  "));
+        assertEquals("https://updates.example.com", UpdateManager.normalizeMirrorBase("https://updates.example.com/"));
+        assertThrows(IllegalArgumentException.class,
+                () -> UpdateManager.normalizeMirrorBase("http://updates.example.com"));
+        assertThrows(IllegalArgumentException.class,
+                () -> UpdateManager.normalizeMirrorBase("https://updates.example.com?token=1"));
+        assertThrows(IllegalArgumentException.class,
+                () -> UpdateManager.normalizeMirrorBase("not a url"));
     }
 
     @Test
@@ -142,18 +152,6 @@ class UpdateManagerTest {
 
     private ByteArrayInputStream input(String value) {
         return new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private String releaseJson(String... artifactNames) {
-        StringBuilder assets = new StringBuilder();
-        for (String artifactName : artifactNames) {
-            if (!assets.isEmpty()) assets.append(',');
-            assets.append("{\"name\":\"").append(artifactName)
-                    .append("\",\"browser_download_url\":\"https://github.com/haitang000/")
-                    .append("sayaka-anticheat/releases/download/v2.1.0.3-beta.3/")
-                    .append(artifactName).append("\"}");
-        }
-        return "{\"tag_name\":\"v2.1.0.3-beta.3\",\"assets\":[" + assets + "]}";
     }
 
     private Path createArtifact(String version) throws IOException {

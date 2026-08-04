@@ -8,6 +8,7 @@ import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -231,6 +232,18 @@ public final class ConfigSnapshot {
         positiveInt(config, errors, "settings.parallel-analysis.queue-capacity");
         positiveInt(config, errors, "settings.parallel-analysis.completions-per-tick");
         positiveInt(config, errors, "updates.check-interval-minutes");
+        String mirrorBase = config.getString("updates.mirror-base", "").trim();
+        if (!mirrorBase.isEmpty()) {
+            try {
+                URI uri = URI.create(mirrorBase);
+                if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
+                        || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+                    errors.add("updates.mirror-base must be an https URL without query or fragment");
+                }
+            } catch (IllegalArgumentException invalid) {
+                errors.add("updates.mirror-base must be a valid https URL");
+            }
+        }
         positiveInt(config, errors, "checks.speed.burst-window-ms");
         positiveInt(config, errors, "checks.speed.sustained-window-ms");
         positiveInt(config, errors, "checks.flight.gravity-min-air-ticks");

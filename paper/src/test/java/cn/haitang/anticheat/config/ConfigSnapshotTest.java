@@ -106,6 +106,25 @@ class ConfigSnapshotTest {
         assertTrue(ConfigSnapshot.validate(config).size() >= 3);
     }
 
+    @Test
+    void acceptsEmptyOrHttpsMirrorBase() {
+        assertTrue(ConfigSnapshot.validate(config).isEmpty());
+        config.set("updates.mirror-base", "https://updates.example.com");
+        assertTrue(ConfigSnapshot.validate(config).isEmpty());
+    }
+
+    @Test
+    void rejectsUnsafeMirrorBaseValues() {
+        config.set("updates.mirror-base", "http://updates.example.com");
+        assertFalse(ConfigSnapshot.validate(config).isEmpty());
+
+        config.set("updates.mirror-base", "https://updates.example.com?token=1");
+        assertFalse(ConfigSnapshot.validate(config).isEmpty());
+
+        config.set("updates.mirror-base", "not a url");
+        assertFalse(ConfigSnapshot.validate(config).isEmpty());
+    }
+
     /** 摊平后的读取语义须与 YamlConfiguration 逐路径解析一致 */
     @Test
     void flattenedGettersMatchYamlSemantics() {

@@ -63,27 +63,39 @@ class VelocityUpdateManagerTest {
     }
 
     @Test
-    void selectsVelocityArtifactAndRejectsUntrustedUrl() throws Exception {
+    void resolvesDeterministicDownloadUrlFromTag() throws Exception {
         VelocityUpdateManager.Release candidate = release("v2.1.0.3-beta.3");
-        String json = "{\"tag_name\":\"v2.1.0.3-beta.3\",\"assets\":["
-                + asset("Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar", true) + ","
-                + asset("Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar", true) + "]}";
 
-        VelocityUpdateManager.Release velocity = VelocityUpdateManager.releaseWithVelocityAsset(
-                candidate, input(json));
+        VelocityUpdateManager.Release velocity = VelocityUpdateManager.resolveReleaseAsset(candidate, "");
+
         assertEquals("https://github.com/haitang000/sayaka-anticheat/releases/download/"
                 + "v2.1.0.3-beta.3/Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar",
                 velocity.download().orElseThrow().toString());
+    }
 
-        String untrusted = "{\"tag_name\":\"v2.1.0.3-beta.3\",\"assets\":["
-                + asset("Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar", false) + "]}";
-        assertThrows(IOException.class, () -> VelocityUpdateManager.releaseWithVelocityAsset(
-                candidate, input(untrusted)));
+    @Test
+    void resolvesDeterministicDownloadUrlFromMirrorBase() throws Exception {
+        VelocityUpdateManager.Release candidate = release("v2.1.0.3-beta.3");
 
-        String onlyPaper = "{\"tag_name\":\"v2.1.0.3-beta.3\",\"assets\":["
-                + asset("Sayaka-AntiCheat-Paper-2.1.0.3-beta.3.jar", true) + "]}";
-        assertThrows(IOException.class, () -> VelocityUpdateManager.releaseWithVelocityAsset(
-                candidate, input(onlyPaper)));
+        VelocityUpdateManager.Release velocity = VelocityUpdateManager.resolveReleaseAsset(
+                candidate, "https://updates.example.com/");
+
+        assertEquals("https://updates.example.com/haitang000/sayaka-anticheat/releases/download/"
+                + "v2.1.0.3-beta.3/Sayaka-AntiCheat-Velocity-2.1.0.3-beta.3.jar",
+                velocity.download().orElseThrow().toString());
+    }
+
+    @Test
+    void normalizesMirrorBaseAndRejectsUnsafeValues() {
+        assertEquals("https://github.com", VelocityUpdateManager.normalizeMirrorBase(""));
+        assertEquals("https://github.com", VelocityUpdateManager.normalizeMirrorBase("  "));
+        assertEquals("https://updates.example.com", VelocityUpdateManager.normalizeMirrorBase("https://updates.example.com/"));
+        assertThrows(IllegalArgumentException.class,
+                () -> VelocityUpdateManager.normalizeMirrorBase("http://updates.example.com"));
+        assertThrows(IllegalArgumentException.class,
+                () -> VelocityUpdateManager.normalizeMirrorBase("https://updates.example.com?token=1"));
+        assertThrows(IllegalArgumentException.class,
+                () -> VelocityUpdateManager.normalizeMirrorBase("not a url"));
     }
 
     @Test
@@ -108,13 +120,6 @@ class VelocityUpdateManagerTest {
 
     private ByteArrayInputStream input(String value) {
         return new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private String asset(String name, boolean trusted) {
-        String url = trusted
-                ? "https://github.com/haitang000/sayaka-anticheat/releases/download/v2.1.0.3-beta.3/" + name
-                : "https://example.com/" + name;
-        return "{\"name\":\"" + name + "\",\"browser_download_url\":\"" + url + "\"}";
     }
 
     private Path createArtifact(String version, String id, String main) throws IOException {

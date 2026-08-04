@@ -40,8 +40,7 @@ import org.xml.sax.SAXException;
 final class VelocityUpdateManager {
 
     private static final String REPOSITORY = "haitang000/sayaka-anticheat";
-    private static final URI RELEASE_FEED = URI.create("https://github.com/" + REPOSITORY + "/releases.atom");
-    private static final String RELEASE_API = "https://api.github.com/repos/" + REPOSITORY + "/releases/tags/";
+    private static final String DEFAULT_BASE = "https://github.com";
     private static final String ARTIFACT_PREFIX = "Sayaka-AntiCheat-Velocity-";
     private static final String PLUGIN_ID = "sayaka-anticheat";
     private static final String PLUGIN_MAIN = "cn.haitang.anticheat.velocity.SayakaVelocityPlugin";
@@ -64,6 +63,7 @@ final class VelocityUpdateManager {
 
     private final String currentVersion;
     private final Path stagingDirectory;
+    private final String mirrorBase;
     private final HttpClient httpClient;
     private final AtomicBoolean checking = new AtomicBoolean();
     private final AtomicBoolean downloading = new AtomicBoolean();
@@ -74,15 +74,24 @@ final class VelocityUpdateManager {
     private volatile Staged staged;
 
     VelocityUpdateManager(String currentVersion, Path stagingDirectory) {
-        this(currentVersion, stagingDirectory, HttpClient.newBuilder()
+        this(currentVersion, stagingDirectory, normalizeMirrorBase(""), HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build());
     }
 
-    VelocityUpdateManager(String currentVersion, Path stagingDirectory, HttpClient httpClient) {
+    VelocityUpdateManager(String currentVersion, Path stagingDirectory, String mirrorBase) {
+        this(currentVersion, stagingDirectory, mirrorBase, HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build());
+    }
+
+    VelocityUpdateManager(String currentVersion, Path stagingDirectory,
+                          String mirrorBase, HttpClient httpClient) {
         this.currentVersion = currentVersion;
         this.stagingDirectory = stagingDirectory;
+        this.mirrorBase = normalizeMirrorBase(mirrorBase);
         this.httpClient = httpClient;
     }
 
@@ -142,7 +151,7 @@ final class VelocityUpdateManager {
     private Optional<Release> findAvailableRelease() throws IOException, InterruptedException {
         SemanticVersion current = SemanticVersion.parse(currentVersion)
                 .orElseThrow(() -> new IOException("无法解析当前版本号 " + currentVersion));
-        HttpRequest request = HttpRequest.newBuilder(RELEASE_FEED)
+        HttpRequest request = HttpRequest.newBuilder(feedUri())
                 .timeout(Duration.ofSeconds(15))
                 .header("User-Agent", "Sayaka-AntiCheat/" + currentVersion)
                 .header("Cache-Control", "no-cache")
@@ -150,8 +159,8 @@ final class VelocityUpdateManager {
                 .build();
         HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {
-            response.body().close();
-            throw new IOException("GitHub 返回 HTTP " + response.statusCode());
+            throw new IOException("GitHub 返回 HTTP " + response.statusCode()
+                    + errorDetail(response));
         }
         Optional<Release> latest;
         try (InputStream body = response.body()) {
@@ -228,69 +237,59 @@ final class VelocityUpdateManager {
         return Optional.of(new Release(parsed.get(), tag, page, Optional.empty()));
     }
 
-    private Release resolveReleaseAsset(Release release) throws IOException, InterruptedException {
-        URI endpoint = URI.create(RELEASE_API + encodePathSegment(release.tag()));
-        HttpRequest request = HttpRequest.newBuilder(endpoint)
-                .timeout(Duration.ofSeconds(15))
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("User-Agent", "Sayaka-AntiCheat/" + currentVersion)
-                .header("Cache-Control", "no-cache")
-                .GET()
-                .build();
-        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() != 200) {
-            response.body().close();
-            throw new IOException("GitHub 发布 API 返回 HTTP " + response.statusCode());
+    /**
+     * 由 Atom 源解析出的 tag 直接构造下载地址，不再请求 api.github.com：
+     * 发布产物下载 URL 是确定格式，而 api.github.com 未认证接口有 60 次/小时/IP
+     * 限额（共享出口 IP 的机房极易 403），绕过它即可消除该限额。
+     * 完整性仍由下载后的 {@link #validateArtifact}（jar 身份 + 版本匹配 tag）保证。
+     */
+    static Release resolveReleaseAsset(Release release, String base) {
+        String artifactName = ARTIFACT_PREFIX + release.version() + ".jar";
+        String baseUrl = normalizeMirrorBase(base);
+        URI download = URI.create(baseUrl + "/" + REPOSITORY + "/releases/download/"
+                + encodePathSegment(release.tag()) + "/" + encodePathSegment(artifactName));
+        if (!validAssetUri(download, release, artifactName, baseUrl)) {
+            throw new IllegalArgumentException("构造的发布资源地址无效");
         }
-        try (InputStream body = response.body()) {
-            return releaseWithVelocityAsset(release, body);
-        }
+        return new Release(release.version(), release.tag(), release.page(), Optional.of(download));
     }
 
-    static Release releaseWithVelocityAsset(Release release, InputStream response) throws IOException {
-        byte[] json = response.readNBytes(MAX_FEED_BYTES + 1);
-        if (json.length > MAX_FEED_BYTES) throw new IOException("GitHub 发布响应过大");
-
-        Map<String, Object> document;
-        try {
-            document = Json.parseObject(new String(json, StandardCharsets.UTF_8));
-        } catch (IllegalArgumentException error) {
-            throw new IOException("GitHub 发布响应无效", error);
-        }
-        if (!release.tag().equals(document.get("tag_name"))) {
-            throw new IOException("GitHub 发布响应的标签与 " + release.tag() + " 不一致");
-        }
-
-        String expectedName = ARTIFACT_PREFIX + release.version() + ".jar";
-        Object assetsValue = document.get("assets");
-        if (assetsValue instanceof Iterable<?> assets) {
-            for (Object assetValue : assets) {
-                if (!(assetValue instanceof Map<?, ?> asset) || !expectedName.equals(asset.get("name"))) continue;
-                Object downloadValue = asset.get("browser_download_url");
-                if (!(downloadValue instanceof String downloadText)) continue;
-                URI download;
-                try {
-                    download = URI.create(downloadText);
-                } catch (IllegalArgumentException error) {
-                    throw new IOException("GitHub 发布资源地址无效", error);
-                }
-                if (!validAssetUri(download, release, expectedName)) {
-                    throw new IOException("GitHub 发布资源地址不在预期的发布内");
-                }
-                return new Release(release.version(), release.tag(), release.page(), Optional.of(download));
-            }
-        }
-        throw new IOException("该发布没有 " + release.version() + " 的 Velocity 构建产物");
-    }
-
-    private static boolean validAssetUri(URI download, Release release, String assetName) {
-        if (!"https".equalsIgnoreCase(download.getScheme()) || !"github.com".equalsIgnoreCase(download.getHost())) {
+    private static boolean validAssetUri(URI download, Release release, String assetName, String baseUrl) {
+        if (!"https".equalsIgnoreCase(download.getScheme())) return false;
+        URI base = URI.create(baseUrl);
+        if (!base.getScheme().equalsIgnoreCase(download.getScheme())
+                || !base.getAuthority().equalsIgnoreCase(download.getAuthority())) {
             return false;
         }
-        String expectedPath = "/" + REPOSITORY + "/releases/download/"
+        String expectedPath = base.getRawPath() + "/" + REPOSITORY + "/releases/download/"
                 + encodePathSegment(release.tag()) + "/" + encodePathSegment(assetName);
         return expectedPath.equals(download.getRawPath());
+    }
+
+    private URI feedUri() {
+        return URI.create(mirrorBase + "/" + REPOSITORY + "/releases.atom");
+    }
+
+    private Release resolveReleaseAsset(Release release) {
+        return resolveReleaseAsset(release, mirrorBase);
+    }
+
+    /** 空/空白视为 GitHub 默认源；去尾斜杠，只允许 https 绝对地址（无 query/fragment）。 */
+    static String normalizeMirrorBase(String configured) {
+        String value = configured == null ? "" : configured.trim();
+        if (value.isEmpty()) return DEFAULT_BASE;
+        if (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+        URI uri;
+        try {
+            uri = URI.create(value);
+        } catch (IllegalArgumentException invalid) {
+            throw new IllegalArgumentException("更新镜像地址无效: " + value, invalid);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
+                || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            throw new IllegalArgumentException("更新镜像地址必须是 https URL 且不能带 query 或 fragment");
+        }
+        return value;
     }
 
     private Staged stage(Release release) throws IOException, InterruptedException {
@@ -319,8 +318,8 @@ final class VelocityUpdateManager {
                 .build();
         HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {
-            response.body().close();
-            throw new IOException("下载发布产物返回 HTTP " + response.statusCode());
+            throw new IOException("下载发布产物返回 HTTP " + response.statusCode()
+                    + errorDetail(response));
         }
         long declaredSize = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
         if (declaredSize > MAX_ARTIFACT_BYTES) {
@@ -380,5 +379,20 @@ final class VelocityUpdateManager {
     private static String safeMessage(Throwable error) {
         String message = error.getMessage();
         return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+    }
+
+    /** 非 200 响应时尽量读出服务端的真实原因（如 API 限频消息），并把 body 关闭。 */
+    private static String errorDetail(HttpResponse<InputStream> response) {
+        String detail = "";
+        try (InputStream body = response.body()) {
+            byte[] snippet = body.readNBytes(512);
+            String text = new String(snippet, StandardCharsets.UTF_8).trim();
+            if (!text.isEmpty()) {
+                detail = ": " + text.replaceAll("\\s+", " ").substring(0, Math.min(200, text.length()));
+            }
+        } catch (Exception ignored) {
+            // 错误详情读不到也不影响主错误
+        }
+        return detail;
     }
 }

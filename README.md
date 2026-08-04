@@ -63,6 +63,8 @@
 
 插件每 30 分钟检查一次 GitHub Release，支持免 PlugManX 热更新（失败自动回滚旧 JAR）。Velocity 端采用"宿主 + 可热替换内核"架构，同样支持免重启换载。`anticheat.bypass` 完全绕过检测（默认无人持有）。
 
+更新检查只访问 GitHub 静态源（`releases.atom` 订阅源 + 发布产物下载），不依赖有频率限制的 `api.github.com` 接口。若机房访问 GitHub 不稳定，可在 `config.yml` 的 `updates.mirror-base`（Velocity 端为 `config.toml` 的 `[updates] mirror-base`）配置自建镜像地址；镜像需原样提供 `<地址>/haitang000/sayaka-anticheat/releases.atom` 与 `<地址>/haitang000/sayaka-anticheat/releases/download/<标签>/<文件名>` 两个路径，属于管理员显式信任的源。
+
 ## 第三方插件 API
 
 `sayaka-anticheat-api` 模块只依赖 Paper API，供其他插件编译与运行时集成：

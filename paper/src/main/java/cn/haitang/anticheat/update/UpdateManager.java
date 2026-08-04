@@ -1,7 +1,6 @@
 package cn.haitang.anticheat.update;
 
 import cn.haitang.anticheat.AntiCheatPlugin;
-import cn.haitang.anticheat.shared.Json;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -44,8 +43,7 @@ import org.xml.sax.SAXException;
 public final class UpdateManager {
 
     private static final String REPOSITORY = "haitang000/sayaka-anticheat";
-    private static final URI RELEASE_FEED = URI.create("https://github.com/" + REPOSITORY + "/releases.atom");
-    private static final String RELEASE_API = "https://api.github.com/repos/" + REPOSITORY + "/releases/tags/";
+    private static final String DEFAULT_BASE = "https://github.com";
     private static final ServerPlatform SERVER_PLATFORM = ServerPlatform.PAPER;
     private static final long MAX_ARTIFACT_BYTES = 64L * 1024L * 1024L;
     private static final long MAX_DESCRIPTOR_BYTES = 128L * 1024L;
@@ -70,13 +68,13 @@ public final class UpdateManager {
             return "Sayaka-AntiCheat-" + artifactName + "-" + version + ".jar";
         }
     }
-
     private final AntiCheatPlugin plugin;
     private final HttpClient httpClient;
     private final AtomicBoolean checking = new AtomicBoolean();
     private final AtomicBoolean installing = new AtomicBoolean();
     private volatile Release available;
     private volatile boolean shuttingDown;
+    private volatile String mirrorBase;
     private BukkitTask checkTask;
     private String lastAnnouncedVersion;
 
@@ -91,6 +89,7 @@ public final class UpdateManager {
     public void start() {
         stopCheckTask();
         shuttingDown = false;
+        mirrorBase = normalizeMirrorBase(plugin.config().getString("updates.mirror-base", ""));
         if (!plugin.config().getBoolean("updates.enabled", true)) {
             available = null;
             lastAnnouncedVersion = null;
@@ -180,7 +179,7 @@ public final class UpdateManager {
     private Optional<Release> findAvailableRelease() throws IOException, InterruptedException {
         SemanticVersion current = SemanticVersion.parse(currentVersion())
                 .orElseThrow(() -> new IOException("invalid installed version " + currentVersion()));
-        HttpRequest request = HttpRequest.newBuilder(RELEASE_FEED)
+        HttpRequest request = HttpRequest.newBuilder(feedUri())
                 .timeout(Duration.ofSeconds(15))
                 .header("User-Agent", "Sayaka-AntiCheat/" + currentVersion())
                 .header("Cache-Control", "no-cache")
@@ -188,8 +187,8 @@ public final class UpdateManager {
                 .build();
         HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {
-            response.body().close();
-            throw new IOException("GitHub returned HTTP " + response.statusCode());
+            throw new IOException("GitHub returned HTTP " + response.statusCode()
+                    + errorDetail(response));
         }
         Optional<Release> latest;
         try (InputStream body = response.body()) {
@@ -266,70 +265,59 @@ public final class UpdateManager {
         return Optional.of(new Release(parsed.get(), tag, page, Optional.empty()));
     }
 
-    private Release resolveReleaseAsset(Release release) throws IOException, InterruptedException {
-        URI endpoint = URI.create(RELEASE_API + encodePathSegment(release.tag()));
-        HttpRequest request = HttpRequest.newBuilder(endpoint)
-                .timeout(Duration.ofSeconds(15))
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("User-Agent", "Sayaka-AntiCheat/" + currentVersion())
-                .header("Cache-Control", "no-cache")
-                .GET()
-                .build();
-        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() != 200) {
-            response.body().close();
-            throw new IOException("GitHub release API returned HTTP " + response.statusCode());
+    /**
+     * 由 Atom 源解析出的 tag 直接构造下载地址，不再请求 api.github.com：
+     * GitHub 发布产物的下载 URL 是确定格式，而 api.github.com 未认证接口有
+     * 60 次/小时/IP 的限额（共享出口 IP 的机房极易 403），绕过它即可消除该限额。
+     * 完整性仍由下载后的 {@link #validateArtifact}（jar 身份 + 版本匹配 tag）保证。
+     */
+    static Release resolveReleaseAsset(Release release, ServerPlatform platform, String base) {
+        String artifactName = platform.artifactFileName(release.version());
+        String baseUrl = normalizeMirrorBase(base);
+        URI download = URI.create(baseUrl + "/" + REPOSITORY + "/releases/download/"
+                + encodePathSegment(release.tag()) + "/" + encodePathSegment(artifactName));
+        if (!validAssetUri(download, release, artifactName, baseUrl)) {
+            throw new IllegalArgumentException("constructed release asset URL was invalid");
         }
-        try (InputStream body = response.body()) {
-            return releaseWithPlatformAsset(release, body, SERVER_PLATFORM);
-        }
+        return new Release(release.version(), release.tag(), release.page(), Optional.of(download));
     }
 
-    static Release releaseWithPlatformAsset(Release release, InputStream response,
-                                            ServerPlatform platform) throws IOException {
-        byte[] json = response.readNBytes(MAX_FEED_BYTES + 1);
-        if (json.length > MAX_FEED_BYTES) throw new IOException("GitHub release response is too large");
-
-        Map<String, Object> document;
-        try {
-            document = Json.parseObject(new String(json, StandardCharsets.UTF_8));
-        } catch (IllegalArgumentException error) {
-            throw new IOException("invalid GitHub release response", error);
-        }
-        if (!release.tag().equals(document.get("tag_name"))) {
-            throw new IOException("GitHub release response tag does not match " + release.tag());
-        }
-
-        String expectedName = platform.artifactFileName(release.version());
-        Object assetsValue = document.get("assets");
-        if (assetsValue instanceof Iterable<?> assets) {
-            for (Object assetValue : assets) {
-                if (!(assetValue instanceof Map<?, ?> asset) || !expectedName.equals(asset.get("name"))) continue;
-                Object downloadValue = asset.get("browser_download_url");
-                if (!(downloadValue instanceof String downloadText)) continue;
-                URI download;
-                try {
-                    download = URI.create(downloadText);
-                } catch (IllegalArgumentException error) {
-                    throw new IOException("invalid GitHub release asset URL", error);
-                }
-                if (!validAssetUri(download, release, expectedName)) {
-                    throw new IOException("GitHub release asset URL was outside the expected release");
-                }
-                return new Release(release.version(), release.tag(), release.page(), Optional.of(download));
-            }
-        }
-        throw new IOException("release has no " + platform.artifactName + " artifact for " + release.version());
-    }
-
-    private static boolean validAssetUri(URI download, Release release, String assetName) {
-        if (!"https".equalsIgnoreCase(download.getScheme()) || !"github.com".equalsIgnoreCase(download.getHost())) {
+    private static boolean validAssetUri(URI download, Release release, String assetName, String baseUrl) {
+        if (!"https".equalsIgnoreCase(download.getScheme())) return false;
+        URI base = URI.create(baseUrl);
+        if (!base.getScheme().equalsIgnoreCase(download.getScheme())
+                || !base.getAuthority().equalsIgnoreCase(download.getAuthority())) {
             return false;
         }
-        String expectedPath = "/" + REPOSITORY + "/releases/download/"
+        String expectedPath = base.getRawPath() + "/" + REPOSITORY + "/releases/download/"
                 + encodePathSegment(release.tag()) + "/" + encodePathSegment(assetName);
         return expectedPath.equals(download.getRawPath());
+    }
+
+    private URI feedUri() {
+        return URI.create(mirrorBase + "/" + REPOSITORY + "/releases.atom");
+    }
+
+    private Release resolveReleaseAsset(Release release) {
+        return resolveReleaseAsset(release, SERVER_PLATFORM, mirrorBase);
+    }
+
+    /** 空/空白视为 GitHub 默认源；去尾斜杠，只允许 https 绝对地址（无 query/fragment）。 */
+    static String normalizeMirrorBase(String configured) {
+        String value = configured == null ? "" : configured.trim();
+        if (value.isEmpty()) return DEFAULT_BASE;
+        if (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+        URI uri;
+        try {
+            uri = URI.create(value);
+        } catch (IllegalArgumentException invalid) {
+            throw new IllegalArgumentException("invalid update mirror base: " + value, invalid);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
+                || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            throw new IllegalArgumentException("update mirror base must be an https URL without query or fragment");
+        }
+        return value;
     }
 
     private Path stage(Release release) throws IOException, InterruptedException {
@@ -361,8 +349,8 @@ public final class UpdateManager {
                 .build();
         HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {
-            response.body().close();
-            throw new IOException("release download returned HTTP " + response.statusCode());
+            throw new IOException("release download returned HTTP " + response.statusCode()
+                    + errorDetail(response));
         }
         long declaredSize = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
         if (declaredSize > MAX_ARTIFACT_BYTES) {
@@ -518,5 +506,20 @@ public final class UpdateManager {
     private static String safeMessage(Exception error) {
         String message = error.getMessage();
         return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+    }
+
+    /** 非 200 响应时尽量读出服务端的真实原因（如 API 限频消息），并把 body 关闭。 */
+    private static String errorDetail(HttpResponse<InputStream> response) {
+        String detail = "";
+        try (InputStream body = response.body()) {
+            byte[] snippet = body.readNBytes(512);
+            String text = new String(snippet, StandardCharsets.UTF_8).trim();
+            if (!text.isEmpty()) {
+                detail = ": " + text.replaceAll("\\s+", " ").substring(0, Math.min(200, text.length()));
+            }
+        } catch (Exception ignored) {
+            // 错误详情读不到也不影响主错误
+        }
+        return detail;
     }
 }

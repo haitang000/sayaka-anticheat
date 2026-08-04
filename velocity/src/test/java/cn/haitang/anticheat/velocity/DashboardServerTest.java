@@ -312,7 +312,7 @@ class DashboardServerTest {
         store.initialize();
         VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
                 true, "127.0.0.1", 0, "", "test-token", 1, 1000L,
-                1, 3, 600_000L, 43_200_000L, true, Map.of(), "balanced", Map.of());
+                1, 3, 600_000L, 43_200_000L, true, Map.of(), "balanced", Map.of(), "");
         AtomicLong now = new AtomicLong(1_000L);
         AdminAuthService auth = new AdminAuthService("test-token", 1, 3,
                 600_000L, 43_200_000L, now::get, new SecureRandom(), () -> "ABCDE",
