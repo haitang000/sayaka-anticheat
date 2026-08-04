@@ -61,6 +61,13 @@ public final class IsolatedReload {
         try {
             if (previous != null) {
                 ClassLoader classLoader = previous.getClass().getClassLoader();
+                // Paper 1.20.6+ 的 SimplePluginManager.disablePlugin 内部会遍历命令表并调用
+                // 迭代器 remove() 清理属于本插件的命令；现代 Paper 的 knownCommands 是 Brigadier
+                // 视图 Map（只实现 get/put/remove/clear），entrySet().iterator().remove() 未实现，
+                // 会直接抛 UnsupportedOperationException("remove")，导致热重载在禁用阶段就失败。
+                // 因此在 disablePlugin 之前先把本插件的命令全部安全摘掉（逐个 remove(label)），
+                // Paper 内部遍历时找不到归属本插件的命令，就不会触发迭代器 remove。
+                quietly("unregister commands before disable", () -> unregisterCommands(pluginManager, previous));
                 pluginManager.disablePlugin(previous);
                 disabled = true;
 
@@ -116,6 +123,7 @@ public final class IsolatedReload {
     /** 把一个半加载的插件实例彻底摘除（禁用 + 解绑 + 关闭加载器），用于失败回滚前的清场。 */
     private static void discard(PluginManager pluginManager, Plugin plugin, String pluginName) {
         ClassLoader classLoader = plugin.getClass().getClassLoader();
+        quietly("unregister commands before discard", () -> unregisterCommands(pluginManager, plugin));
         quietly("disable the half-loaded " + pluginName, () -> pluginManager.disablePlugin(plugin));
         detach(pluginManager, plugin, pluginName);
         closeClassLoader(classLoader);
@@ -148,9 +156,10 @@ public final class IsolatedReload {
     }
 
     private static Plugin loadAndEnable(PluginManager pluginManager, java.io.File jar) throws Exception {
+        // Paper 的 PluginManager.loadPlugin 内部（JavaPluginLoader）已经调用过 onLoad()，
+        // 这里再手动调一次会导致插件初始化逻辑执行两遍（注册两遍监听器/任务），必须去掉。
         Plugin loaded = pluginManager.loadPlugin(jar);
         if (loaded == null) return null;
-        loaded.onLoad();
         pluginManager.enablePlugin(loaded);
         return loaded;
     }
