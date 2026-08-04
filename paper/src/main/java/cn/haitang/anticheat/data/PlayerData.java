@@ -103,6 +103,8 @@ public class PlayerData {
     private final Deque<GlideSample> glideSamples = new ArrayDeque<>();
     private long lastLevitationAt;
     private long lastSlowFallAt;
+    /** 环境采样节流：液体/攀爬/蛛网等慢变状态每 N tick 才重查一次（主线程热路径优化） */
+    private int envSampleTick = Integer.MIN_VALUE;
 
     // ---- 战斗状态 ----
     private int lastHitTick = -1;
@@ -370,6 +372,15 @@ public class PlayerData {
 
     public boolean isInWeb() { return inWeb; }
     public void setInWeb(boolean inWeb) { this.inWeb = inWeb; }
+
+    /** 返回当前 tick 是否该做环境重采样；仅在过期时返回 true 并刷新节流标记。 */
+    public boolean shouldSampleEnvironment(int tick, int intervalTicks) {
+        int elapsed = tick - envSampleTick;
+        // 首次（MIN_VALUE）或 tick 回绕时 elapsed 可能为负，一律按过期处理
+        if (elapsed >= 0 && elapsed < intervalTicks) return false;
+        envSampleTick = tick;
+        return true;
+    }
 
     public boolean isNearHoney() {
         if (!honeyResolved) {

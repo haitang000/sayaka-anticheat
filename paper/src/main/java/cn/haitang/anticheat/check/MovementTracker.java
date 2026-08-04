@@ -3,6 +3,7 @@ package cn.haitang.anticheat.check;
 import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.util.MoveUtil;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Tag;
@@ -109,13 +110,18 @@ public class MovementTracker implements Listener {
             if (below == Material.SLIME_BLOCK || Tag.BEDS.isTagged(below)) data.touchBounce();
         }
 
-        if (MoveUtil.touchingLiquid(player)) data.touchLiquid();
-        if (MoveUtil.isClimbing(player)) data.touchClimb();
+        // ---- 环境状态采样（节流）----
+        // 液体/攀爬/蛛网等慢变状态每 5 tick（250ms）才重查一次，中间沿用旧值。
+        // 每个移动包都做 getBlockAt 查询是主线程热路径的浪费；状态变化远慢于移动频率。
+        if (data.shouldSampleEnvironment(Bukkit.getCurrentTick(), 5)) {
+            if (MoveUtil.touchingLiquid(player)) data.touchLiquid();
+            if (MoveUtil.isClimbing(player)) data.touchClimb();
+            data.setInWeb(MoveUtil.isInWeb(player));
+        }
         if (player.isGliding()) data.touchGlide();
         if (player.isRiptiding()) data.touchRiptide();
         if (player.hasPotionEffect(PotionEffectType.LEVITATION)) data.touchLevitation();
         if (player.hasPotionEffect(PotionEffectType.SLOW_FALLING)) data.touchSlowFall();
-        data.setInWeb(MoveUtil.isInWeb(player));
         data.stageHoneyProbe(to);
 
         // ---- 速度采样窗口 ----

@@ -111,13 +111,24 @@ public class ReachCheck extends Check {
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
+    /** 1.20.5+ 的实体交互范围属性；旧版本不存在，用反射探测一次后缓存。 */
+    private static volatile org.bukkit.attribute.Attribute interactionRangeAttribute;
+
     private double interactionRange(Player player) {
         try {
-            Object registry = org.bukkit.Registry.class.getField("ATTRIBUTE").get(null);
-            Object attribute = registry.getClass().getMethod("get", NamespacedKey.class)
-                    .invoke(registry, NamespacedKey.minecraft("player.entity_interaction_range"));
-            if (attribute instanceof org.bukkit.attribute.Attribute typed) {
-                var instance = player.getAttribute(typed);
+            org.bukkit.attribute.Attribute attribute = interactionRangeAttribute;
+            if (attribute == null) {
+                // 反射只做一次（首次命中时），之后走缓存；旧版本 API 无此属性时保持 null。
+                Object registry = org.bukkit.Registry.class.getField("ATTRIBUTE").get(null);
+                Object value = registry.getClass().getMethod("get", NamespacedKey.class)
+                        .invoke(registry, NamespacedKey.minecraft("player.entity_interaction_range"));
+                if (value instanceof org.bukkit.attribute.Attribute typed) {
+                    attribute = typed;
+                    interactionRangeAttribute = typed;
+                }
+            }
+            if (attribute != null) {
+                var instance = player.getAttribute(attribute);
                 if (instance != null && instance.getValue() > 0) return instance.getValue();
             }
         } catch (ReflectiveOperationException ignored) {

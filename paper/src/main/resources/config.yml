@@ -312,8 +312,10 @@ checks:
     min-horizontal-per-move: 0.08
     max-horizontal-per-move: 10.0
     # from→to 采样密度（按位移长度自适应，落在此区间内）
+    # 上限不宜过大：8 格位移 × 3 个采样高度 ≈ 上百次方块碰撞查询（主线程热路径）。
+    # 超大位移本就会由传送/速度检测覆盖，Phase 只需中等密度确认即可。
     min-samples: 4
-    max-samples: 40
+    max-samples: 24
     # 单次穿墙的证据增量与累积衰减；buffer-to-flag 约等于连续 2 次即上报
     buffer-increment: 2.0
     buffer-decay: 0.5

@@ -66,6 +66,7 @@ public class ConnectionListener implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         plugin.getCombatAttackContext().remove(event.getPlayer().getUniqueId());
+        plugin.getAlertManager().onPlayerQuit(event.getPlayer().getUniqueId());
         if (plugin.getPacketTimeline() != null) {
             plugin.getPacketTimeline().remove(event.getPlayer().getUniqueId());
         }

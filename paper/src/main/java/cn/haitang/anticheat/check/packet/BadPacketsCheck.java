@@ -136,6 +136,9 @@ public class BadPacketsCheck extends Check {
         }
         if (nbt == null || nbt.isEmpty()) return null;
         int depth = estimateNbtDepth(nbt);
+        if (depth < 0) {
+            return "NBT 嵌套深度异常，超过遍历上限";
+        }
         if (depth > maxNbtDepth) {
             return String.format("NBT 深度 %d 超过上限 %d", depth, maxNbtDepth);
         }
@@ -146,16 +149,27 @@ public class BadPacketsCheck extends Check {
         return null;
     }
 
-    /** NBT 树的最大嵌套深度（根为 1）。 */
+    /** NBT 树的最大嵌套深度（根为 1）。超过硬上限即返回 -1（异常深，不再继续递归）。 */
     static int estimateNbtDepth(NBT nbt) {
+        return estimateNbtDepth(nbt, 0);
+    }
+
+    private static final int MAX_TRAVERSE_DEPTH = 4096;
+
+    private static int estimateNbtDepth(NBT nbt, int depth) {
+        if (depth >= MAX_TRAVERSE_DEPTH) return -1;
         int deepest = 1;
         if (nbt instanceof NBTCompound compound) {
             for (NBT tag : compound.getTags().values()) {
-                deepest = Math.max(deepest, 1 + estimateNbtDepth(tag));
+                int child = estimateNbtDepth(tag, depth + 1);
+                if (child < 0) return -1;
+                deepest = Math.max(deepest, 1 + child);
             }
         } else if (nbt instanceof NBTList<?> list) {
             for (NBT tag : list.getTags()) {
-                deepest = Math.max(deepest, 1 + estimateNbtDepth(tag));
+                int child = estimateNbtDepth(tag, depth + 1);
+                if (child < 0) return -1;
+                deepest = Math.max(deepest, 1 + child);
             }
         }
         return deepest;

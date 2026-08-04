@@ -69,6 +69,12 @@ final class VirtualProbeManager {
                 Math.max(1, cfgI("distinct-targets-to-flag", 2)));
         for (int index = 0; index < count; index++) {
             int entityId = entityIds.getAndDecrement();
+            if (entityId < 1_000_000_000) {
+                // 探针 ID 从 2^31 递减，长期运行可能撞上服务端真实实体 ID（从 0 递增）。
+                // 降到阈值以下时重置回起点；极小概率的瞬时重复可接受。
+                entityIds.set(2_000_000_000);
+                entityId = entityIds.getAndDecrement();
+            }
             session.entityIds.add(entityId);
             sendSpawn(owner, entityId, location(owner, index, count, 0L));
         }

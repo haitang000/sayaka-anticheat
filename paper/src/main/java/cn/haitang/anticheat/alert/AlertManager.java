@@ -65,6 +65,11 @@ public class AlertManager {
         return false;                                  // 已关闭
     }
 
+    /** 玩家退出时清除其警报开关记录，防止集合无限增长。 */
+    public void onPlayerQuit(UUID playerId) {
+        alertsDisabled.remove(playerId);
+    }
+
     // ---- 玩家警告（递进第 1、2 级） ----
 
     public boolean warnPlayer(Player player, CheckType type, int stage) {
