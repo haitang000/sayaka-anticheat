@@ -26,9 +26,9 @@ import cn.haitang.anticheat.shared.NetworkModels.PunishmentFilter;
 import cn.haitang.anticheat.shared.NetworkModels.PunishmentView;
 import cn.haitang.anticheat.shared.NetworkModels.TimeBucket;
 import cn.haitang.anticheat.shared.NetworkModels.WarningEvidence;
+import com.zaxxer.hikari.HikariDataSource;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -44,9 +44,26 @@ import java.util.concurrent.locks.LockSupport;
 /** MariaDB-backed network state shared by every Paper server and the Velocity proxy. */
 public final class JdbcNetworkStore {
     private final DatabaseConfig config;
+    private final HikariDataSource dataSource;
 
     public JdbcNetworkStore(DatabaseConfig config) {
         this.config = config;
+        this.dataSource = new HikariDataSource();
+        dataSource.setJdbcUrl(config.jdbcUrl());
+        dataSource.setUsername(config.username());
+        dataSource.setPassword(config.password());
+        // 连接池：高并发（面板查询 + 多 Paper 节点）下复用连接，避免每次操作新建连接
+        // 打满数据库 max_connections。池大小按群组规模取合理默认。
+        dataSource.setMaximumPoolSize(10);
+        dataSource.setMinimumIdle(2);
+        dataSource.setConnectionTimeout(10_000);
+        dataSource.setMaxLifetime(1_800_000);
+        dataSource.setPoolName("sayaka-store");
+    }
+
+    /** 释放连接池。插件禁用/代理停止时应调用，避免连接泄漏。 */
+    public void close() {
+        dataSource.close();
     }
 
     private Connection open() throws SQLException {
@@ -55,7 +72,7 @@ public final class JdbcNetworkStore {
         } catch (ClassNotFoundException error) {
             throw new SQLException("MariaDB JDBC driver is not available", error);
         }
-        return DriverManager.getConnection(config.jdbcUrl(), config.username(), config.password());
+        return dataSource.getConnection();
     }
 
     public void initialize() throws SQLException {

@@ -118,6 +118,10 @@ public final class VelocityCore implements CoreBridge {
         }
         banCache.clear();
         databaseReady = false;
+        if (store != null) {
+            store.close();
+            store = null;
+        }
     }
 
     @Override

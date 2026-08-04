@@ -25,6 +25,11 @@ public final class NetworkPersistentStore extends PersistentStore {
     private volatile long nextWhitelistRefresh;
     private volatile long nextErrorLog;
 
+    /** 释放底层数据库连接池；插件禁用时调用。 */
+    public void close() {
+        repository.close();
+    }
+
     public NetworkPersistentStore(AntiCheatPlugin plugin, JdbcNetworkStore repository, String serverId) {
         super(plugin);
         this.plugin = plugin;

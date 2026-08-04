@@ -247,6 +247,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
         if (packetTimeline != null) packetTimeline.shutdown();
         if (entityPositionHistory != null) entityPositionHistory.shutdown();
         if (store != null) store.saveNow();
+        if (store instanceof NetworkPersistentStore networkStore) networkStore.close();
         if (analysisExecutor != null) analysisExecutor.shutdown();
     }
 
