@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Plugin(
         id = "sayaka-anticheat",
         name = "Sayaka AntiCheat Velocity",
-        version = "2.1.0.9-beta.6",
+        version = "2.2.0.1-beta.1",
         authors = {"haitang"}
 )
 public final class SayakaVelocityPlugin {
