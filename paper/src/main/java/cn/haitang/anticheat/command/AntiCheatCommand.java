@@ -68,6 +68,7 @@ public class AntiCheatCommand implements TabExecutor {
             case "whitelist" -> handleWhitelist(sender, args);
             case "unban" -> handleUnban(sender, args);
             case "web" -> handleWeb(sender);
+            case "preset" -> handlePreset(sender, args);
             default -> sendHelp(sender);
         }
         return true;
@@ -87,6 +88,32 @@ public class AntiCheatCommand implements TabExecutor {
         if (denyIfNoPerm(sender, AlertManager.PERM_ALERTS)) return;
         boolean on = plugin.getAlertManager().toggleAlerts(player);
         sender.sendMessage(plugin.getMessages().prefixed(on ? "alerts-on" : "alerts-off", null));
+    }
+
+    private void handlePreset(CommandSender sender, String[] args) {
+        if (denyIfNoPerm(sender, PERM_ADMIN)) return;
+        if (args.length < 2) {
+            String current = plugin.config().getString("settings.preset", "balanced");
+            sender.sendMessage(plugin.getMessages().prefix() + "§7当前预设档: §f" + current
+                    + " §7（§estrict§7/§ebalanced§7/§elenient§7）");
+            return;
+        }
+        String preset = args[1].toLowerCase(java.util.Locale.ROOT);
+        if (!preset.equals("strict") && !preset.equals("balanced") && !preset.equals("lenient")) {
+            sender.sendMessage(plugin.getMessages().prefix() + "§c无效预设档，可用: strict / balanced / lenient");
+            return;
+        }
+        // 写入磁盘配置并热重载
+        plugin.getConfig().set("settings.preset", preset);
+        plugin.saveConfig();
+        List<String> errors = plugin.reloadRuntimeConfig();
+        if (!errors.isEmpty()) {
+            sender.sendMessage(plugin.getMessages().prefix() + "§c预设档已写入，但配置重载失败：");
+            errors.forEach(error -> sender.sendMessage("  §7- §c" + error));
+            return;
+        }
+        sender.sendMessage(plugin.getMessages().prefix() + "§a预设档已切换为 §f" + preset
+                + "§a（strict=少漏判 / balanced=均衡 / lenient=少误判）");
     }
 
     private void handleReload(CommandSender sender) {
@@ -394,6 +421,7 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage("  §e/sac unban <玩家> [reset] §7- 解封（reset 重置处罚档位）");
         sender.sendMessage("  §e/sac web §7- 生成管理后台一次性登录链接");
         sender.sendMessage("  §e/sac alerts §7- 开关个人实时警报");
+        sender.sendMessage("  §e/sac preset [strict|balanced|lenient] §7- 查看/切换预设档");
         sender.sendMessage("  §e/sac reload §7- 重载配置");
         sender.sendMessage("  §e/sac update [check] §7- 安装更新并热重载（check 仅检查）");
     }
@@ -419,7 +447,7 @@ public class AntiCheatCommand implements TabExecutor {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
         if (args.length == 1) {
-            for (String sub : List.of("status", "history", "punishment", "reset", "whitelist", "unban", "web", "alerts", "reload", "update")) {
+            for (String sub : List.of("status", "history", "punishment", "reset", "whitelist", "unban", "web", "alerts", "reload", "update", "preset")) {
                 if (sub.startsWith(args[0].toLowerCase()) && sender.hasPermission(permissionFor(sub))) {
                     out.add(sub);
                 }
@@ -427,6 +455,12 @@ public class AntiCheatCommand implements TabExecutor {
             return out;
         }
         if (!sender.hasPermission(permissionFor(args[0]))) return out;
+        if (args.length == 2 && args[0].equalsIgnoreCase("preset")) {
+            for (String p : List.of("strict", "balanced", "lenient")) {
+                if (p.startsWith(args[1].toLowerCase(java.util.Locale.ROOT))) out.add(p);
+            }
+            return out;
+        }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("update")) {
             if ("check".startsWith(args[1].toLowerCase())) out.add("check");

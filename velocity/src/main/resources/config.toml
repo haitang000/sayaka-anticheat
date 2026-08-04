@@ -15,6 +15,16 @@ default-enabled = true
 # lobby = false
 # survival = true
 
+[preset]
+# 预设档：strict（少漏判）/ balanced（均衡）/ lenient（少误判）
+# 所有后端服务器的默认档位；未在 servers 中单独配置的服务器使用此值。
+default = "balanced"
+
+[preset.servers]
+# 按 Velocity 服务器名单独指定预设档（会覆盖 Paper 端 config.yml 的 settings.preset）。
+# lobby = "lenient"
+# survival = "strict"
+
 [web]
 enabled = true
 bind = "127.0.0.1"

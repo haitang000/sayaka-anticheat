@@ -58,6 +58,7 @@ public final class VelocityCore implements CoreBridge {
     private VelocitySettings settings;
     private JdbcNetworkStore store;
     private ProtectionState protection;
+    private PresetState presets;
     private VelocityUpdateManager updateManager;
     private DashboardServer dashboard;
     private ScheduledTask recoveryTask;
@@ -82,6 +83,7 @@ public final class VelocityCore implements CoreBridge {
         settings = VelocitySettings.load(dataDirectory);
         store = new JdbcNetworkStore(settings.database());
         protection = ProtectionState.fromSettings(settings);
+        presets = PresetState.fromSettings(settings);
         updateManager = new VelocityUpdateManager(coreVersion, dataDirectory.resolve("updates"));
         recoverServices();
         proxy.getChannelRegistrar().register(WEB_LOGIN_CHANNEL);
@@ -173,13 +175,14 @@ public final class VelocityCore implements CoreBridge {
             }
             try {
                 protection.loadRuntimeOverrides(store.protectionOverrides());
+                presets.loadRuntimeOverrides(store.presetOverrides());
             } catch (SQLException error) {
                 logger.warn("Sayaka 保护开关覆盖读取失败，暂用配置文件默认值: {}", error.getMessage());
             }
         }
         if (settings.webEnabled() && dashboard == null) {
             try {
-                dashboard = DashboardServer.start(store, networkControl(), updateManager, protection,
+                dashboard = DashboardServer.start(store, networkControl(), updateManager, protection, presets,
                         banCache::remove, settings, logger, null, context.reloader());
             } catch (Exception error) {
                 logger.warn("Sayaka Web 面板暂未启动，将在 30 秒后重试: {}", error.getMessage());

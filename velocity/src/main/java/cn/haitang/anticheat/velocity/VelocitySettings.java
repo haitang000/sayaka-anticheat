@@ -29,17 +29,20 @@ record VelocitySettings(
         long loginWindowMillis,
         long sessionIdleMillis,
         boolean protectionDefaultEnabled,
-        Map<String, Boolean> serverProtection
+        Map<String, Boolean> serverProtection,
+        String presetDefault,
+        Map<String, String> serverPresets
 ) {
     VelocitySettings {
         serverProtection = Map.copyOf(serverProtection);
+        serverPresets = Map.copyOf(serverPresets);
     }
 
     VelocitySettings(String serverId, DatabaseConfig database, boolean webEnabled, String webBind,
                      int webPort, String webPublicUrl, String adminToken, int webThreads,
                      long banCacheMillis) {
         this(serverId, database, webEnabled, webBind, webPort, webPublicUrl, adminToken, webThreads,
-                banCacheMillis, 3, 10, 600_000L, 43_200_000L, true, Map.of());
+                banCacheMillis, 3, 10, 600_000L, 43_200_000L, true, Map.of(), "balanced", Map.of());
     }
 
     VelocitySettings(String serverId, DatabaseConfig database, boolean webEnabled, String webBind,
@@ -48,7 +51,7 @@ record VelocitySettings(
                      long loginWindowMillis, long sessionIdleMillis) {
         this(serverId, database, webEnabled, webBind, webPort, webPublicUrl, adminToken, webThreads,
                 banCacheMillis, captchaAfterFailures, loginFailureLimit, loginWindowMillis,
-                sessionIdleMillis, true, Map.of());
+                sessionIdleMillis, true, Map.of(), "balanced", Map.of());
     }
 
     static VelocitySettings load(Path dataDirectory) throws IOException {
@@ -71,6 +74,13 @@ record VelocitySettings(
         long sessionIdleMillis = secondsToMillis(toml, "web.security.session-idle-seconds", 43_200L);
         boolean protectionDefaultEnabled = toml.getBoolean("protection.default-enabled", () -> true);
         Map<String, Boolean> serverProtection = loadServerProtection(toml);
+        String presetDefault = toml.getString("preset.default", () -> "balanced")
+                .trim().toLowerCase(Locale.ROOT);
+        if (!presetDefault.equals("strict") && !presetDefault.equals("balanced")
+                && !presetDefault.equals("lenient")) {
+            throw new IOException("preset.default must be strict, balanced, or lenient");
+        }
+        Map<String, String> serverPresets = loadServerPresets(toml);
         if (port < 1 || port > 65535) throw new IOException("web.port must be between 1 and 65535");
         if (threads < 1) throw new IOException("web.threads must be positive");
         if (loginFailureLimit <= captchaAfterFailures) {
@@ -96,7 +106,9 @@ record VelocitySettings(
                 loginWindowMillis,
                 sessionIdleMillis,
                 protectionDefaultEnabled,
-                serverProtection);
+                serverProtection,
+                presetDefault,
+                serverPresets);
     }
 
     boolean protectionEnabledFor(String serverName) {
@@ -105,6 +117,36 @@ record VelocitySettings(
                 protectionDefaultEnabled);
     }
 
+
+    /** 某个后端服务器使用的预设档；未单独配置时回落到全局默认。 */
+    String presetFor(String serverName) {
+        if (serverName == null) return presetDefault;
+        return serverPresets.getOrDefault(serverName.toLowerCase(Locale.ROOT), presetDefault);
+    }
+
+    private static Map<String, String> loadServerPresets(TomlParseResult toml) throws IOException {
+        TomlTable servers = toml.getTable("preset.servers");
+        if (servers == null) return Map.of();
+        Map<String, String> result = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : servers.entrySet()) {
+            String serverName = entry.getKey().trim();
+            if (serverName.isEmpty()) {
+                throw new IOException("preset.servers keys must not be blank");
+            }
+            if (!(entry.getValue() instanceof String preset)) {
+                throw new IOException("preset.servers." + entry.getKey() + " must be strict/balanced/lenient");
+            }
+            String normalized = serverName.toLowerCase(Locale.ROOT);
+            String value = preset.trim().toLowerCase(Locale.ROOT);
+            if (!value.equals("strict") && !value.equals("balanced") && !value.equals("lenient")) {
+                throw new IOException("preset.servers." + entry.getKey() + " must be strict/balanced/lenient");
+            }
+            if (result.putIfAbsent(normalized, value) != null) {
+                throw new IOException("preset.servers contains duplicate server name: " + serverName);
+            }
+        }
+        return result;
+    }
     private static Map<String, Boolean> loadServerProtection(TomlParseResult toml) throws IOException {
         TomlTable servers = toml.getTable("protection.servers");
         if (servers == null) return Map.of();

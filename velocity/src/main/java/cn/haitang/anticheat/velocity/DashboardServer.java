@@ -58,6 +58,7 @@ final class DashboardServer {
     private final NetworkControl control;
     private final VelocityUpdateManager updateManager;
     private final ProtectionState protection;
+    private final PresetState presets;
     private final Consumer<UUID> invalidateBanCache;
     private final HttpServer server;
     private final ThreadPoolExecutor executor;
@@ -71,7 +72,7 @@ final class DashboardServer {
     private final OneTimeLoginTokens loginTokens = new OneTimeLoginTokens();
 
     private DashboardServer(JdbcNetworkStore store, NetworkControl control,
-                            VelocityUpdateManager updateManager, ProtectionState protection,
+                            VelocityUpdateManager updateManager, ProtectionState protection, PresetState presets,
                             Consumer<UUID> invalidateBanCache, HttpServer server,
                             ThreadPoolExecutor executor, AdminAuthService adminAuth,
                             CaptchaService appealCaptchas, String indexHtml,
@@ -81,6 +82,7 @@ final class DashboardServer {
         this.control = control;
         this.updateManager = updateManager;
         this.protection = protection;
+        this.presets = presets;
         this.invalidateBanCache = invalidateBanCache;
         this.server = server;
         this.executor = executor;
@@ -108,45 +110,45 @@ final class DashboardServer {
                                  VelocitySettings settings, Logger logger,
                                  AdminAuthService injectedAuth) throws IOException {
         return start(store, controlFrom(onlinePlayers), null, ProtectionState.fromSettings(settings),
-                invalidateBanCache, settings, logger, injectedAuth);
+                PresetState.fromSettings(settings), invalidateBanCache, settings, logger, injectedAuth);
     }
 
     static DashboardServer start(JdbcNetworkStore store, IntSupplier onlinePlayers,
                                  VelocitySettings settings, Logger logger,
                                  CaptchaService injectedAppealCaptchas) throws IOException {
         return start(store, controlFrom(onlinePlayers), null, ProtectionState.fromSettings(settings),
-                ignored -> {}, settings, logger, null, null, injectedAppealCaptchas);
+                PresetState.fromSettings(settings), ignored -> {}, settings, logger, null, null, injectedAppealCaptchas);
     }
 
     static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
-                                 VelocityUpdateManager updateManager, ProtectionState protection,
+                                 VelocityUpdateManager updateManager, ProtectionState protection, PresetState presets,
                                  Consumer<UUID> invalidateBanCache, VelocitySettings settings,
                                  Logger logger) throws IOException {
-        return start(store, control, updateManager, protection, invalidateBanCache, settings, logger,
+        return start(store, control, updateManager, protection, presets, invalidateBanCache, settings, logger,
                 null, null);
     }
 
     static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
-                                 VelocityUpdateManager updateManager, ProtectionState protection,
+                                 VelocityUpdateManager updateManager, ProtectionState protection, PresetState presets,
                                  Consumer<UUID> invalidateBanCache, VelocitySettings settings,
                                  Logger logger, AdminAuthService injectedAuth) throws IOException {
-        return start(store, control, updateManager, protection, invalidateBanCache, settings, logger,
+        return start(store, control, updateManager, protection, presets, invalidateBanCache, settings, logger,
                 injectedAuth, null);
     }
 
     static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
-                                 VelocityUpdateManager updateManager, ProtectionState protection,
+                                 VelocityUpdateManager updateManager, ProtectionState protection, PresetState presets,
                                  Consumer<UUID> invalidateBanCache, VelocitySettings settings,
                                  Logger logger, AdminAuthService injectedAuth,
                                  cn.haitang.anticheat.velocity.boot.HotReloader reloader)
             throws IOException {
-        return start(store, control, updateManager, protection, invalidateBanCache, settings, logger,
+        return start(store, control, updateManager, protection, presets, invalidateBanCache, settings, logger,
                 injectedAuth, reloader, null);
     }
 
     private static DashboardServer start(JdbcNetworkStore store, NetworkControl control,
                                          VelocityUpdateManager updateManager,
-                                         ProtectionState protection,
+                                         ProtectionState protection, PresetState presets,
                                          Consumer<UUID> invalidateBanCache,
                                          VelocitySettings settings, Logger logger,
                                          AdminAuthService injectedAuth,
@@ -172,7 +174,7 @@ final class DashboardServer {
         CaptchaService appealCaptchas = injectedAppealCaptchas == null
                 ? new CaptchaService() : injectedAppealCaptchas;
         DashboardServer dashboard = new DashboardServer(
-                store, control, updateManager, protection, invalidateBanCache, server, executor,
+                store, control, updateManager, protection, presets, invalidateBanCache, server, executor,
                 adminAuth, appealCaptchas, html, settings.webPublicUrl(), settings.serverId(), reloader);
         dashboard.register();
         server.start();
@@ -258,6 +260,7 @@ final class DashboardServer {
         server.createContext("/api/admin/network/broadcast", wrap(admin(this::broadcast)));
         server.createContext("/api/admin/network/servers", wrap(admin(this::networkServers)));
         server.createContext("/api/admin/protection/set", wrap(admin(this::setProtection)));
+        server.createContext("/api/admin/preset/set", wrap(admin(this::setPreset)));
         server.createContext("/", wrap(this::staticFile));
     }
 
@@ -828,6 +831,9 @@ final class DashboardServer {
         map.put("reachable", reachable);
         map.put("ping", ping);
         map.put("protectionEnabled", protection.enabledFor(name));
+        map.put("preset", presets.presetFor(name));
+        map.put("presetSource", presets.hasRuntimeOverride(name) ? "override"
+                : presets.hasConfigOverride(name) ? "config" : "default");
         map.put("source", protection.hasRuntimeOverride(name) ? "override"
                 : protection.hasConfigOverride(name) ? "config" : "default");
         return map;
@@ -849,6 +855,29 @@ final class DashboardServer {
             throw new HttpError(400, "缺少 enabled 布尔值");
         }
         sendJson(exchange, 200, Map.of("ok", true, "protectionEnabled", protection.enabledFor(server)));
+    }
+
+
+    private void setPreset(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        Map<String, Object> json = readJson(exchange);
+        String server = string(json.get("server")).trim();
+        if (server.isEmpty()) throw new HttpError(400, "缺少服务器名称");
+        if (server.length() > 64) throw new HttpError(400, "服务器名称过长");
+        if (Boolean.TRUE.equals(json.get("reset"))) {
+            store.clearPresetOverride(server);
+            presets.clearRuntimeOverride(server);
+        } else if (json.get("preset") instanceof String preset) {
+            String value = preset.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!value.equals("strict") && !value.equals("balanced") && !value.equals("lenient")) {
+                throw new HttpError(400, "preset 必须是 strict/balanced/lenient");
+            }
+            store.setPresetOverride(server, value, System.currentTimeMillis());
+            presets.setRuntimeOverride(server, value);
+        } else {
+            throw new HttpError(400, "缺少 preset 值或 reset 标记");
+        }
+        sendJson(exchange, 200, Map.of("ok", true, "preset", presets.presetFor(server)));
     }
 
     private PunishmentFilter punishmentFilter(HttpExchange exchange) {

@@ -87,6 +87,9 @@ public final class JdbcNetworkStore {
                         + "resolved_at BIGINT NOT NULL DEFAULT 0, note_text VARCHAR(2000) NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS sayaka_protection_overrides ("
                         + "server_name VARCHAR(64) PRIMARY KEY, enabled BOOLEAN NOT NULL, "
+                        + "updated_at BIGINT NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS sayaka_preset_overrides ("
+                        + "server_name VARCHAR(64) PRIMARY KEY, preset VARCHAR(16) NOT NULL, "
                         + "updated_at BIGINT NOT NULL)"
         );
         List<IndexSpec> indexes = List.of(
@@ -924,6 +927,46 @@ public final class JdbcNetworkStore {
     public boolean clearProtectionOverride(String serverName) throws SQLException {
         try (Connection connection = open()) {
             return execute(connection, "DELETE FROM sayaka_protection_overrides WHERE server_name=?",
+                    normalizeServerName(serverName)) > 0;
+        }
+    }
+
+
+    /** Reads every persisted per-server preset override, keyed by lower-cased server name. */
+    public Map<String, String> presetOverrides() throws SQLException {
+        Map<String, String> overrides = new java.util.LinkedHashMap<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT server_name,preset FROM sayaka_preset_overrides ORDER BY server_name")) {
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    overrides.put(result.getString("server_name"), result.getString("preset"));
+                }
+            }
+        }
+        return overrides;
+    }
+
+    /** Persists a per-server preset override, replacing any existing value for that server. */
+    public void setPresetOverride(String serverName, String preset, long now) throws SQLException {
+        String normalized = normalizeServerName(serverName);
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try {
+                execute(connection, "DELETE FROM sayaka_preset_overrides WHERE server_name=?", normalized);
+                execute(connection, "INSERT INTO sayaka_preset_overrides"
+                        + "(server_name,preset,updated_at) VALUES(?,?,?)", normalized, preset, now);
+                connection.commit();
+            } catch (SQLException | RuntimeException error) {
+                connection.rollback();
+                throw error;
+            }
+        }
+    }
+
+    /** Removes a per-server preset override, reverting that server to the configured default. */
+    public boolean clearPresetOverride(String serverName) throws SQLException {
+        try (Connection connection = open()) {
+            return execute(connection, "DELETE FROM sayaka_preset_overrides WHERE server_name=?",
                     normalizeServerName(serverName)) > 0;
         }
     }

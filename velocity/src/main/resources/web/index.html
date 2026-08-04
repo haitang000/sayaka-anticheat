@@ -1092,6 +1092,14 @@
         catch (error) { message.error(error.message); }
         finally { setSavingKey(null); }
       };
+      const setPreset = async (name, preset) => {
+        setSavingKey(name);
+        try { await api('/api/admin/preset/set', { method: 'POST', token, body: { server: name, preset } });
+          message.success('预设档已更新'); await load(); }
+        catch (error) { message.error(error.message); }
+        finally { setSavingKey(null); }
+      };
+      const PRESET_META = { strict: { color: 'red', label: '严格' }, balanced: { color: 'blue', label: '均衡' }, lenient: { color: 'green', label: '宽松' } };
       const columns = [
         { title: '节点', dataIndex: 'name', render: (value) => <Text strong>{value}</Text> },
         { title: '在线', dataIndex: 'playerCount', width: 80 },
@@ -1100,6 +1108,12 @@
         { title: '反作弊保护', dataIndex: 'protectionEnabled', width: 120, render: (value, row) =>
           <Switch checked={value} loading={savingKey === row.name}
             onChange={(checked) => setProtection(row.name, { enabled: checked })} /> },
+        { title: '预设档', dataIndex: 'preset', width: 120, render: (value, row) => {
+            const m = PRESET_META[value] || { color: 'default', label: value };
+            return <Select value={value} size="small" loading={savingKey === row.name}
+              style={{ width: 90 }} onChange={(v) => setPreset(row.name, v)}
+              options={[{ value: 'strict', label: '严格' }, { value: 'balanced', label: '均衡' }, { value: 'lenient', label: '宽松' }]} />;
+          } },
         { title: '来源', dataIndex: 'source', width: 110, render: (value) => { const m = SOURCE_META(value); return <Tag color={m.color}>{m.label}</Tag>; } },
         { title: '操作', key: 'op', width: 110, render: (_, row) => row.source === 'override'
           ? <Button size="small" icon={icon('RollbackOutlined')} loading={savingKey === row.name}

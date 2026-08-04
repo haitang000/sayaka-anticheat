@@ -312,7 +312,7 @@ class DashboardServerTest {
         store.initialize();
         VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
                 true, "127.0.0.1", 0, "", "test-token", 1, 1000L,
-                1, 3, 600_000L, 43_200_000L, true, Map.of());
+                1, 3, 600_000L, 43_200_000L, true, Map.of(), "balanced", Map.of());
         AtomicLong now = new AtomicLong(1_000L);
         AdminAuthService auth = new AdminAuthService("test-token", 1, 3,
                 600_000L, 43_200_000L, now::get, new SecureRandom(), () -> "ABCDE",
@@ -376,7 +376,7 @@ class DashboardServerTest {
         VelocityUpdateManager updateManager = new VelocityUpdateManager(
                 "2.1.0.5", tempDir.resolve("updates"));
         DashboardServer dashboard = DashboardServer.start(store, control, updateManager, protection,
-                ignored -> {}, settings, LoggerFactory.getLogger("dashboard-ops-test"));
+                PresetState.fromSettings(settings), ignored -> {}, settings, LoggerFactory.getLogger("dashboard-ops-test"));
         try {
             URI root = URI.create("http://127.0.0.1:" + dashboard.port());
             HttpClient client = HttpClient.newHttpClient();
@@ -457,7 +457,7 @@ class DashboardServerTest {
         VelocitySettings settings = new VelocitySettings("velocity-test", databaseConfig,
                 true, "127.0.0.1", 0, "", "test-token", 1, 1000L);
         DashboardServer dashboard = DashboardServer.start(store, control, null,
-                ProtectionState.fromSettings(settings), ignored -> {}, settings,
+                ProtectionState.fromSettings(settings), PresetState.fromSettings(settings), ignored -> {}, settings,
                 LoggerFactory.getLogger("dashboard-features-test"));
         try {
             URI root = URI.create("http://127.0.0.1:" + dashboard.port());
