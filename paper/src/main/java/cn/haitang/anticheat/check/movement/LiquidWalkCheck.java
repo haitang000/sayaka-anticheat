@@ -158,7 +158,9 @@ public class LiquidWalkCheck extends Check {
             target = from;
         }
         data.touchSetback();
-        event.setTo(target);
+        data.getSpeedWindow().clear();
+        data.resetAirborneState(target.getY());
+        event.setTo(target.clone());
     }
 
     private record SurfaceState(boolean feetClear, boolean fullLiquidFootprint,

@@ -85,6 +85,8 @@ public class GlideCheck extends Check {
             target = from;
         }
         data.touchSetback();
-        event.setTo(target);
+        data.getSpeedWindow().clear();
+        data.resetAirborneState(target.getY());
+        event.setTo(target.clone());
     }
 }

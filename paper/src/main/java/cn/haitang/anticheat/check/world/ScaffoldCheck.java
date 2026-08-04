@@ -87,13 +87,15 @@ public class ScaffoldCheck extends Check {
         }
 
         // ---- 3. 视角特征：延伸搭路却不低头 ----
+        // Minecraft 俯仰角：向下为负（-90 为正下方），正常搭路低头约 -50°~-85°。
+        // 可疑的是低头不足（pitch 接近 0 或为正），即 -pitch < min-pitch。
         float pitch = loc.getPitch();
         boolean moving = data.getLastDeltaXZ() > 0.08 || data.getAirTicks() > 0;
-        if (moving && pitch < cfgD("min-pitch", 35.0)) {
+        if (moving && -pitch < cfgD("min-pitch", 35.0)) {
             double buffered = data.buffer(type(), 1.0);
             if (buffered >= cfgD("buffer-to-flag", 3.0)) {
                 data.resetBuffer(type());
-                flag(player, 1.5, String.format("俯视角仅 %.0f° 却在脚下垫块", pitch));
+                flag(player, 1.5, String.format("低头仅 %.0f° 却在脚下垫块", -pitch));
                 if (cfgB("cancel", true) && shouldMitigate(player)) event.setCancelled(true);
             }
         } else {

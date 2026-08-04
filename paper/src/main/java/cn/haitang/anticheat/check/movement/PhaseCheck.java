@@ -142,7 +142,9 @@ public class PhaseCheck extends Check {
             target = from;
         }
         data.touchSetback();
-        event.setTo(target);
+        data.getSpeedWindow().clear();
+        data.resetAirborneState(target.getY());
+        event.setTo(target.clone());
     }
 
     private static int clamp(int value, int min, int max) {

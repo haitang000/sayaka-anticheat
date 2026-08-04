@@ -64,6 +64,8 @@ public class FastLadderCheck extends Check {
             target = from;
         }
         data.touchSetback();
-        event.setTo(target);
+        data.getSpeedWindow().clear();
+        data.resetAirborneState(target.getY());
+        event.setTo(target.clone());
     }
 }
