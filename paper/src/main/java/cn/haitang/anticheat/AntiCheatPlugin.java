@@ -96,6 +96,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     private FlightCheck flightCheck;
     private AimCheck aimCheck;
     private BukkitTask saveTask;
+    private cn.haitang.anticheat.preset.PresetSyncListener presetSync;
 
     @Override
     public void onEnable() {
@@ -199,6 +200,8 @@ public final class AntiCheatPlugin extends JavaPlugin {
         aimCheck.start();
         saveTask = getServer().getScheduler().runTaskTimer(this, store::saveAsync, 1200L, 1200L);
         updateManager.start();
+        presetSync = new cn.haitang.anticheat.preset.PresetSyncListener(this);
+        presetSync.start();
 
         // /reload 或热插拔时，为已在线玩家补上基岩身份标记
         getServer().getOnlinePlayers().forEach(p ->
@@ -210,6 +213,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         getServer().getMessenger().unregisterOutgoingPluginChannel(this, WEB_LOGIN_CHANNEL);
+        if (presetSync != null) presetSync.stop();
         if (updateManager != null) updateManager.shutdown();
         if (saveTask != null) saveTask.cancel();
         if (violationManager != null) violationManager.shutdown();

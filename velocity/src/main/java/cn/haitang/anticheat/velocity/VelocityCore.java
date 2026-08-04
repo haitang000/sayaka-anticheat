@@ -47,6 +47,8 @@ public final class VelocityCore implements CoreBridge {
 
     private static final MinecraftChannelIdentifier WEB_LOGIN_CHANNEL =
             MinecraftChannelIdentifier.create("sayaka", "web");
+    private static final MinecraftChannelIdentifier PRESET_CHANNEL =
+            MinecraftChannelIdentifier.create("sayaka", "preset");
 
     private final CoreContext context;
     private final ProxyServer proxy;
@@ -87,6 +89,7 @@ public final class VelocityCore implements CoreBridge {
         updateManager = new VelocityUpdateManager(coreVersion, dataDirectory.resolve("updates"));
         recoverServices();
         proxy.getChannelRegistrar().register(WEB_LOGIN_CHANNEL);
+        proxy.getChannelRegistrar().register(PRESET_CHANNEL);
         recoveryTask = proxy.getScheduler().buildTask(context.pluginInstance(), this::recoverServices)
                 .repeat(30, TimeUnit.SECONDS).schedule();
         logger.info("Sayaka Velocity 内核 {} 已启动，节点 ID: {}", coreVersion, settings.serverId());
@@ -96,6 +99,7 @@ public final class VelocityCore implements CoreBridge {
     public void stop() {
         try {
             proxy.getChannelRegistrar().unregister(WEB_LOGIN_CHANNEL);
+            proxy.getChannelRegistrar().unregister(PRESET_CHANNEL);
         } catch (RuntimeException ignored) {
             // 未注册（start 未走到注册步骤）时保持幂等
         }
@@ -141,6 +145,10 @@ public final class VelocityCore implements CoreBridge {
 
     @Override
     public void onPluginMessage(PluginMessageEvent event) {
+        if (event.getIdentifier().equals(PRESET_CHANNEL)) {
+            handlePresetQuery(event);
+            return;
+        }
         if (!event.getIdentifier().equals(WEB_LOGIN_CHANNEL)) return;
         event.setResult(PluginMessageEvent.ForwardResult.handled());
         if (!(event.getSource() instanceof ServerConnection connection)
@@ -159,6 +167,22 @@ public final class VelocityCore implements CoreBridge {
                         .hoverEvent(HoverEvent.showText(Component.text("链接在 2 分钟内有效且只能使用一次")))));
         connection.getPlayer().sendMessage(Component.text(
                 "链接在 2 分钟内有效且只能使用一次。", NamedTextColor.DARK_GRAY));
+    }
+
+
+    /**
+     * Paper 端启动/重载时通过 sayaka:preset 通道查询自己所属服务器应使用的预设档。
+     * 从连接来源取 Velocity 服务器名，命中 preset.servers 或回落全局默认。
+     */
+    private void handlePresetQuery(PluginMessageEvent event) {
+        event.setResult(PluginMessageEvent.ForwardResult.handled());
+        if (!(event.getSource() instanceof ServerConnection connection)) return;
+        byte[] data = event.getData();
+        if (data.length != 1 || data[0] != 1) return;
+        String serverName = connection.getServerInfo().getName();
+        String preset = presets == null ? "balanced" : presets.presetFor(serverName);
+        byte[] response = preset.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        connection.sendPluginMessage(PRESET_CHANNEL, response);
     }
 
     private synchronized void recoverServices() {
