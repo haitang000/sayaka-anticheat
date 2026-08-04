@@ -36,6 +36,9 @@ web:
 # ============================================================
 
 settings:
+  # 预设档：strict（少漏判）/ balanced（均衡）/ lenient（少误判）
+  # 预设档只提供默认值，你在下面显式写的配置永远优先。
+  preset: balanced
   # 调试模式：控制台输出每次检测的详细数据
   debug: false
   # 在这些世界中不启用检测
@@ -43,7 +46,8 @@ settings:
   # OP 是否自动豁免（拥有 anticheat.bypass 权限的玩家始终豁免）
   exempt-ops: false
   # 玩家进服后的宽限秒数（避免登录瞬移/区块加载误判）
-  join-grace-seconds: 5
+  join-grace-seconds: 8
+
   # TPS 低于此值时，依赖墙钟时间差的检测（FastUse/FastBow/FastBreak/AutoTotem/
   # ChestStealer/Scaffold 等）暂停判定并清空各自的时间窗口。
   # 服务端停顿时积压的客户端包会在同一毫秒内被一次性排空，起止时间差趋近 0，
@@ -144,6 +148,8 @@ checks:
     soul-speed-multiplier: 1.6
     # 缓冲值达到多少才判违规（抗网络抖动）
     buffer-to-flag: 3.0
+
+
     # VL 达到 mitigate-vl 后是否回弹传送
     setback: true
 
@@ -181,7 +187,11 @@ checks:
     gravity-min-air-ticks: 3
     gravity-tolerance: 0.06
     gravity-buffer-to-flag: 4.0
+
+
     buffer-to-flag: 2.0
+
+
     setback: true
 
   # 异常缓降（Glide：未使用鞘翅/缓降效果时持续以过慢速度下落）
@@ -220,6 +230,8 @@ checks:
     boost-grace-ms: 4000
     # 连续两个超限窗口才上报
     buffer-to-flag: 2.0
+
+
     setback: true
 
   # 落地欺骗（NoFall：客户端谎报"在地面"）
@@ -237,7 +249,8 @@ checks:
     enforcement: punish
     # 3 秒窗口平均每秒移动包上限（原版恒定 20/秒）。
     # 有基岩互通(Geyser)或代理转发玩家频繁误报时可调高
-    max-packets-per-second: 24
+    max-packets-per-second: 26
+
     # 仅事件级回退路径使用：同批集中处理的积压包只计一次（抗服务端卡顿尖峰）
     min-gap-ms: 25
     # TPS 低于该值时暂停 Timer 判定并清空窗口；设为 0 可关闭此保护
@@ -350,7 +363,9 @@ checks:
     # 超出 (动态阈值 + cancel-margin) 的命中直接取消
     cancel-margin: 0.2
     cancel-hits: true
-    buffer-to-flag: 2.5
+    buffer-to-flag: 3.0
+
+
 
   # 攻击射线（Hitbox：准星未穿过目标碰撞箱 / 隔墙攻击）
   hitbox:
@@ -375,7 +390,9 @@ checks:
     miss-buffer-increment: 1.0
     blocked-buffer-increment: 2.0
     buffer-decay: 1.0
-    buffer-to-flag: 4.0
+    buffer-to-flag: 4.5
+
+
     block-margin: 0.05
     cancel-missed-hits: true
     cancel-blocked-hits: true
@@ -399,7 +416,9 @@ checks:
     # 窗口内出现多少次快速目标切换判违规（横扫攻击已排除）
     multi-hits-to-flag: 3
     cancel-hits: true
-    buffer-to-flag: 2.5
+    buffer-to-flag: 3.0
+
+
     snapback:
       # 检测攻击前快速吸附目标、攻击后短时间精确返回原视角的自动回正轨迹
       enabled: true
@@ -609,15 +628,20 @@ checks:
     min-displacement: 0.05
     # 还必须沿服务端下发的速度方向完成至少这一比例；检测会校正受击前的主动移动趋势
     min-response-ratio: 0.15
-    buffer-to-flag: 3.0
+    buffer-to-flag: 3.5
+
+
 
   # 自动图腾（AutoTotem：图腾破碎后瞬间补装）
   auto-totem:
     enabled: true
     enforcement: alert
     # 图腾生效到副手补装的最短人类反应毫秒数（作弊通常 0~50ms）
-    min-react-ms: 75
-    buffer-to-flag: 2.0
+    min-react-ms: 100
+
+    buffer-to-flag: 2.5
+
+
 
   # 开容器移动（InventoryMove：打开箱子等界面时照常走动）
   inventory-move:
@@ -636,7 +660,8 @@ checks:
     enabled: true
     enforcement: mitigate
     # 使用核心物品期间允许的最大水平速度 m/s
-    max-using-bps: 3.2
+    max-using-bps: 3.4
+
     # 证据成立时回弹到最后合法落点（样本只取地面移动，跳跃/坠落不参与判定）
     setback: true
     # 开始使用物品后的宽限毫秒（吸收使用前冲刺惯性）
@@ -647,7 +672,9 @@ checks:
     min-use-ticks: 4
     # 每级速度药水效果增加的容差比例
     speed-effect-bonus: 0.25
-    buffer-to-flag: 3.0
+    buffer-to-flag: 3.5
+
+
 
   # 快速使用物品（FastUse）：进食、喝药/牛奶提前完成
   fast-use:
@@ -657,7 +684,9 @@ checks:
     default-min-ms: 1400
     # 海带原版耗时 800ms
     fast-food-min-ms: 700
-    buffer-to-flag: 2.0
+    buffer-to-flag: 2.5
+
+
     # 达到单项拦截 VL 后，是否取消这次物品消耗
     cancel: true
     # Geyser 的使用物品时序可能被协议转换合并，默认不检测基岩版玩家
@@ -670,8 +699,11 @@ checks:
     # 只判断达到该力度的射击，低蓄力快速点射属于正常玩法
     minimum-force: 0.95
     # 原版满弓需要约 1000ms，预留 150ms tick/事件时序余量
-    full-charge-min-ms: 850
-    buffer-to-flag: 2.0
+    full-charge-min-ms: 800
+
+    buffer-to-flag: 2.5
+
+
     cancel: true
     exclude-bedrock: true
 
@@ -681,8 +713,11 @@ checks:
     enforcement: mitigate
     window-ms: 1000
     # 窗口内允许的最大取物动作数；连续两个超限窗口才上报
-    max-actions-per-window: 12
-    buffer-to-flag: 2.0
+    max-actions-per-window: 13
+
+    buffer-to-flag: 2.5
+
+
     cancel: true
     exclude-bedrock: true
 
@@ -691,7 +726,8 @@ checks:
     enabled: true
     enforcement: mitigate
     # 实际挖掘耗时低于理论耗时的多少倍判违规（0.6 = 快 40% 以上）
-    lenience: 0.6
+    lenience: 0.55
+
     # 违规时是否取消该方块破坏
     cancel: true
     # 无挖掘起始包直接破坏的检测（Nuker）。
@@ -719,7 +755,9 @@ checks:
     tower-max-per-second: 2.6
     # 违规时是否取消放置
     cancel: true
-    buffer-to-flag: 3.0
+    buffer-to-flag: 3.5
+
+
     # 不可见面判定：被点击面的外法线必须朝向眼睛，从方块背面放置
     # 只能来自伪造的放置包。仅对完整不透明方块判定
     face-check: true
@@ -734,7 +772,8 @@ checks:
     enforcement: alert
     # 该窗口内最多允许发送的消息数；默认第 6 条开始拦截
     flood-window-ms: 4000
-    max-messages: 5
+    max-messages: 6
+
     # 大小写、空格和标点归一化后，窗口内第几次重复开始拦截
     duplicate-window-ms: 15000
     max-duplicates: 3
