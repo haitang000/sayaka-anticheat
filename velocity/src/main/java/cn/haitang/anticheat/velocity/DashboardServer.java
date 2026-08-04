@@ -261,6 +261,7 @@ final class DashboardServer {
         server.createContext("/api/admin/network/servers", wrap(admin(this::networkServers)));
         server.createContext("/api/admin/protection/set", wrap(admin(this::setProtection)));
         server.createContext("/api/admin/preset/set", wrap(admin(this::setPreset)));
+        server.createContext("/api/admin/update/node", wrap(admin(this::updateNode)));
         server.createContext("/", wrap(this::staticFile));
     }
 
@@ -878,6 +879,23 @@ final class DashboardServer {
             throw new HttpError(400, "缺少 preset 值或 reset 标记");
         }
         sendJson(exchange, 200, Map.of("ok", true, "preset", presets.presetFor(server)));
+    }
+
+    /** 远程更新节点：向指定 Paper 后端发送更新指令，由节点自行完成下载与热重载。 */
+    private void updateNode(HttpExchange exchange) throws Exception {
+        requireMethod(exchange, "POST");
+        Map<String, Object> json = readJson(exchange);
+        String server = string(json.get("server")).trim();
+        if (server.isEmpty()) throw new HttpError(400, "缺少服务器名称");
+        if (server.length() > 64) throw new HttpError(400, "服务器名称过长");
+        if (!control.sendNodeUpdate(server)) {
+            // 服务器不存在或当前没有玩家在线（插件消息需经玩家连接转发）
+            boolean registered = control.servers().stream()
+                    .anyMatch(node -> node.name().equalsIgnoreCase(server));
+            throw new HttpError(registered ? 409 : 404,
+                    registered ? "该节点当前没有在线玩家，无法转发更新指令" : "未找到该节点");
+        }
+        sendJson(exchange, 200, Map.of("ok", true, "server", server));
     }
 
     private PunishmentFilter punishmentFilter(HttpExchange exchange) {

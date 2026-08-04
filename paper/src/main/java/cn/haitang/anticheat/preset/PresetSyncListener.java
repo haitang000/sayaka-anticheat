@@ -21,6 +21,7 @@ import java.util.logging.Level;
 public final class PresetSyncListener implements PluginMessageListener {
 
     public static final String CHANNEL = "sayaka:preset";
+    public static final String UPDATE_CHANNEL = "sayaka:update";
 
     private static final byte[] QUERY = new byte[] {1};
 
@@ -35,6 +36,7 @@ public final class PresetSyncListener implements PluginMessageListener {
     public void start() {
         plugin.getServer().getMessenger().registerIncomingPluginChannel(plugin, CHANNEL, this);
         plugin.getServer().getMessenger().registerOutgoingPluginChannel(plugin, CHANNEL);
+        plugin.getServer().getMessenger().registerIncomingPluginChannel(plugin, UPDATE_CHANNEL, this);
         plugin.getServer().getScheduler().runTaskLater(plugin, this::query, 60L);
         // 每 5 分钟重试一次，直到收到响应（代理可能稍晚才接入）
         plugin.getServer().getScheduler().runTaskTimer(plugin, () -> {
@@ -45,6 +47,7 @@ public final class PresetSyncListener implements PluginMessageListener {
     public void stop() {
         plugin.getServer().getMessenger().unregisterIncomingPluginChannel(plugin, CHANNEL);
         plugin.getServer().getMessenger().unregisterOutgoingPluginChannel(plugin, CHANNEL);
+        plugin.getServer().getMessenger().unregisterIncomingPluginChannel(plugin, UPDATE_CHANNEL);
     }
 
     private void query() {
@@ -55,6 +58,14 @@ public final class PresetSyncListener implements PluginMessageListener {
 
     @Override
     public void onPluginMessageReceived(@NotNull String channel, @NotNull Player player, byte[] message) {
+        if (UPDATE_CHANNEL.equals(channel)) {
+            // 面板远程更新指令：触发 UpdateManager 完成下载与热重载
+            if (message.length != 1 || message[0] != 1) return;
+            plugin.getLogger().info("收到 Velocity 面板的远程更新指令，开始检查并安装更新...");
+            plugin.getServer().getScheduler().runTask(plugin, () ->
+                    plugin.getUpdateManager().install(org.bukkit.Bukkit.getConsoleSender()));
+            return;
+        }
         if (!CHANNEL.equals(channel)) return;
         queried.set(true);
         String preset = new String(message, StandardCharsets.UTF_8).trim();

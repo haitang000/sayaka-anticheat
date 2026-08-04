@@ -1092,6 +1092,13 @@
         catch (error) { message.error(error.message); }
         finally { setSavingKey(null); }
       };
+      const updateNode = async (name) => {
+        setSavingKey(name);
+        try { await api('/api/admin/update/node', { method: 'POST', token, body: { server: name } });
+          message.success('已向节点发送更新指令，节点将自行下载并热重载'); }
+        catch (error) { message.error(error.message); }
+        finally { setSavingKey(null); }
+      };
       const setPreset = async (name, preset) => {
         setSavingKey(name);
         try { await api('/api/admin/preset/set', { method: 'POST', token, body: { server: name, preset } });
@@ -1115,10 +1122,14 @@
               options={[{ value: 'strict', label: '严格' }, { value: 'balanced', label: '均衡' }, { value: 'lenient', label: '宽松' }]} />;
           } },
         { title: '来源', dataIndex: 'source', width: 110, render: (value) => { const m = SOURCE_META(value); return <Tag color={m.color}>{m.label}</Tag>; } },
-        { title: '操作', key: 'op', width: 110, render: (_, row) => row.source === 'override'
-          ? <Button size="small" icon={icon('RollbackOutlined')} loading={savingKey === row.name}
-              onClick={() => setProtection(row.name, { reset: true })}>重置</Button>
-          : <Text type="secondary">—</Text> },
+        { title: '操作', key: 'op', width: 150, render: (_, row) => <Space size="small">
+          <Button size="small" icon={icon('DownloadOutlined')} loading={savingKey === row.name}
+            onClick={() => updateNode(row.name)}>更新</Button>
+          {row.source === 'override'
+            ? <Button size="small" icon={icon('RollbackOutlined')} loading={savingKey === row.name}
+                onClick={() => setProtection(row.name, { reset: true })}>重置</Button>
+            : null}
+        </Space> },
       ];
       return <>
         <div className="admin-topbar"><Title level={4} style={{ margin: 0 }}>节点状态与保护</Title>

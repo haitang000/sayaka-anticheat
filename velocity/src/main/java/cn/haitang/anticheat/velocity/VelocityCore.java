@@ -49,6 +49,8 @@ public final class VelocityCore implements CoreBridge {
             MinecraftChannelIdentifier.create("sayaka", "web");
     private static final MinecraftChannelIdentifier PRESET_CHANNEL =
             MinecraftChannelIdentifier.create("sayaka", "preset");
+    private static final MinecraftChannelIdentifier UPDATE_CHANNEL =
+            MinecraftChannelIdentifier.create("sayaka", "update");
 
     private final CoreContext context;
     private final ProxyServer proxy;
@@ -90,6 +92,7 @@ public final class VelocityCore implements CoreBridge {
         recoverServices();
         proxy.getChannelRegistrar().register(WEB_LOGIN_CHANNEL);
         proxy.getChannelRegistrar().register(PRESET_CHANNEL);
+        proxy.getChannelRegistrar().register(UPDATE_CHANNEL);
         recoveryTask = proxy.getScheduler().buildTask(context.pluginInstance(), this::recoverServices)
                 .repeat(30, TimeUnit.SECONDS).schedule();
         logger.info("Sayaka Velocity 内核 {} 已启动，节点 ID: {}", coreVersion, settings.serverId());
@@ -100,6 +103,7 @@ public final class VelocityCore implements CoreBridge {
         try {
             proxy.getChannelRegistrar().unregister(WEB_LOGIN_CHANNEL);
             proxy.getChannelRegistrar().unregister(PRESET_CHANNEL);
+            proxy.getChannelRegistrar().unregister(UPDATE_CHANNEL);
         } catch (RuntimeException ignored) {
             // 未注册（start 未走到注册步骤）时保持幂等
         }
@@ -185,6 +189,24 @@ public final class VelocityCore implements CoreBridge {
         connection.sendPluginMessage(PRESET_CHANNEL, response);
     }
 
+
+    /**
+     * 面板远程更新：向指定后端 Paper 节点发送 sayaka:update 指令，
+     * 节点收到后自行触发 UpdateManager 完成下载与热重载。
+     *
+     * @return 服务器存在且有玩家在线（插件消息只能经由玩家连接转发）时为 true
+     */
+    boolean sendNodeUpdate(String serverName) {
+        if (serverName == null) return false;
+        java.util.Optional<RegisteredServer> server = proxy.getServer(serverName);
+        if (server.isEmpty()) return false;
+        int players = server.get().getPlayersConnected().size();
+        if (players == 0) return false;
+        server.get().sendPluginMessage(UPDATE_CHANNEL, new byte[] {1});
+        logger.info("已向节点 {} 发送远程更新指令（在线玩家 {} 人）", serverName, players);
+        return true;
+    }
+
     private synchronized void recoverServices() {
         if (store == null) return;
         if (!databaseReady || !store.healthCheck()) {
@@ -252,6 +274,11 @@ public final class VelocityCore implements CoreBridge {
                     delivered++;
                 }
                 return delivered;
+            }
+
+            @Override
+            public boolean sendNodeUpdate(String serverName) {
+                return VelocityCore.this.sendNodeUpdate(serverName);
             }
 
             @Override

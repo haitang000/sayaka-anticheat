@@ -23,6 +23,14 @@ interface NetworkControl {
     /** Snapshot of every registered backend server. */
     List<ServerNode> servers();
 
+    /**
+     * 远程更新节点：向指定后端 Paper 节点发送更新指令。
+     * 默认实现不支持（测试/未接线场景）；VelocityCore 接线后返回是否已受理。
+     */
+    default boolean sendNodeUpdate(String serverName) {
+        return false;
+    }
+
     record OnlinePlayer(UUID id, String name, String server, long pingMillis) {}
 
     record ServerNode(String name, int playerCount, boolean reachable, long pingMillis) {}
