@@ -6,11 +6,11 @@
 [![PacketEvents](https://img.shields.io/badge/PacketEvents-2.13.0%2B-green)](https://github.com/retrooper/packetevents)
 [![Issues](https://img.shields.io/github/issues/haitang000/sayaka-anticheat)](https://github.com/haitang000/sayaka-anticheat/issues)
 [![Last commit](https://img.shields.io/github/last-commit/haitang000/sayaka-anticheat)](https://github.com/haitang000/sayaka-anticheat/commits/main)
-[![Docs](https://img.shields.io/badge/文档-Docs-blue)](https://sayaka-anticheat-docs.pages.dev)
+[![Docs](https://img.shields.io/badge/文档-Docs-blue)](https://sayaka.haitang000.cn)
 
 适用于 **Paper / Purpur 1.20.4+** 的 PVP / 生存服反作弊插件，附带可选 **Velocity 3.4+** 群组服组件。2.0 基于 PacketEvents 数据包时间线验证攻击、移动、击退等行为，不把 Bukkit 合成事件当作客户端证据。
 
-完整文档见 [sayaka-anticheat-docs](https://sayaka-anticheat-docs.pages.dev)（安装、配置、检测项、群组服部署与第三方 API）。
+完整文档见 [sayaka.haitang000.cn](https://sayaka.haitang000.cn)（安装、配置、检测项、群组服部署与第三方 API）。
 
 ## 亮点
 
