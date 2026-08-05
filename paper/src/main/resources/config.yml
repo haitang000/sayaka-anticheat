@@ -801,6 +801,65 @@ checks:
     face-margin: 0.2
     face-buffer-to-flag: 2.0
 
+  # 方块交互距离（BlockReach / GhostHand）：放置、破坏、右键使用方块时
+  # 眼睛到被点击方块表面的距离。原版上限 4.5 格（1.20.5+ 读取实体的
+  # block_interaction_range，兼容插件扩距），按延迟与移动放宽。
+  # 隔墙放置/超远开箱/隔墙破坏在协议层不可能，属于确定的伪造交互包
+  block-reach:
+    enabled: true
+    enforcement: mitigate
+    # 基准上限；1.20.5+ 服务端实际以玩家实体的 block_interaction_range 为准
+    base-reach: 4.55
+    # 延迟补偿：每 1000ms 延迟增加的容差（按比例折算）
+    ping-compensation: 2.0
+    # 参与补偿计算的延迟上限 ms（防止刷高延迟绕过）
+    max-ping-ms: 200
+    # 玩家自身移动带来的表观距离补偿
+    movement-compensation-multiplier: 0.45
+    max-movement-compensation: 0.25
+    # 超过（动态阈值 + cancel-margin）的交互直接取消
+    cancel-margin: 0.3
+    # 违规时是否取消该交互
+    cancel: true
+    buffer-to-flag: 3.0
+
+  # 实体交互距离（EntityReach）：右键实体（喂食/交易/牵绳/上车/
+  # 物品展示框/盔甲架等）时眼睛到实体碰撞箱最近点的距离，原版上限 3.0 格
+  entity-reach:
+    enabled: true
+    enforcement: mitigate
+    # 基准上限；1.20.5+ 服务端实际以玩家实体的 entity_interaction_range 为准
+    base-reach: 3.05
+    # 延迟补偿：每 1000ms 延迟增加的容差（按比例折算）
+    ping-compensation: 2.0
+    max-ping-ms: 200
+    # 双方移动带来的表观距离补偿
+    movement-compensation-multiplier: 0.45
+    # 冲刺状态额外容差
+    sprint-compensation: 0.05
+    max-movement-compensation: 0.25
+    cancel-margin: 0.3
+    cancel: true
+    buffer-to-flag: 3.0
+
+  # 交互视角（InteractAim / 右击光环）：不看目标却对其右键。
+  # 原版交互必须把准星对准实体，视角偏离只可能来自伪造交互包的客户端
+  interact-aim:
+    enabled: true
+    # 新检测默认先只警报；观察后可改 mitigate/punish
+    enforcement: alert
+    # 视角方向与目标方向的最大夹角（度）
+    max-angle: 60.0
+    # 距离小于该值不做角度判定（近身视角天然偏大）
+    min-distance: 1.5
+    # 合法交互每次按该值消退 buffer，防止间歇式交互宏轻易洗掉证据
+    angle-buffer-decay: 0.25
+    buffer-to-flag: 3.0
+    # 违规时是否取消该交互
+    cancel: true
+    # Geyser 转换后的基岩版视角/交互时序可能不同，默认不检测基岩版玩家
+    exclude-bedrock: true
+
   # 聊天刷屏（AntiSpam）：同时检测短时间高频消息和重复内容。
   # 聊天不受进服宽限、创造模式影响；可用 anticheat.antispam.bypass 单独豁免。
   anti-spam:

@@ -29,7 +29,7 @@
 | 移动 | Speed、Sprint、Flight、Glide、Elytra、GroundSpoof、Timer、FastLadder、Step、Phase、LiquidWalk、Rotation |
 | 战斗 | Reach、KillAura、AutoClicker、NoSwing、Criticals、Velocity、AutoBlock |
 | 玩家行为 | AutoTotem、InventoryMove、NoSlow、FastUse、FastBow、ChestStealer |
-| 世界交互 | FastBreak、Scaffold |
+| 世界交互 | FastBreak、Scaffold、BlockReach、EntityReach、InteractAim |
 | 聊天 | AntiSpam、AntiAds、CommandSpam |
 | 数据包 | BadPackets（非法坐标 / 自击包 / 物品 NBT 与数量校验） |
 

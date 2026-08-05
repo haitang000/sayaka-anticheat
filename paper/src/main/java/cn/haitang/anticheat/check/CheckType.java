@@ -33,6 +33,9 @@ public enum CheckType {
     CHEST_STEALER("ChestStealer", "容器搬运过快", "chest-stealer", EnforcementMode.MITIGATE),
     FAST_BREAK("FastBreak", "挖掘速度异常", "fast-break", EnforcementMode.MITIGATE),
     SCAFFOLD("Scaffold", "非法搭路", "scaffold", EnforcementMode.MITIGATE),
+    BLOCK_REACH("BlockReach", "方块交互距离超限", "block-reach", EnforcementMode.MITIGATE),
+    ENTITY_REACH("EntityReach", "实体交互距离超限", "entity-reach", EnforcementMode.MITIGATE),
+    INTERACT_AIM("InteractAim", "交互视角异常", "interact-aim", EnforcementMode.ALERT),
     ANTI_SPAM("AntiSpam", "聊天刷屏", "anti-spam", EnforcementMode.ALERT),
     ANTI_ADS("AntiAds", "聊天广告", "anti-ads", EnforcementMode.ALERT),
     COMMAND_SPAM("CommandSpam", "命令刷屏", "command-spam", EnforcementMode.ALERT);
