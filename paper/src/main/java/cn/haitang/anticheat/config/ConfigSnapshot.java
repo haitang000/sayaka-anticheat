@@ -111,53 +111,62 @@ public final class ConfigSnapshot {
     /**
      * 预设档：在 bundled 默认与用户显式配置之间插入一层"预设覆盖"。
      * 优先级：bundled 默认 < 预设档 < 用户显式配置（用户在 config.yml 里写的值永远最后生效）。
+     * strict+ = 最严格（buffer 全面收紧，弱检测全部升为 mitigate，宽限最短）
      * strict = 少漏判（buffer 收紧，弱检测升为 mitigate）
      * balanced = 均衡（即 config.yml 默认值本身，这里不额外覆盖）
      * lenient = 少误判（buffer 放宽，保留 alert）
      */
     private static void applyPreset(YamlConfiguration cfg, String preset) {
         String p = preset == null ? "balanced" : preset.trim().toLowerCase(Locale.ROOT);
-        if (!p.equals("strict") && !p.equals("lenient")) {
+        if (!p.equals("strict-plus") && !p.equals("strict") && !p.equals("lenient")) {
             return; // balanced 或未知值：保持 bundled 默认
         }
-        boolean strict = p.equals("strict");
+        boolean strictPlus = p.equals("strict-plus");
+        boolean strict = p.equals("strict") || strictPlus;
         Map<String, Object> overrides = new HashMap<>();
         // —— settings ——
-        overrides.put("settings.join-grace-seconds", strict ? 4 : 12);
+        overrides.put("settings.join-grace-seconds", strictPlus ? 2 : strict ? 4 : 12);
         // —— speed ——
-        overrides.put("checks.speed.buffer-to-flag", strict ? 2.5 : 4.0);
+        overrides.put("checks.speed.buffer-to-flag", strictPlus ? 2.0 : strict ? 2.5 : 4.0);
         // —— flight ——
-        overrides.put("checks.flight.buffer-to-flag", strict ? 1.5 : 3.0);
-        overrides.put("checks.flight.gravity-buffer-to-flag", strict ? 3.0 : 5.0);
+        overrides.put("checks.flight.buffer-to-flag", strictPlus ? 1.0 : strict ? 1.5 : 3.0);
+        overrides.put("checks.flight.gravity-buffer-to-flag", strictPlus ? 2.0 : strict ? 3.0 : 5.0);
         // —— elytra ——
-        overrides.put("checks.elytra.buffer-to-flag", strict ? 1.5 : 3.0);
+        overrides.put("checks.elytra.buffer-to-flag", strictPlus ? 1.0 : strict ? 1.5 : 3.0);
         // —— timer ——
-        overrides.put("checks.timer.max-packets-per-second", strict ? 22 : 28);
+        overrides.put("checks.timer.max-packets-per-second", strictPlus ? 20 : strict ? 22 : 28);
         // —— reach ——
-        overrides.put("checks.reach.buffer-to-flag", strict ? 2.0 : 3.5);
+        overrides.put("checks.reach.buffer-to-flag", strictPlus ? 1.5 : strict ? 2.0 : 3.5);
         // —— hitbox ——
-        overrides.put("checks.hitbox.buffer-to-flag", strict ? 3.5 : 5.5);
+        overrides.put("checks.hitbox.buffer-to-flag", strictPlus ? 3.0 : strict ? 3.5 : 5.5);
         // —— kill-aura ——
-        overrides.put("checks.kill-aura.buffer-to-flag", strict ? 2.0 : 3.5);
+        overrides.put("checks.kill-aura.buffer-to-flag", strictPlus ? 1.5 : strict ? 2.0 : 3.5);
         // —— velocity ——
-        overrides.put("checks.velocity.buffer-to-flag", strict ? 2.5 : 4.5);
+        overrides.put("checks.velocity.buffer-to-flag", strictPlus ? 2.0 : strict ? 2.5 : 4.5);
         // —— auto-totem ——
-        overrides.put("checks.auto-totem.min-react-ms", strict ? 75 : 120);
+        overrides.put("checks.auto-totem.min-react-ms", strictPlus ? 60 : strict ? 75 : 120);
         // —— no-slow ——
-        overrides.put("checks.no-slow.buffer-to-flag", strict ? 2.5 : 4.5);
+        overrides.put("checks.no-slow.buffer-to-flag", strictPlus ? 2.0 : strict ? 2.5 : 4.5);
         // —— fast-break ——
-        overrides.put("checks.fast-break.lenience", strict ? 0.65 : 0.50);
+        overrides.put("checks.fast-break.lenience", strictPlus ? 0.70 : strict ? 0.65 : 0.50);
         // —— scaffold ——
-        overrides.put("checks.scaffold.buffer-to-flag", strict ? 2.5 : 4.5);
+        overrides.put("checks.scaffold.buffer-to-flag", strictPlus ? 2.0 : strict ? 2.5 : 4.5);
         // —— anti-spam ——
-        overrides.put("checks.anti-spam.max-messages", strict ? 5 : 8);
-        // —— 弱检测 enforcement 升级（strict 才改）——
+        overrides.put("checks.anti-spam.max-messages", strictPlus ? 4 : strict ? 5 : 8);
+        // —— 弱检测 enforcement 升级（strict / strict+ 才改）——
         if (strict) {
             overrides.put("checks.sprint.enforcement", "mitigate");
             overrides.put("checks.liquid-walk.enforcement", "mitigate");
             overrides.put("checks.auto-clicker.enforcement", "mitigate");
             overrides.put("checks.auto-totem.enforcement", "mitigate");
             overrides.put("checks.inventory-move.enforcement", "mitigate");
+        }
+        if (strictPlus) {
+            // strict+ 额外把其余弱检测也升为 mitigate，全面收紧
+            overrides.put("checks.fast-use.enforcement", "mitigate");
+            overrides.put("checks.fast-bow.enforcement", "mitigate");
+            overrides.put("checks.chest-stealer.enforcement", "mitigate");
+            overrides.put("checks.auto-block.enforcement", "mitigate");
         }
         for (Map.Entry<String, Object> entry : overrides.entrySet()) {
             cfg.set(entry.getKey(), entry.getValue());

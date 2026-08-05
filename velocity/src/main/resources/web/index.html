@@ -1106,7 +1106,7 @@
         catch (error) { message.error(error.message); }
         finally { setSavingKey(null); }
       };
-      const PRESET_META = { strict: { color: 'red', label: '严格' }, balanced: { color: 'blue', label: '均衡' }, lenient: { color: 'green', label: '宽松' } };
+      const PRESET_META = { 'strict-plus': { color: 'volcano', label: '极严' }, strict: { color: 'red', label: '严格' }, balanced: { color: 'blue', label: '均衡' }, lenient: { color: 'green', label: '宽松' } };
       const columns = [
         { title: '节点', dataIndex: 'name', render: (value) => <Text strong>{value}</Text> },
         { title: '在线', dataIndex: 'playerCount', width: 80 },
@@ -1119,7 +1119,7 @@
             const m = PRESET_META[value] || { color: 'default', label: value };
             return <Select value={value} size="small" loading={savingKey === row.name}
               style={{ width: 90 }} onChange={(v) => setPreset(row.name, v)}
-              options={[{ value: 'strict', label: '严格' }, { value: 'balanced', label: '均衡' }, { value: 'lenient', label: '宽松' }]} />;
+              options={[{ value: 'strict-plus', label: '极严' }, { value: 'strict', label: '严格' }, { value: 'balanced', label: '均衡' }, { value: 'lenient', label: '宽松' }]} />;
           } },
         { title: '来源', dataIndex: 'source', width: 110, render: (value) => { const m = SOURCE_META(value); return <Tag color={m.color}>{m.label}</Tag>; } },
         { title: '操作', key: 'op', width: 150, render: (_, row) => <Space size="small">

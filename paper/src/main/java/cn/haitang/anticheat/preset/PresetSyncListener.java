@@ -69,7 +69,8 @@ public final class PresetSyncListener implements PluginMessageListener {
         if (!CHANNEL.equals(channel)) return;
         queried.set(true);
         String preset = new String(message, StandardCharsets.UTF_8).trim();
-        if (!preset.equals("strict") && !preset.equals("balanced") && !preset.equals("lenient")) {
+        if (!preset.equals("strict-plus") && !preset.equals("strict")
+                && !preset.equals("balanced") && !preset.equals("lenient")) {
             plugin.getLogger().warning("Velocity 返回了无效预设档: " + preset);
             return;
         }

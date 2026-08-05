@@ -113,12 +113,14 @@ public class AntiCheatCommand implements TabExecutor {
         if (args.length < 2) {
             String current = plugin.config().getString("settings.preset", "balanced");
             sender.sendMessage(plugin.getMessages().prefix() + "§7当前预设档: §f" + current
-                    + " §7（§estrict§7/§ebalanced§7/§elenient§7）");
+                    + " §7（§estrict-plus§7/§estrict§7/§ebalanced§7/§elenient§7）");
             return;
         }
         String preset = args[1].toLowerCase(java.util.Locale.ROOT);
-        if (!preset.equals("strict") && !preset.equals("balanced") && !preset.equals("lenient")) {
-            sender.sendMessage(plugin.getMessages().prefix() + "§c无效预设档，可用: strict / balanced / lenient");
+        if (!preset.equals("strict-plus") && !preset.equals("strict")
+                && !preset.equals("balanced") && !preset.equals("lenient")) {
+            sender.sendMessage(plugin.getMessages().prefix()
+                    + "§c无效预设档，可用: strict-plus / strict / balanced / lenient");
             return;
         }
         // 写入磁盘配置并热重载
@@ -131,7 +133,7 @@ public class AntiCheatCommand implements TabExecutor {
             return;
         }
         sender.sendMessage(plugin.getMessages().prefix() + "§a预设档已切换为 §f" + preset
-                + "§a（strict=少漏判 / balanced=均衡 / lenient=少误判）");
+                + "§a（strict-plus=极严 / strict=少漏判 / balanced=均衡 / lenient=少误判）");
     }
 
     private void handleReload(CommandSender sender) {
@@ -476,7 +478,7 @@ public class AntiCheatCommand implements TabExecutor {
         sender.sendMessage("  §e/sac unban <玩家> [reset] §7- 解封（reset 重置处罚档位）");
         sender.sendMessage("  §e/sac web §7- 生成管理后台一次性登录链接");
         sender.sendMessage("  §e/sac alerts §7- 开关个人实时警报");
-        sender.sendMessage("  §e/sac preset [strict|balanced|lenient] §7- 查看/切换预设档");
+        sender.sendMessage("  §e/sac preset [strict-plus|strict|balanced|lenient] §7- 查看/切换预设档");
         sender.sendMessage("  §e/sac reload §7- 重载配置");
         sender.sendMessage("  §e/sac update [check] §7- 安装更新并热重载（check 仅检查）");
     }
@@ -511,7 +513,7 @@ public class AntiCheatCommand implements TabExecutor {
         }
         if (!sender.hasPermission(permissionFor(args[0]))) return out;
         if (args.length == 2 && args[0].equalsIgnoreCase("preset")) {
-            for (String p : List.of("strict", "balanced", "lenient")) {
+            for (String p : List.of("strict-plus", "strict", "balanced", "lenient")) {
                 if (p.startsWith(args[1].toLowerCase(java.util.Locale.ROOT))) out.add(p);
             }
             return out;

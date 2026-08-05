@@ -885,8 +885,9 @@ final class DashboardServer {
             presets.clearRuntimeOverride(server);
         } else if (json.get("preset") instanceof String preset) {
             String value = preset.trim().toLowerCase(java.util.Locale.ROOT);
-            if (!value.equals("strict") && !value.equals("balanced") && !value.equals("lenient")) {
-                throw new HttpError(400, "preset 必须是 strict/balanced/lenient");
+            if (!value.equals("strict-plus") && !value.equals("strict")
+                    && !value.equals("balanced") && !value.equals("lenient")) {
+                throw new HttpError(400, "preset 必须是 strict-plus/strict/balanced/lenient");
             }
             store.setPresetOverride(server, value, System.currentTimeMillis());
             presets.setRuntimeOverride(server, value);

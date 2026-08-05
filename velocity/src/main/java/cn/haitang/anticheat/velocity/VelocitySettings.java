@@ -77,9 +77,9 @@ record VelocitySettings(
         Map<String, Boolean> serverProtection = loadServerProtection(toml);
         String presetDefault = toml.getString("preset.default", () -> "balanced")
                 .trim().toLowerCase(Locale.ROOT);
-        if (!presetDefault.equals("strict") && !presetDefault.equals("balanced")
-                && !presetDefault.equals("lenient")) {
-            throw new IOException("preset.default must be strict, balanced, or lenient");
+        if (!presetDefault.equals("strict-plus") && !presetDefault.equals("strict")
+                && !presetDefault.equals("balanced") && !presetDefault.equals("lenient")) {
+            throw new IOException("preset.default must be strict-plus, strict, balanced, or lenient");
         }
         Map<String, String> serverPresets = loadServerPresets(toml);
         if (port < 1 || port > 65535) throw new IOException("web.port must be between 1 and 65535");

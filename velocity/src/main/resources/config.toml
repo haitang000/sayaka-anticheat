@@ -24,7 +24,7 @@ default-enabled = true
 # survival = true
 
 [preset]
-# 预设档：strict（少漏判）/ balanced（均衡）/ lenient（少误判）
+# 预设档：strict-plus（极严）/ strict（少漏判）/ balanced（均衡）/ lenient（少误判）
 # 所有后端服务器的默认档位；未在 servers 中单独配置的服务器使用此值。
 default = "balanced"
 
