@@ -50,6 +50,7 @@ import cn.haitang.anticheat.packet.PacketTimeline;
 import cn.haitang.anticheat.packet.EntityPositionHistory;
 import cn.haitang.anticheat.packet.PacketBridge;
 import cn.haitang.anticheat.util.BedrockSupport;
+import cn.haitang.anticheat.util.LagDetector;
 import cn.haitang.anticheat.util.Messages;
 import cn.haitang.anticheat.update.UpdateManager;
 import cn.haitang.anticheat.shared.DatabaseConfig;
@@ -108,6 +109,8 @@ public final class AntiCheatPlugin extends JavaPlugin {
     private FlightCheck flightCheck;
     private AimCheck aimCheck;
     private BukkitTask saveTask;
+    private BukkitTask lagDetectorTask;
+    private LagDetector lagDetector;
     private cn.haitang.anticheat.preset.PresetSyncListener presetSync;
 
     @Override
@@ -215,6 +218,8 @@ public final class AntiCheatPlugin extends JavaPlugin {
 
         violationManager.startDecayTask();
         aimCheck.start();
+        lagDetector = new LagDetector();
+        lagDetectorTask = getServer().getScheduler().runTaskTimer(this, lagDetector, 1L, 1L);
         saveTask = getServer().getScheduler().runTaskTimer(this, store::saveAsync, 1200L, 1200L);
         updateManager.start();
         presetSync = new cn.haitang.anticheat.preset.PresetSyncListener(this);
@@ -237,6 +242,7 @@ public final class AntiCheatPlugin extends JavaPlugin {
         if (presetSync != null) presetSync.stop();
         if (updateManager != null) updateManager.shutdown();
         if (saveTask != null) saveTask.cancel();
+        if (lagDetectorTask != null) lagDetectorTask.cancel();
         if (violationManager != null) violationManager.shutdown();
         if (flightCheck != null) flightCheck.shutdown();
         if (aimCheck != null) aimCheck.shutdown();
@@ -270,6 +276,14 @@ public final class AntiCheatPlugin extends JavaPlugin {
     public File getPluginJarFile() { return getFile(); }
 
     public boolean isNetworkMode() { return store instanceof NetworkPersistentStore; }
+
+    /**
+     * 最近约 2 秒窗口内是否存在一次短时停顿（GC / 同步区块加载 / reload）。
+     * 与分钟级 TPS 平均无关，用于保护依赖墙钟时间差的"排空型"检测。
+     */
+    public boolean isServerLagging() {
+        return lagDetector != null && lagDetector.isLagging();
+    }
 
     public boolean addExemptionChecker(Predicate<org.bukkit.entity.Player> checker) {
         if (checker == null || exemptionCheckers.contains(checker)) return false;

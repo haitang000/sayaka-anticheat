@@ -85,7 +85,7 @@ public class StepCheck extends Check {
         if (data.teleportedWithin(3000) || data.velocityWithin(3000)) return true;
         if (data.bouncedWithin(4000)) return true;
         if (data.isInWeb() || data.isNearHoney()) return true;
-        return MoveUtil.standingOnEntity(player);
+        return data.isStandingOnEntity(player);
     }
 
     private void setback(PlayerMoveEvent event, PlayerData data) {

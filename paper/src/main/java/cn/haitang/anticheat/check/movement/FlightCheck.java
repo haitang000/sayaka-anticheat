@@ -76,7 +76,7 @@ public class FlightCheck extends Check {
         // ---- 2. 移动悬浮 ----
         int hoverAirTicks = cfgI("hover-air-ticks", 8);
         boolean movingHover = data.getFlightAirTicks() >= hoverAirTicks
-                && data.getHoverTicks() >= 5 && !MoveUtil.hasCollisionBelow(to, 3.0);
+                && data.getHoverTicks() >= 5 && !data.hasCollisionBelow(to, 3.0);
         double hoverBuffer = data.buffer(HOVER_BUFFER, movingHover ? 1.0 : -0.5);
         if (movingHover) {
             double buffered = hoverBuffer;
@@ -95,7 +95,7 @@ public class FlightCheck extends Check {
         boolean gravityReady = data.getFlightAirTicks() >= gravityMinTicks;
         double excess = gravityExcess(data.getPreviousDeltaY(), data.getLastDeltaY());
         boolean antiGravity = gravityReady && excess > tolerance
-                && !MoveUtil.hasCollisionBelow(to, 0.5);
+                && !data.hasCollisionBelow(to, 0.5);
         double gravityBuffer = data.buffer(GRAVITY_BUFFER, antiGravity ? 1.0 : -0.5);
         if (antiGravity && gravityBuffer >= cfgD("gravity-buffer-to-flag", 4.0)) {
             data.resetBuffer(GRAVITY_BUFFER);
@@ -124,7 +124,7 @@ public class FlightCheck extends Check {
         if (data.isInWeb() || data.isNearHoney()) return true;
         if (data.teleportedWithin(3000) || data.velocityWithin(3000)) return true;
         if (data.bouncedWithin(4000)) return true;
-        return MoveUtil.standingOnEntity(player);
+        return data.isStandingOnEntity(player);
     }
 
     private void trySetback(PlayerMoveEvent event, PlayerData data) {
@@ -145,8 +145,7 @@ public class FlightCheck extends Check {
     /** 4. 静止悬浮兜底扫描（每秒一次） */
     private void sweepStaticHover() {
         if (!isEnabled()) return;
-        double[] tps = plugin.getServer().getTPS();
-        if (tps.length > 0 && tps[0] < cfgD("static-hover-min-tps", 18.0)) {
+        if (cfgD("static-hover-min-tps", 18.0) > 0 && plugin.isServerLagging()) {
             for (PlayerData data : plugin.getDataManager().all()) data.setStaticHoverCount(0);
             return;
         }
@@ -165,7 +164,7 @@ public class FlightCheck extends Check {
 
             boolean idle = now - data.getLastMoveAt() > 1500;
             // 不采信客户端 onGround 声明，只看服务端方块碰撞
-            boolean airborne = !MoveUtil.hasCollisionBelow(loc, 3.0)
+            boolean airborne = !data.hasCollisionBelow(loc, 3.0)
                     && !MoveUtil.isInWeb(player);
             if (idle && airborne) {
                 int count = data.getStaticHoverCount() + 1;

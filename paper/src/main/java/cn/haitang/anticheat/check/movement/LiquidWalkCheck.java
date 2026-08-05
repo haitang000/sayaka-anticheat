@@ -68,12 +68,12 @@ public class LiquidWalkCheck extends Check {
             data.buffer(type(), -0.5);
             return;
         }
-        if (player.isSwimming() || player.isInWater() || MoveUtil.standingOnEntity(player)) {
+        if (player.isSwimming() || player.isInWater() || data.isStandingOnEntity(player)) {
             data.resetBuffer(type());
             return;
         }
 
-        SurfaceState surface = inspectSurface(to);
+        SurfaceState surface = inspectSurface(to, data);
 
         boolean suspicious = isSuspiciousSample(
                 surface.feetClear(),
@@ -113,7 +113,7 @@ public class LiquidWalkCheck extends Check {
         return false;
     }
 
-    private SurfaceState inspectSurface(Location location) {
+    private SurfaceState inspectSurface(Location location, PlayerData data) {
         World world = location.getWorld();
         if (world == null) return SurfaceState.NOT_SURFACE;
 
@@ -136,7 +136,7 @@ public class LiquidWalkCheck extends Check {
             }
         }
 
-        return new SurfaceState(true, true, MoveUtil.hasCollisionBelow(location, 0.12));
+        return new SurfaceState(true, true, data.hasCollisionBelow(location, 0.12));
     }
 
     static boolean isSuspiciousSample(boolean feetClear, boolean fullLiquidFootprint,

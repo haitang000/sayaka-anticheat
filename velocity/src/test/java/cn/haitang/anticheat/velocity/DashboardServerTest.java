@@ -288,10 +288,21 @@ class DashboardServerTest {
             assertEquals(403, lookup(client, root, "appealer",
                     String.valueOf(missingChallenge.get("challengeId")), "ABCDE").statusCode());
 
-            HttpResponse<String> submit = client.send(HttpRequest.newBuilder(root.resolve("/api/appeal/submit"))
+            HttpResponse<String> captchaLessSubmit = client.send(HttpRequest.newBuilder(root.resolve("/api/appeal/submit"))
                             .header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of(
                                     "id", punishment.get("id"), "reason", "请重新检查这次处罚")))).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(403, captchaLessSubmit.statusCode());
+            assertEquals("CAPTCHA_REQUIRED", Json.parseObject(captchaLessSubmit.body()).get("code"));
+
+            Map<String, Object> submitCaptcha = appealCaptcha(client, root);
+            HttpResponse<String> submit = client.send(HttpRequest.newBuilder(root.resolve("/api/appeal/submit"))
+                            .header("Content-Type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of(
+                                    "id", punishment.get("id"), "reason", "请重新检查这次处罚",
+                                    "captchaId", submitCaptcha.get("challengeId"),
+                                    "captchaAnswer", "ABCDE")))).build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, submit.statusCode());
             Map<?, ?> submittedAppeal = (Map<?, ?>) Json.parseObject(submit.body()).get("appeal");

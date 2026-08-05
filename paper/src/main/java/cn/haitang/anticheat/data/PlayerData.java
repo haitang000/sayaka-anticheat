@@ -1,8 +1,11 @@
 package cn.haitang.anticheat.data;
 
 import cn.haitang.anticheat.check.CheckType;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.entity.Player;
 import org.bukkit.util.Vector;
 
 import java.util.ArrayDeque;
@@ -76,6 +79,22 @@ public class PlayerData {
     private int honeyProbeY;
     private int honeyProbeZ;
     private final Deque<MoveSample> speedWindow = new ArrayDeque<>();
+
+    // ---- 移动热路径去重缓存（主线程专用） ----
+    // 碰撞扫描会做同步方块查询，同一移动事件内的多次调用、以及静止玩家的逐 tick
+    // 复用，都通过这里的精确键缓存命中，避免重复扫描。方块被破坏导致的陈旧结果
+    // 只会指向"仍有支撑"，即漏判方向，不会误判。
+    private static final int COLLISION_CACHE_SIZE = 4;
+    private final Object[] collisionCacheWorlds = new Object[COLLISION_CACHE_SIZE];
+    private final long[] collisionCacheX = new long[COLLISION_CACHE_SIZE];
+    private final long[] collisionCacheY = new long[COLLISION_CACHE_SIZE];
+    private final long[] collisionCacheZ = new long[COLLISION_CACHE_SIZE];
+    private final long[] collisionCacheDepth = new long[COLLISION_CACHE_SIZE];
+    private final boolean[] collisionCacheValues = new boolean[COLLISION_CACHE_SIZE];
+    private int collisionCacheSlot;
+    // 实体平台（船/矿车/潜影贝）扫描每个 tick 至多一次，同一 tick 内各检测共享结果
+    private int entitySupportTick = Integer.MIN_VALUE;
+    private boolean entitySupport;
 
     // ---- 宽限时间戳（毫秒，0 表示从未发生） ----
     private long joinAt;
@@ -361,7 +380,15 @@ public class PlayerData {
 
     public Vector getLastMovementDelta() { return lastMovementDelta.clone(); }
     public void setLastMovementDelta(Vector movement) {
-        this.lastMovementDelta = movement == null ? new Vector() : movement.clone();
+        if (movement == null) lastMovementDelta.zero();
+        else setLastMovementDelta(movement.getX(), movement.getY(), movement.getZ());
+    }
+
+    /** 移动热路径直接写分量，复用既有的 {@link Vector} 实例，避免每个移动包分配对象。 */
+    public void setLastMovementDelta(double x, double y, double z) {
+        this.lastMovementDelta.setX(x);
+        this.lastMovementDelta.setY(y);
+        this.lastMovementDelta.setZ(z);
     }
 
     public long getLastMoveAt() { return lastMoveAt; }
@@ -402,6 +429,49 @@ public class PlayerData {
         this.honeyResolved = false;
     }
 
+    /**
+     * 碰撞判定去重查询：以精确位置 + 深度为键缓存 {@link MoveUtil#hasCollisionBelow} 的
+     * 结果。玩家静止时（含 AFK 扫描）完全跳过方块扫描，位置变化后自动失效。
+     */
+    public boolean hasCollisionBelow(Location loc, double depth) {
+        World world = loc.getWorld();
+        if (world == null) return true;
+        long xBits = Double.doubleToRawLongBits(loc.getX());
+        long yBits = Double.doubleToRawLongBits(loc.getY());
+        long zBits = Double.doubleToRawLongBits(loc.getZ());
+        long depthBits = Double.doubleToRawLongBits(depth);
+        for (int i = 0; i < COLLISION_CACHE_SIZE; i++) {
+            if (collisionCacheX[i] == xBits && collisionCacheY[i] == yBits
+                    && collisionCacheZ[i] == zBits && collisionCacheDepth[i] == depthBits
+                    && collisionCacheWorlds[i] == world) {
+                return collisionCacheValues[i];
+            }
+        }
+        boolean result = cn.haitang.anticheat.util.MoveUtil.hasCollisionBelow(loc, depth);
+        int slot = collisionCacheSlot;
+        collisionCacheSlot = (collisionCacheSlot + 1) % COLLISION_CACHE_SIZE;
+        collisionCacheWorlds[slot] = world;
+        collisionCacheX[slot] = xBits;
+        collisionCacheY[slot] = yBits;
+        collisionCacheZ[slot] = zBits;
+        collisionCacheDepth[slot] = depthBits;
+        collisionCacheValues[slot] = result;
+        return result;
+    }
+
+    /**
+     * 实体平台判定去重查询：每个 tick 至多扫描一次附近实体。同一移动事件分发期间
+     * 实体不会移动，各检测共享同一结果；tick 变化后强制重扫。
+     */
+    public boolean isStandingOnEntity(Player player) {
+        int tick = Bukkit.getCurrentTick();
+        if (tick != entitySupportTick) {
+            entitySupportTick = tick;
+            entitySupport = cn.haitang.anticheat.util.MoveUtil.standingOnEntity(player);
+        }
+        return entitySupport;
+    }
+
     public Deque<MoveSample> getSpeedWindow() { return speedWindow; }
 
     /** Restarts Flight evidence without changing shared airborne state used by other checks. */
@@ -428,7 +498,7 @@ public class PlayerData {
         resetAirborneState(current == null ? 0 : current.getY());
         this.supportedTicks = 0;
         this.lastDeltaXZ = 0;
-        this.lastMovementDelta = new Vector();
+        this.lastMovementDelta.zero();
         this.collisionBelow = true;
         this.inWeb = false;
         this.nearHoney = false;
@@ -493,9 +563,19 @@ public class PlayerData {
     }
 
     void consumeImpulse(Vector movement, long now) {
-        if (!hasActiveImpulse(now) || !isFinite(movement)) return;
+        if (movement == null) return;
+        consumeImpulse(movement.getX(), movement.getY(), movement.getZ(), now);
+    }
+
+    public void consumeImpulse(double mx, double my, double mz) {
+        consumeImpulse(mx, my, mz, System.currentTimeMillis());
+    }
+
+    void consumeImpulse(double mx, double my, double mz, long now) {
+        if (!hasActiveImpulse(now) || !Double.isFinite(mx) || !Double.isFinite(my) || !Double.isFinite(mz)) return;
         Vector direction = impulseVector.clone().normalize();
-        impulseProjection += Math.max(0.0, movement.dot(direction));
+        impulseProjection += Math.max(0.0,
+                mx * direction.getX() + my * direction.getY() + mz * direction.getZ());
         if (now >= impulseMinExpiresAt
                 && impulseProjection >= Math.max(0.08, lastVelocityMagnitude * 0.8)) clearImpulse();
     }

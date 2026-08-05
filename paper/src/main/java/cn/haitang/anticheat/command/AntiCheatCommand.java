@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -78,6 +79,23 @@ public class AntiCheatCommand implements TabExecutor {
         if (sender.hasPermission(perm)) return false;
         sender.sendMessage(plugin.getMessages().prefixed("no-permission", null));
         return true;
+    }
+
+    /**
+     * 在异步线程里执行 store 读/写（群组模式会触发 MariaDB 查询，不能占住主线程），
+     * 完成后回主线程依次发送消息行。produce 中不得访问 Bukkit 对象与 PlayerData。
+     */
+    private void asyncStore(CommandSender sender, Supplier<List<String>> produce) {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            List<String> lines;
+            try {
+                lines = produce.get();
+            } catch (RuntimeException error) {
+                plugin.getLogger().warning("store 操作失败: " + error.getMessage());
+                return;
+            }
+            Bukkit.getScheduler().runTask(plugin, () -> lines.forEach(sender::sendMessage));
+        });
     }
 
     private void handleAlerts(CommandSender sender) {
@@ -146,8 +164,9 @@ public class AntiCheatCommand implements TabExecutor {
         Player target = requireTarget(sender, args);
         if (target == null) return;
         PlayerData data = plugin.getDataManager().get(target);
+        String name = target.getName();
 
-        sender.sendMessage(plugin.getMessages().prefix() + "§f" + target.getName()
+        sender.sendMessage(plugin.getMessages().prefix() + "§f" + name
                 + " §7的实时状态（ping " + target.getPing() + "ms）:");
         boolean any = false;
         for (Map.Entry<CheckType, Double> e : data.getAllVl().entrySet()) {
@@ -157,12 +176,18 @@ public class AntiCheatCommand implements TabExecutor {
         }
         if (!any) sender.sendMessage("  §a当前无任何违规值。");
         sender.sendMessage(String.format("  §7综合 VL: §c%.1f", data.getTotalVl()));
+
         int windowHours = plugin.config().getInt("punishment.strikes.window-hours", 24);
-        int strikes = plugin.getStore().strikeCount(target.getUniqueId(), windowHours);
-        int banCount = plugin.getStore().getBanCount(target.getUniqueId());
-        sender.sendMessage(String.format("  §7近 %d 小时 strike: §c%d§7，历史封禁: §c%d 次", windowHours, strikes, banCount));
-        sender.sendMessage("  §7反作弊白名单: "
-                + (plugin.getStore().isWhitelisted(target.getUniqueId()) ? "§a是" : "§c否"));
+        java.util.UUID playerId = target.getUniqueId();
+        asyncStore(sender, () -> {
+            int strikes = plugin.getStore().strikeCount(playerId, windowHours);
+            int banCount = plugin.getStore().getBanCount(playerId);
+            boolean whitelisted = plugin.getStore().isWhitelisted(playerId);
+            return List.of(
+                    String.format("  §7近 %d 小时 strike: §c%d§7，历史封禁: §c%d 次",
+                            windowHours, strikes, banCount),
+                    "  §7反作弊白名单: " + (whitelisted ? "§a是" : "§c否"));
+        });
     }
 
     private void handleHistory(CommandSender sender, String[] args) {
@@ -170,8 +195,9 @@ public class AntiCheatCommand implements TabExecutor {
         Player target = requireTarget(sender, args);
         if (target == null) return;
         PlayerData data = plugin.getDataManager().get(target);
+        String name = target.getName();
 
-        sender.sendMessage(plugin.getMessages().prefix() + "§f" + target.getName() + " §7本次会话的违规记录:");
+        sender.sendMessage(plugin.getMessages().prefix() + "§f" + name + " §7本次会话的违规记录:");
         if (data.getRecentViolations().isEmpty()) {
             sender.sendMessage("  §a无。");
         } else {
@@ -180,11 +206,15 @@ public class AntiCheatCommand implements TabExecutor {
                         TIME.format(new Date(r.at())), r.type().display(), r.vl(), r.detail()));
             }
         }
-        List<String> history = plugin.getStore().getHistory(target.getUniqueId());
-        if (!history.isEmpty()) {
-            sender.sendMessage(plugin.getMessages().prefix() + "§7历史惩罚:");
-            for (String line : history) sender.sendMessage("  §8" + line);
-        }
+        java.util.UUID playerId = target.getUniqueId();
+        asyncStore(sender, () -> {
+            List<String> history = plugin.getStore().getHistory(playerId);
+            if (history.isEmpty()) return List.of();
+            List<String> lines = new ArrayList<>();
+            lines.add(plugin.getMessages().prefix() + "§7历史惩罚:");
+            for (String line : history) lines.add("  §8" + line);
+            return lines;
+        });
     }
 
     private void handlePunishment(CommandSender sender, String[] args) {
@@ -193,42 +223,46 @@ public class AntiCheatCommand implements TabExecutor {
             sendHelp(sender);
             return;
         }
-        PersistentStore.PunishmentRecord punishment = plugin.getStore().getPunishment(args[1]);
-        if (punishment == null) {
-            sender.sendMessage(plugin.getMessages().prefix() + "§c找不到处罚 ID §f" + args[1] + "§c。");
-            return;
-        }
-
-        sender.sendMessage(plugin.getMessages().prefix() + "§7处罚 ID: §f" + punishment.id());
-        sender.sendMessage("  §7玩家: §f" + punishment.playerName() + " §8(" + punishment.playerId() + ")");
-        sender.sendMessage(String.format("  §7封禁: §f%s §7至 §f%s §8(%d 小时，第 %d 次)",
-                DATE_TIME.format(new Date(punishment.bannedAt())),
-                DATE_TIME.format(new Date(punishment.expiresAt())),
-                punishment.hours(), punishment.banNumber()));
-        sender.sendMessage(String.format("  §7触发检测: §f%s §7VL §c%.1f",
-                displayCheck(punishment.check()), punishment.vl()));
-
-        sender.sendMessage("  §7封禁前玩家警告:");
-        if (punishment.warnings().isEmpty()) {
-            sender.sendMessage("    §8无");
-        } else {
-            for (PersistentStore.WarningEvidence warning : punishment.warnings()) {
-                sender.sendMessage(String.format("    §8%s §e第 %d 级 §7%s VL §c%.1f",
-                        TIME.format(new Date(warning.at())), warning.stage(),
-                        displayCheck(warning.check()), warning.vl()));
+        String idArg = args[1];
+        asyncStore(sender, () -> {
+            PersistentStore.PunishmentRecord punishment = plugin.getStore().getPunishment(idArg);
+            if (punishment == null) {
+                return List.of(plugin.getMessages().prefix() + "§c找不到处罚 ID §f" + idArg + "§c。");
             }
-        }
 
-        sender.sendMessage("  §7封禁前检测失败日志:");
-        if (punishment.detections().isEmpty()) {
-            sender.sendMessage("    §8无");
-        } else {
-            for (PersistentStore.DetectionEvidence detection : punishment.detections()) {
-                sender.sendMessage(String.format("    §8%s §7%s VL §c%.1f §8(%s)",
-                        TIME.format(new Date(detection.at())), displayCheck(detection.check()),
-                        detection.vl(), detection.detail()));
+            List<String> lines = new ArrayList<>();
+            lines.add(plugin.getMessages().prefix() + "§7处罚 ID: §f" + punishment.id());
+            lines.add("  §7玩家: §f" + punishment.playerName() + " §8(" + punishment.playerId() + ")");
+            lines.add(String.format("  §7封禁: §f%s §7至 §f%s §8(%d 小时，第 %d 次)",
+                    DATE_TIME.format(new Date(punishment.bannedAt())),
+                    DATE_TIME.format(new Date(punishment.expiresAt())),
+                    punishment.hours(), punishment.banNumber()));
+            lines.add(String.format("  §7触发检测: §f%s §7VL §c%.1f",
+                    displayCheck(punishment.check()), punishment.vl()));
+
+            lines.add("  §7封禁前玩家警告:");
+            if (punishment.warnings().isEmpty()) {
+                lines.add("    §8无");
+            } else {
+                for (PersistentStore.WarningEvidence warning : punishment.warnings()) {
+                    lines.add(String.format("    §8%s §e第 %d 级 §7%s VL §c%.1f",
+                            TIME.format(new Date(warning.at())), warning.stage(),
+                            displayCheck(warning.check()), warning.vl()));
+                }
             }
-        }
+
+            lines.add("  §7封禁前检测失败日志:");
+            if (punishment.detections().isEmpty()) {
+                lines.add("    §8无");
+            } else {
+                for (PersistentStore.DetectionEvidence detection : punishment.detections()) {
+                    lines.add(String.format("    §8%s §7%s VL §c%.1f §8(%s)",
+                            TIME.format(new Date(detection.at())), displayCheck(detection.check()),
+                            detection.vl(), detection.detail()));
+                }
+            }
+            return lines;
+        });
     }
 
     private static String displayCheck(String checkId) {
@@ -242,13 +276,18 @@ public class AntiCheatCommand implements TabExecutor {
         if (denyIfNoPerm(sender, PERM_ADMIN)) return;
         Player target = requireTarget(sender, args);
         if (target == null) return;
+        String name = target.getName();
 
         plugin.getDataManager().get(target).resetAllVl();
         if (args.length >= 3 && args[2].equalsIgnoreCase("all")) {
-            plugin.getStore().resetPlayer(target.getUniqueId());
+            java.util.UUID playerId = target.getUniqueId();
+            asyncStore(sender, () -> {
+                plugin.getStore().resetPlayer(playerId);
+                return List.of(plugin.getMessages().prefixed("reset-done", Map.of("player", name)));
+            });
+            return;
         }
-        sender.sendMessage(plugin.getMessages().prefixed("reset-done",
-                Map.of("player", target.getName())));
+        sender.sendMessage(plugin.getMessages().prefixed("reset-done", Map.of("player", name)));
     }
 
     private void handleWhitelist(CommandSender sender, String[] args) {
@@ -259,34 +298,41 @@ public class AntiCheatCommand implements TabExecutor {
         }
 
         switch (args[1].toLowerCase()) {
-            case "list" -> {
+            case "list" -> asyncStore(sender, () -> {
                 List<PersistentStore.WhitelistEntry> entries = plugin.getStore().getWhitelist();
                 if (entries.isEmpty()) {
-                    sender.sendMessage(plugin.getMessages().prefixed("whitelist-empty", null));
-                    return;
+                    return List.of(plugin.getMessages().prefixed("whitelist-empty", null));
                 }
-                sender.sendMessage(plugin.getMessages().prefix() + "§f反作弊白名单 §7(" + entries.size() + "): ");
-                sender.sendMessage("  §a" + String.join("§7, §a",
+                List<String> lines = new ArrayList<>();
+                lines.add(plugin.getMessages().prefix() + "§f反作弊白名单 §7(" + entries.size() + "): ");
+                lines.add("  §a" + String.join("§7, §a",
                         entries.stream().map(PersistentStore.WhitelistEntry::name).toList()));
-            }
+                return lines;
+            });
             case "add" -> {
                 OfflinePlayer target = requireOfflineTarget(sender, args, 2);
                 if (target == null) return;
+                java.util.UUID id = target.getUniqueId();
                 String name = target.getName() != null ? target.getName() : args[2];
-                if (plugin.getStore().isWhitelisted(target.getUniqueId())) {
-                    sender.sendMessage(plugin.getMessages().prefixed("whitelist-already-added",
+                asyncStore(sender, () -> {
+                    if (plugin.getStore().isWhitelisted(id)) {
+                        return List.of(plugin.getMessages().prefixed("whitelist-already-added",
+                                Map.of("player", name)));
+                    }
+                    plugin.getStore().addWhitelist(id, name);
+                    plugin.getStore().saveAsync();
+                    // 在线玩家实时状态回主线程更新
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        Player online = Bukkit.getPlayer(id);
+                        if (online != null) {
+                            PlayerData data = plugin.getDataManager().get(online);
+                            data.resetAllVl();
+                            data.setPunishing(false);
+                        }
+                    });
+                    return List.of(plugin.getMessages().prefixed("whitelist-added",
                             Map.of("player", name)));
-                    return;
-                }
-                plugin.getStore().addWhitelist(target.getUniqueId(), name);
-                Player online = target.getPlayer();
-                if (online != null) {
-                    PlayerData data = plugin.getDataManager().get(online);
-                    data.resetAllVl();
-                    data.setPunishing(false);
-                }
-                plugin.getStore().saveAsync();
-                sender.sendMessage(plugin.getMessages().prefixed("whitelist-added", Map.of("player", name)));
+                });
             }
             case "remove" -> {
                 if (args.length < 3) {
@@ -298,19 +344,22 @@ public class AntiCheatCommand implements TabExecutor {
                             Map.of("player", args[2])));
                     return;
                 }
-                PersistentStore.WhitelistEntry entry = plugin.getStore().findWhitelistByName(args[2]);
-                Player online = Bukkit.getPlayerExact(args[2]);
-                if (entry == null && online != null && plugin.getStore().isWhitelisted(online.getUniqueId())) {
-                    entry = new PersistentStore.WhitelistEntry(online.getUniqueId(), online.getName());
-                }
-                if (entry == null || !plugin.getStore().removeWhitelist(entry.uuid())) {
-                    sender.sendMessage(plugin.getMessages().prefixed("whitelist-not-found",
-                            Map.of("player", args[2])));
-                    return;
-                }
-                plugin.getStore().saveAsync();
-                sender.sendMessage(plugin.getMessages().prefixed("whitelist-removed",
-                        Map.of("player", entry.name())));
+                String targetName = args[2];
+                asyncStore(sender, () -> {
+                    PersistentStore.WhitelistEntry entry = plugin.getStore().findWhitelistByName(targetName);
+                    Player online = Bukkit.getPlayerExact(targetName);
+                    if (entry == null && online != null
+                            && plugin.getStore().isWhitelisted(online.getUniqueId())) {
+                        entry = new PersistentStore.WhitelistEntry(online.getUniqueId(), online.getName());
+                    }
+                    if (entry == null || !plugin.getStore().removeWhitelist(entry.uuid())) {
+                        return List.of(plugin.getMessages().prefixed("whitelist-not-found",
+                                Map.of("player", targetName)));
+                    }
+                    plugin.getStore().saveAsync();
+                    return List.of(plugin.getMessages().prefixed("whitelist-removed",
+                            Map.of("player", entry.name())));
+                });
             }
             default -> sendHelp(sender);
         }
@@ -323,14 +372,28 @@ public class AntiCheatCommand implements TabExecutor {
         String name = target.getName() != null ? target.getName() : args[1];
         boolean reset = args.length >= 3 && args[2].equalsIgnoreCase("reset");
         if (plugin.getStore() instanceof NetworkPersistentStore networkStore) {
-            try {
-                networkStore.pardonNetwork(target.getUniqueId(), reset);
-            } catch (java.sql.SQLException error) {
-                sender.sendMessage(plugin.getMessages().prefix() + "§c群组数据库不可用，解封未执行。");
-                plugin.getLogger().warning("群组解封失败: " + error.getMessage());
-                return;
-            }
-            finishUnban(sender, target, name, reset);
+            java.util.UUID playerId = target.getUniqueId();
+            String senderName = sender.getName();
+            asyncStore(sender, () -> {
+                try {
+                    networkStore.pardonNetwork(playerId, reset);
+                } catch (java.sql.SQLException error) {
+                    plugin.getLogger().warning("群组解封失败: " + error.getMessage());
+                    return List.of(plugin.getMessages().prefix() + "§c群组数据库不可用，解封未执行。");
+                }
+                plugin.getStore().addHistory(playerId, "[解封] 管理员 " + senderName
+                        + (reset ? "（已重置封禁次数）" : ""));
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    Player current = Bukkit.getPlayer(playerId);
+                    if (current != null) {
+                        PlayerData data = plugin.getDataManager().get(current);
+                        data.resetAllVl();
+                        data.setPunishing(false);
+                    }
+                });
+                return List.of(plugin.getMessages().prefixed(reset ? "unbanned-reset" : "unbanned",
+                        Map.of("player", name)));
+            });
             return;
         }
         ProfileBanList banList = Bukkit.getBanList(BanListType.PROFILE);
@@ -346,19 +409,6 @@ public class AntiCheatCommand implements TabExecutor {
                 + (reset ? "（已重置封禁次数）" : ""));
         plugin.getStore().saveAsync();
 
-        Player online = target.getPlayer();
-        if (online != null) {
-            PlayerData data = plugin.getDataManager().get(online);
-            data.resetAllVl();
-            data.setPunishing(false);
-        }
-        sender.sendMessage(plugin.getMessages().prefixed(reset ? "unbanned-reset" : "unbanned",
-                Map.of("player", name)));
-    }
-
-    private void finishUnban(CommandSender sender, OfflinePlayer target, String name, boolean reset) {
-        plugin.getStore().addHistory(target.getUniqueId(), "[解封] 管理员 " + sender.getName()
-                + (reset ? "（已重置封禁次数）" : ""));
         Player online = target.getPlayer();
         if (online != null) {
             PlayerData data = plugin.getDataManager().get(online);

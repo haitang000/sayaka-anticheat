@@ -38,7 +38,7 @@ public class GroundSpoofCheck extends Check {
         boolean claimsGround = player.isOnGround();
         // 客户端说在地上，但脚下无任何碰撞体，也没站在实体上
         if (claimsGround && !data.isCollisionBelow()
-                && !MoveUtil.standingOnEntity(player)) {
+                && !data.isStandingOnEntity(player)) {
             double buffered = data.buffer(type(), 1.0);
             if (buffered >= cfgD("buffer-to-flag", 5.0)) {
                 data.resetBuffer(type());

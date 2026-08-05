@@ -39,7 +39,7 @@ public class GlideCheck extends Check {
 
         boolean suspicious = isSuspiciousDescent(
                 data.getAirTicks(), deltaY, minAirTicks, minDescent, maxDescent);
-        if (suspicious && !MoveUtil.hasCollisionBelow(to, clearance)) {
+        if (suspicious && !data.hasCollisionBelow(to, clearance)) {
             double buffered = data.buffer(type(), 1.0);
             if (buffered >= cfgD("buffer-to-flag", 6.0)) {
                 data.resetBuffer(type());
@@ -70,7 +70,7 @@ public class GlideCheck extends Check {
         if (data.isInWeb() || data.isNearHoney()) return true;
         if (data.teleportedWithin(3000) || data.velocityWithin(3000)) return true;
         if (data.damagedWithin(2000) || data.bouncedWithin(4000)) return true;
-        return MoveUtil.standingOnEntity(player);
+        return data.isStandingOnEntity(player);
     }
 
     private void trySetback(PlayerMoveEvent event, PlayerData data) {

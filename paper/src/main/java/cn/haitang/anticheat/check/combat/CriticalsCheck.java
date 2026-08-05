@@ -39,7 +39,7 @@ public class CriticalsCheck extends Check {
         if (MoveUtil.isInWeb(attacker)) return;
 
         boolean grounded = data.getAirTicks() == 0
-                && MoveUtil.hasCollisionBelow(attacker.getLocation(), 0.05);
+                && data.hasCollisionBelow(attacker.getLocation(), 0.05);
         if (!grounded) {
             data.buffer(type(), -0.5);
             return;

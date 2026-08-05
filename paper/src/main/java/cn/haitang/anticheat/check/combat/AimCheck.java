@@ -212,6 +212,8 @@ public class AimCheck extends Check {
     private void checkBurst(EntityDamageByEntityEvent event, Player attacker, PlayerData data) {
         if (!cfgB("burst.enabled", true)) return;
         if (data.isBedrock() && cfgB("burst.exclude-bedrock", true)) return;
+        // 服务端卡顿恢复时积压的多个真实攻击包会在同一 tick 被处理，直接放行合法玩家
+        if (serverLagging()) return;
 
         int tick = org.bukkit.Bukkit.getCurrentTick();
         int count = data.countAttackInTick(tick);

@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
+import java.util.function.LongSupplier;
 
 final class DashboardServer {
     private static final int MAX_BODY_BYTES = 16 * 1024;
@@ -69,6 +70,7 @@ final class DashboardServer {
     private final String serverId;
     private final cn.haitang.anticheat.velocity.boot.HotReloader reloader;
     private final RateLimiter appealLimiter = new RateLimiter(20, 60_000L);
+    private final CooldownTable appealCooldowns = new CooldownTable(60_000L);
     private final OneTimeLoginTokens loginTokens = new OneTimeLoginTokens();
 
     private DashboardServer(JdbcNetworkStore store, NetworkControl control,
@@ -365,15 +367,28 @@ final class DashboardServer {
 
     private void appealSubmit(HttpExchange exchange) throws Exception {
         requireMethod(exchange, "POST");
-        if (!appealLimiter.allow(clientIp(exchange))) throw new HttpError(429, "提交过于频繁，请稍后再试");
+        String ip = clientIp(exchange);
+        if (!appealLimiter.allow(ip)) throw new HttpError(429, "提交过于频繁，请稍后再试");
         Map<String, Object> json = readJson(exchange);
         String id = string(json.get("id")).trim();
         String reason = string(json.get("reason")).trim();
         String contact = string(json.get("contact")).trim();
+        String captchaId = string(json.get("captchaId"));
+        String captchaAnswer = string(json.get("captchaAnswer"));
+        if (captchaId.isBlank()) captchaId = exchange.getRequestHeaders().getFirst(CAPTCHA_ID_HEADER);
+        if (captchaAnswer.isBlank()) {
+            captchaAnswer = exchange.getRequestHeaders().getFirst(CAPTCHA_ANSWER_HEADER);
+        }
         if (id.isEmpty()) throw new HttpError(400, "缺少处罚 ID");
         if (reason.length() < 5) throw new HttpError(400, "请填写至少 5 个字的申诉理由");
         reason = truncate(reason, MAX_REASON_LENGTH);
         contact = truncate(contact, MAX_CONTACT_LENGTH);
+        // 申诉提交必须过验证码：与查询一致，阻止脚本/第三方批量覆写他人申诉文本
+        appealCaptchas.verify(ip, captchaId, captchaAnswer);
+        // 同一 IP 对同一处罚的重复提交设置冷却窗口，配合验证码抑制改写与刷屏
+        if (!appealCooldowns.allow(ip + "|" + id)) {
+            throw new HttpError(429, "该处罚的申诉提交过于频繁，请稍后再试");
+        }
         AppealSubmitResult result = store.submitAppeal(id, reason, contact, System.currentTimeMillis());
         if (result == AppealSubmitResult.PUNISHMENT_NOT_FOUND) throw new HttpError(404, "未找到该处罚 ID");
         if (result == AppealSubmitResult.ALREADY_RESOLVED) {
@@ -1238,23 +1253,31 @@ final class DashboardServer {
         private long retryAfterSeconds() { return retryAfterSeconds; }
     }
 
-    private static final class RateLimiter {
+    static final class RateLimiter {
         private static final int MAX_KEYS = 10_000;
         private final int limit;
         private final long windowMillis;
+        private final LongSupplier clock;
         private final Map<String, Window> windows = new java.util.concurrent.ConcurrentHashMap<>();
 
-        private RateLimiter(int limit, long windowMillis) {
-            this.limit = limit;
-            this.windowMillis = windowMillis;
+        RateLimiter(int limit, long windowMillis) {
+            this(limit, windowMillis, System::currentTimeMillis);
         }
 
-        private boolean allow(String key) {
-            long now = System.currentTimeMillis();
+        RateLimiter(int limit, long windowMillis, LongSupplier clock) {
+            this.limit = limit;
+            this.windowMillis = windowMillis;
+            this.clock = clock;
+        }
+
+        boolean allow(String key) {
+            long now = clock.getAsLong();
             // 公网可达的申诉接口按 IP 建窗；过期窗口从不清理会让 map 随不同 IP 无限增长（内存耗尽 DoS）。
-            // 命中上限时顺手清掉已过期的窗口，把内存占用限制在活跃 IP 规模。
+            // 命中上限时先清掉已过期的窗口；清理后仍满则直接拒绝新 key，
+            // 防止攻击者用大量活跃 IP 把窗口撑满后继续无条件插入导致内存无限增长。
             if (windows.size() >= MAX_KEYS) {
                 windows.values().removeIf(window -> now - window.startedAt >= windowMillis);
+                if (windows.size() >= MAX_KEYS) return false;
             }
             Window window = windows.compute(key, (ignored, old) ->
                     old == null || now - old.startedAt >= windowMillis
@@ -1263,6 +1286,42 @@ final class DashboardServer {
         }
 
         private record Window(long startedAt, int count) {}
+    }
+
+    /**
+     * 有容量上限的冷却表：同一键允许在窗口期外再次通过。上限之外的新键被拒绝，
+     * 避免攻击者用大量不同键撑满后无界增长（与 {@link RateLimiter} 同理）。
+     */
+    static final class CooldownTable {
+        private static final int MAX_KEYS = 1024;
+        private final long windowMillis;
+        private final LongSupplier clock;
+        private final java.util.concurrent.ConcurrentHashMap<String, Long> cooldowns =
+                new java.util.concurrent.ConcurrentHashMap<>();
+
+        CooldownTable(long windowMillis) {
+            this(windowMillis, System::currentTimeMillis);
+        }
+
+        CooldownTable(long windowMillis, LongSupplier clock) {
+            this.windowMillis = windowMillis;
+            this.clock = clock;
+        }
+
+        boolean allow(String key) {
+            long now = clock.getAsLong();
+            if (cooldowns.size() >= MAX_KEYS) {
+                cooldowns.entrySet().removeIf(entry -> now - entry.getValue() >= windowMillis);
+                if (cooldowns.size() >= MAX_KEYS) return false;
+            }
+            Long previous = cooldowns.putIfAbsent(key, now);
+            if (previous == null) return true;
+            if (now - previous >= windowMillis) {
+                cooldowns.replace(key, previous, now);
+                return true;
+            }
+            return false;
+        }
     }
 
     private static final class DashboardThreadFactory implements ThreadFactory {

@@ -87,14 +87,13 @@ public abstract class Check implements Listener {
      * （GC、同步区块加载、{@code /reload}），积压的客户端包会在同一毫秒内被一次性排空，
      * 起止事件的时间差趋近于 0，合法玩家就会被判成"快得不可能"。
      *
-     * <p>阈值优先取本检测的 {@code min-tps}，未配置时回落到 {@code settings.min-tps}。
-     * 配 0 或负数表示关闭该门控。
+     * <p>判定基于 {@link cn.haitang.anticheat.util.LagDetector} 的逐 tick 停顿采样
+     * （分钟级 TPS 平均无法捕捉这类短时停顿）。阈值优先取本检测的 {@code min-tps}，
+     * 未配置时回落到 {@code settings.min-tps}；配 0 或负数表示完全关闭该门控。
      */
     protected boolean serverLagging() {
         double minTps = cfgD("min-tps", plugin.config().getDouble("settings.min-tps", 18.0));
-        if (minTps <= 0) return false;
-        double[] tps = plugin.getServer().getTPS();
-        return tps.length > 0 && tps[0] < minTps;
+        return minTps > 0 && plugin.isServerLagging();
     }
 
     protected PlayerData data(Player player) {

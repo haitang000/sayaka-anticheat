@@ -135,9 +135,7 @@ public class TimerCheck extends Check {
     private boolean isServerLagging(PlayerData data) {
         double minTps = cfgD("min-tps", 18.0);
         if (minTps <= 0) return false;
-        double[] tps = plugin.getServer().getTPS();
-        double recentTps = tps.length == 0 ? 20.0 : tps[0];
-        if (recentTps >= minTps) return false;
+        if (!plugin.isServerLagging()) return false;
 
         data.getMoveTimes().clear();
         data.buffer(type(), -1.0);

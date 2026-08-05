@@ -339,9 +339,9 @@ public class PunishmentExecutor implements Listener {
     private void commit(PlayerData data) {
         data.resetAllVl();
         data.setPunishmentState(PlayerData.PunishmentState.COMMITTED);
-        if (!plugin.getStore().saveNow()) {
-            plugin.getLogger().severe("处罚已执行但 data.yml 尚未落盘；保留脏状态等待重试");
-        }
+        // 异步合并落盘（关服时 onDisable 会 saveNow 兜底），不在踢出/封禁的热路径上
+        // 做同步 YAML 序列化，避免占住主线程。
+        plugin.getStore().saveAsync();
     }
 
     private static void abort(PlayerData data) {

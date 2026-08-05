@@ -69,11 +69,11 @@ public class MovementTracker implements Listener {
         boolean rotationOnly = !isPositionChange(dx, dy, dz);
         if (rotationOnly) return;
         data.setLastDeltaXZ(distXZ);
-        data.setLastMovementDelta(new org.bukkit.util.Vector(dx, dy, dz));
-        data.consumeImpulse(new org.bukkit.util.Vector(dx, dy, dz));
+        data.setLastMovementDelta(dx, dy, dz);
+        data.consumeImpulse(dx, dy, dz);
 
         // ---- 滞空 / 悬浮计数 ----
-        boolean collision = MoveUtil.hasCollisionBelow(to, GROUND_DEPTH);
+        boolean collision = data.hasCollisionBelow(to, GROUND_DEPTH);
         boolean serverLaunchEnded = data.updateServerLaunch(collision, to.getY(), now);
         if (serverLaunchEnded) {
             // A timed-out launch may still be airborne. Restart Flight from the current position
@@ -147,12 +147,14 @@ public class MovementTracker implements Listener {
         Location to = event.getTo();
         if (to == null) return;
         PlayerData data = plugin.getDataManager().get(event.getPlayer());
-        data.setLastLocation(to.clone());
+        // MONITOR 阶段所有处理器已执行完毕，事件的 to 位置对象此后不会被任何人复用/改写，
+        // 直接保存引用即可；回弹传送时 teleport 内部会自行克隆。
+        data.setLastLocation(to);
 
         // 只有"实际站在支撑物上、且近 1 秒未被回弹"的位置才算合法回弹点
         if (data.isCollisionBelow() && data.getAirTicks() == 0 && data.getSupportedTicks() >= 2
                 && System.currentTimeMillis() - data.getLastSetbackAt() > 1000) {
-            data.setLastValidLocation(to.clone());
+            data.setLastValidLocation(to);
         }
     }
 

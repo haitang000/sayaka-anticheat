@@ -37,11 +37,12 @@ public final class NetworkPersistentStore extends PersistentStore {
         this.serverId = serverId;
         try {
             repository.initialize();
-            refreshWhitelistNow();
             plugin.getLogger().info("已连接群组服 MariaDB，共享节点 ID: " + serverId);
         } catch (SQLException error) {
             logDatabaseError("初始化", error);
         }
+        // 白名单全量刷新异步执行，不阻塞主线程的插件启动流程
+        refreshWhitelistIfNeeded();
     }
 
     public String serverId() {

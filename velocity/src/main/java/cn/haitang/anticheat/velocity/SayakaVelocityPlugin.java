@@ -14,6 +14,8 @@ import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -50,6 +52,13 @@ public final class SayakaVelocityPlugin {
     /** 热重载跨版本查找的内核入口：类名与 create(CoreContext) 签名不可漂移 */
     private static final String CORE_CLASS = "cn.haitang.anticheat.velocity.VelocityCore";
 
+    /**
+     * 换载窗口内 fail-closed 的最大时长。旧内核停止到新内核上线之间存在
+     * {@code core == null} 的窗口，此时事件转发会跳过封禁检查；窗口内短暂拒绝
+     * 连接，超时后降级放行，避免换载/内核长期失败时锁死整个代理。
+     */
+    static final long SWAP_FAIL_CLOSED_MILLIS = 10_000L;
+
     private final ProxyServer proxy;
     private final Logger logger;
     private final Path dataDirectory;
@@ -58,6 +67,8 @@ public final class SayakaVelocityPlugin {
     private volatile CoreBridge core;
     /** 当前内核的加载器；内嵌内核（宿主自带类）时为 null */
     private volatile CoreClassLoader coreLoader;
+    /** swapCore 开始换载的时刻（仅 reloading 为 true 时有意义） */
+    private volatile long swapStartedAt;
 
     @Inject
     public SayakaVelocityPlugin(ProxyServer proxy, Logger logger, @DataDirectory Path dataDirectory) {
@@ -74,7 +85,22 @@ public final class SayakaVelocityPlugin {
     @Subscribe
     public EventTask onServerPreConnect(ServerPreConnectEvent event) {
         CoreBridge current = core;
-        return current == null ? null : current.onServerPreConnect(event);
+        if (current != null) return current.onServerPreConnect(event);
+        // 换载窗口内 core == null：封禁检查会被跳过，短暂拒绝连接（fail-closed）
+        if (swapBlockActive(reloading.get(), swapStartedAt, System.currentTimeMillis())) {
+            event.setResult(ServerPreConnectEvent.ServerResult.denied());
+            event.getPlayer().disconnect(Component.text(
+                    "Sayaka 反作弊组件正在热更新，请稍候重试。", NamedTextColor.RED));
+        }
+        return null;
+    }
+
+    /**
+     * 换载窗口判定：热重载正在进行且未超过 fail-closed 时限时拒绝新连接；
+     * 超时或非换载期间放行（数据库/内核长期不可用时保持代理可用）。
+     */
+    static boolean swapBlockActive(boolean swapping, long swapStartedAt, long nowMillis) {
+        return swapping && nowMillis - swapStartedAt < SWAP_FAIL_CLOSED_MILLIS;
     }
 
     @Subscribe
@@ -110,6 +136,7 @@ public final class SayakaVelocityPlugin {
     }
 
     private void swapCore(Path stagedJar, String stagedVersion) {
+        swapStartedAt = System.currentTimeMillis();
         try {
             CoreClassLoader nextLoader;
             CoreBridge next;

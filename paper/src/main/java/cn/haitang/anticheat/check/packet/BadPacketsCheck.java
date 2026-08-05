@@ -56,14 +56,16 @@ public class BadPacketsCheck extends Check {
 
     @Override
     public void reloadConfiguration() {
+        // 与其余检测一致：从 ConfigSnapshot 快照读取（含 bundled 默认 + 预设档覆盖 + 校验后值），
+        // 避免预设档对 bad-packets 不生效、未校验的原始值直入 Netty 热路径
         String base = "checks." + type().configKey() + ".";
-        packetEnabled = plugin.getConfig().getBoolean(base + "enabled", true);
-        flagWeight = plugin.getConfig().getDouble(base + "flag-weight", 5.0);
-        itemEnabled = plugin.getConfig().getBoolean(base + "check-items", true);
-        maxNbtDepth = Math.max(1, plugin.getConfig().getInt(base + "max-nbt-depth", 512));
-        maxNbtSize = Math.max(1024, plugin.getConfig().getInt(base + "max-nbt-size", 262144));
-        maxStackSize = Math.max(1, plugin.getConfig().getInt(base + "max-stack-size", 64));
-        itemFlagWeight = plugin.getConfig().getDouble(base + "item-flag-weight", 5.0);
+        packetEnabled = plugin.config().getBoolean(base + "enabled", true);
+        flagWeight = plugin.config().getDouble(base + "flag-weight", 5.0);
+        itemEnabled = plugin.config().getBoolean(base + "check-items", true);
+        maxNbtDepth = Math.max(1, plugin.config().getInt(base + "max-nbt-depth", 512));
+        maxNbtSize = Math.max(1024, plugin.config().getInt(base + "max-nbt-size", 262144));
+        maxStackSize = Math.max(1, plugin.config().getInt(base + "max-stack-size", 64));
+        itemFlagWeight = plugin.config().getDouble(base + "item-flag-weight", 5.0);
     }
 
     /** Netty 线程入口：非法坐标包当场丢弃，上报走主线程豁免与 VL 流程 */

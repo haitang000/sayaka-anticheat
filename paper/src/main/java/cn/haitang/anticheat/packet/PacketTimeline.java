@@ -250,9 +250,8 @@ public final class PacketTimeline {
 
     private void drainSignals() {
         sendTransactions();
-        double[] tps = plugin.getServer().getTPS();
-        boolean lagging = tps.length > 0 && tps[0] < plugin.config()
-                .getDouble("checks.timer.min-tps", 18.0);
+        boolean lagging = plugin.config().getDouble("checks.timer.min-tps", 18.0) > 0
+                && plugin.isServerLagging();
         for (int i = 0; i < completionsPerTick; i++) {
             TimerSignal signal = signals.poll();
             if (signal == null) break;
