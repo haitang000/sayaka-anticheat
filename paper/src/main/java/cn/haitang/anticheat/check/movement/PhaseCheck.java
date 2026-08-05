@@ -134,17 +134,7 @@ public class PhaseCheck extends Check {
     }
 
     private void setback(PlayerMoveEvent event, PlayerData data) {
-        Location target = data.getLastValidLocation();
-        Location from = event.getFrom();
-        if (target == null || target.getWorld() == null
-                || !target.getWorld().equals(from.getWorld())
-                || target.distanceSquared(from) > 64) {
-            target = from;
-        }
-        data.touchSetback();
-        data.getSpeedWindow().clear();
-        data.resetAirborneState(target.getY());
-        event.setTo(target.clone());
+        setback(event, data, 64);
     }
 
     private static int clamp(int value, int min, int max) {

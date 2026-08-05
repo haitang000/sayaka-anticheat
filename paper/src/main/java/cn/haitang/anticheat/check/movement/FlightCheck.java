@@ -129,17 +129,8 @@ public class FlightCheck extends Check {
 
     private void trySetback(PlayerMoveEvent event, PlayerData data) {
         if (!cfgB("setback", true) || !allowsMitigation(event.getPlayer())) return;
-        Location target = data.getLastValidLocation();
-        Location from = event.getFrom();
-        if (target == null || target.getWorld() == null
-                || !target.getWorld().equals(from.getWorld())) {
-            target = from;
-        }
-        data.touchSetback();
         clearBuffers(data);
-        data.getSpeedWindow().clear();
-        data.resetAirborneState(target.getY());
-        event.setTo(target.clone());
+        setback(event, data, -1);
     }
 
     /** 4. 静止悬浮兜底扫描（每秒一次） */

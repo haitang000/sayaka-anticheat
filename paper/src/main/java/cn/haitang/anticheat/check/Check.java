@@ -4,8 +4,10 @@ import cn.haitang.anticheat.AntiCheatPlugin;
 import cn.haitang.anticheat.data.PlayerData;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerMoveEvent;
 
 /**
  * 检测基类。子类通过 {@link #flag} 上报违规，通过 {@link #shouldMitigate} 决定是否拦截。
@@ -111,6 +113,25 @@ public abstract class Check implements Listener {
     /** VL 已达拦截阈值：移动类应回弹、战斗类应取消命中 */
     protected boolean shouldMitigate(Player player) {
         return plugin.getViolationManager().shouldMitigate(player, type);
+    }
+
+    /**
+     * 回弹共用实现：优先回传最后合法位置；目标缺失、无世界、跨世界或超出
+     * maxDistanceSquared（负值不限制）时回传事件起点。之后统一复位
+     * 滞空状态并清空速度窗口，避免回弹后的位移被下一帧误判。
+     */
+    protected final void setback(PlayerMoveEvent event, PlayerData data, double maxDistanceSquared) {
+        Location from = event.getFrom();
+        Location target = data.getLastValidLocation();
+        if (target == null || target.getWorld() == null
+                || !target.getWorld().equals(from.getWorld())
+                || (maxDistanceSquared >= 0 && target.distanceSquared(from) > maxDistanceSquared)) {
+            target = from;
+        }
+        data.touchSetback();
+        data.getSpeedWindow().clear();
+        data.resetAirborneState(target.getY());
+        event.setTo(target.clone());
     }
 
     /** Whether the effective enforcement mode permits local evidence-based mitigation. */

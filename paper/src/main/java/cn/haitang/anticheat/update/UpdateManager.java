@@ -70,6 +70,8 @@ public final class UpdateManager {
     }
     private final AntiCheatPlugin plugin;
     private final HttpClient httpClient;
+    /** 专供 HTTP 客户端的工作线程池；Java 17 的 HttpClient 无 close()，关池即可释放资源 */
+    private final java.util.concurrent.ExecutorService httpExecutor;
     private final AtomicBoolean checking = new AtomicBoolean();
     private final AtomicBoolean installing = new AtomicBoolean();
     private volatile Release available;
@@ -80,9 +82,15 @@ public final class UpdateManager {
 
     public UpdateManager(AntiCheatPlugin plugin) {
         this.plugin = plugin;
+        this.httpExecutor = java.util.concurrent.Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "sayaka-update-http");
+            thread.setDaemon(true);
+            return thread;
+        });
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
+                .executor(httpExecutor)
                 .build();
     }
 
@@ -108,6 +116,9 @@ public final class UpdateManager {
     public void shutdown() {
         shuttingDown = true;
         stopCheckTask();
+        // 释放 HTTP 工作线程：插件可被热重载，每次重载都会重建 UpdateManager，
+        // 不关池会让每个实例的线程一直悬挂。
+        httpExecutor.shutdown();
     }
 
     public void check(CommandSender sender) {

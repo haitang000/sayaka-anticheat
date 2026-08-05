@@ -6,7 +6,6 @@ import cn.haitang.anticheat.check.CheckType;
 import cn.haitang.anticheat.check.MovementTracker;
 import cn.haitang.anticheat.data.PlayerData;
 import cn.haitang.anticheat.util.MoveUtil;
-import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -56,16 +55,6 @@ public class FastLadderCheck extends Check {
     }
 
     private void setback(PlayerMoveEvent event, PlayerData data) {
-        Location target = data.getLastValidLocation();
-        Location from = event.getFrom();
-        if (target == null || target.getWorld() == null
-                || !target.getWorld().equals(from.getWorld())
-                || target.distanceSquared(from) > 64) {
-            target = from;
-        }
-        data.touchSetback();
-        data.getSpeedWindow().clear();
-        data.resetAirborneState(target.getY());
-        event.setTo(target.clone());
+        setback(event, data, 64);
     }
 }

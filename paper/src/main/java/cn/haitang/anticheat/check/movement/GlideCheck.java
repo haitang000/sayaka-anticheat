@@ -76,17 +76,6 @@ public class GlideCheck extends Check {
     private void trySetback(PlayerMoveEvent event, PlayerData data) {
         Player player = event.getPlayer();
         if (!cfgB("setback", true) || !shouldMitigate(player)) return;
-
-        Location from = event.getFrom();
-        Location target = data.getLastValidLocation();
-        if (target == null || target.getWorld() == null
-                || !target.getWorld().equals(from.getWorld())
-                || target.distanceSquared(from) > 256) {
-            target = from;
-        }
-        data.touchSetback();
-        data.getSpeedWindow().clear();
-        data.resetAirborneState(target.getY());
-        event.setTo(target.clone());
+        setback(event, data, 256);
     }
 }

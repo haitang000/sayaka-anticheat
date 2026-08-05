@@ -61,6 +61,7 @@ final class AimQuantumAnalyzer {
         private final String name;
         private double last = Double.NaN;
         private double[] deltas = new double[0];
+        private double[] comb = new double[0];
         private int count;
 
         private Stream(String name) {
@@ -107,12 +108,13 @@ final class AimQuantumAnalyzer {
         int windowSize = Math.max(8, params.windowSize());
         if (stream.deltas.length != windowSize) {
             stream.deltas = new double[windowSize];
+            stream.comb = new double[windowSize];
             stream.count = 0;
         }
         stream.deltas[stream.count++] = delta;
         if (stream.count < windowSize) return results;
 
-        Window window = evaluate(stream.name, stream.deltas, stream.count, params);
+        Window window = evaluate(stream.name, stream.deltas, stream.count, stream.comb, params);
         stream.count = 0;
         if (results == null) results = new ArrayList<>(2);
         results.add(window);
@@ -121,8 +123,12 @@ final class AimQuantumAnalyzer {
 
     /** 对一个采样窗口做微步计数与梳状谱扫描；纯函数，供单元测试直接调用。 */
     static Window evaluate(String stream, double[] deltas, int count, Params params) {
+        return evaluate(stream, deltas, count, new double[count], params);
+    }
+
+    static Window evaluate(String stream, double[] deltas, int count, double[] comb,
+                           Params params) {
         int micro = 0;
-        double[] comb = new double[count];
         int combCount = 0;
         for (int i = 0; i < count; i++) {
             if (deltas[i] <= MICRO_MAX) micro++;

@@ -28,6 +28,7 @@ public final class ParallelAnalysisExecutor {
     private final LongAdder submitted = new LongAdder();
     private final LongAdder completed = new LongAdder();
     private final LongAdder rejected = new LongAdder();
+    private final LongAdder droppedCompletions = new LongAdder();
     private final BukkitTask completionTask;
 
     public ParallelAnalysisExecutor(JavaPlugin plugin) {
@@ -65,8 +66,8 @@ public final class ParallelAnalysisExecutor {
             try {
                 analysis.run();
             } catch (Throwable error) {
-                enqueueCompletion(() -> plugin.getLogger().log(Level.WARNING,
-                        "Parallel analysis failed", error));
+                // 错误日志直接在工作线程记录：不占用主线程完成队列
+                plugin.getLogger().log(Level.WARNING, "Parallel analysis failed", error);
             }
         });
     }
@@ -77,8 +78,7 @@ public final class ParallelAnalysisExecutor {
                 T result = analysis.call();
                 enqueueCompletion(() -> mainThreadCompletion.accept(result));
             } catch (Throwable error) {
-                enqueueCompletion(() -> plugin.getLogger().log(Level.WARNING,
-                        "Parallel analysis failed", error));
+                plugin.getLogger().log(Level.WARNING, "Parallel analysis failed", error);
             }
         });
     }
@@ -95,7 +95,13 @@ public final class ParallelAnalysisExecutor {
     }
 
     private void enqueueCompletion(Runnable completion) {
-        if (!completions.offer(completion)) rejected.increment();
+        if (!completions.offer(completion)) {
+            droppedCompletions.increment();
+            // 主线程消费过慢导致完成队列满：静默丢弃会丢失分析结果的应用
+            // （如自动点击判定），这里直接在工作线程暴露，便于定位
+            plugin.getLogger().warning("Analysis completion queue full; "
+                    + "a completion was dropped");
+        }
     }
 
     private void drainCompletions() {
@@ -114,7 +120,7 @@ public final class ParallelAnalysisExecutor {
 
     public Stats stats() {
         return new Stats(submitted.sum(), completed.sum(), rejected.sum(),
-                workers.getQueue().size(), completions.size());
+                droppedCompletions.sum(), workers.getQueue().size(), completions.size());
     }
 
     public void shutdown() {
@@ -132,7 +138,7 @@ public final class ParallelAnalysisExecutor {
     }
 
     public record Stats(long submitted, long completed, long rejected,
-                        int queuedAnalyses, int queuedCompletions) { }
+                        long droppedCompletions, int queuedAnalyses, int queuedCompletions) { }
 
     private static final class AnalysisThreadFactory implements ThreadFactory {
         private final AtomicInteger sequence = new AtomicInteger();

@@ -128,17 +128,8 @@ public class ElytraCheck extends Check {
     }
 
     private void setback(PlayerMoveEvent event, PlayerData data) {
-        Location target = data.getLastValidLocation();
-        Location from = event.getFrom();
-        if (target == null || target.getWorld() == null
-                || !target.getWorld().equals(from.getWorld())) {
-            target = from;
-        }
-        data.touchSetback();
         data.resetBuffer(type());
         data.getGlideSamples().clear();
-        data.getSpeedWindow().clear();
-        data.resetAirborneState(target.getY());
-        event.setTo(target.clone());
+        setback(event, data, -1);
     }
 }
